@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use crate::orders::time_in_force::TimeInForce;
+    use std::str::FromStr;
 
     #[test]
     fn test_is_immediate() {
@@ -220,7 +220,10 @@ mod tests {
         assert_eq!(TimeInForce::Gtc.to_string(), "GTC");
         assert_eq!(TimeInForce::Ioc.to_string(), "IOC");
         assert_eq!(TimeInForce::Fok.to_string(), "FOK");
-        assert_eq!(TimeInForce::Gtd(1616823000000).to_string(), "GTD-1616823000000");
+        assert_eq!(
+            TimeInForce::Gtd(1616823000000).to_string(),
+            "GTD-1616823000000"
+        );
         assert_eq!(TimeInForce::Day.to_string(), "DAY");
     }
 

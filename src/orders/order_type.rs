@@ -1,8 +1,7 @@
 //! Limit order type definitions
 
 use crate::errors::PriceLevelError;
-use crate::orders::time_in_force::TimeInForce;
-use crate::orders::{OrderId, PegReferenceType, Side};
+use crate::orders::{OrderId, PegReferenceType, Side, TimeInForce};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -364,8 +363,6 @@ impl OrderType {
             _ => (*self, 0), // Non-iceberg orders don't refresh
         }
     }
-    
-    
 }
 
 impl OrderType {
@@ -379,20 +376,25 @@ impl OrderType {
     pub fn match_against(&self, incoming_quantity: u64) -> (u64, Option<Self>, u64, u64) {
         match self {
             Self::Standard {
-                id, price, quantity, side, timestamp, time_in_force,
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
             } => {
                 if *quantity <= incoming_quantity {
                     // Full match
                     (
-                        *quantity,           // consumed = full order quantity
-                        None,                // no updated order (fully matched)
-                        0,                   // no hidden quantity reduced
+                        *quantity,                     // consumed = full order quantity
+                        None,                          // no updated order (fully matched)
+                        0,                             // no hidden quantity reduced
                         incoming_quantity - *quantity, // remaining = incoming - consumed
                     )
                 } else {
                     // Partial match
                     (
-                        incoming_quantity,   // consumed = all incoming quantity
+                        incoming_quantity, // consumed = all incoming quantity
                         Some(Self::Standard {
                             id: *id,
                             price: *price,
@@ -401,14 +403,20 @@ impl OrderType {
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                         }),
-                        0,                   // no hidden quantity reduced
-                        0,                   // no remaining quantity
+                        0, // no hidden quantity reduced
+                        0, // no remaining quantity
                     )
                 }
-            },
+            }
 
             Self::IcebergOrder {
-                id, price, visible_quantity, hidden_quantity, side, timestamp, time_in_force,
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
             } => {
                 if *visible_quantity <= incoming_quantity {
                     // Fully match the visible portion
@@ -426,21 +434,20 @@ impl OrderType {
                             Some(Self::IcebergOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: refresh_qty,  // Actualizar cantidad visible
-                                hidden_quantity: new_hidden,    // Reducir cantidad oculta
+                                visible_quantity: refresh_qty, // Actualizar cantidad visible
+                                hidden_quantity: new_hidden,   // Reducir cantidad oculta
                                 side: *side,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                             }),
-                            refresh_qty,  // Cantidad reducida de hidden
+                            refresh_qty, // Cantidad reducida de hidden
                             remaining,
                         )
                     } else {
                         // No hidden quantity left
                         (
-                            consumed,
-                            None,  // Orden completamente consumida
-                            0,     // No se redujo cantidad oculta
+                            consumed, None, // Orden completamente consumida
+                            0,    // No se redujo cantidad oculta
                             remaining,
                         )
                     }
@@ -459,15 +466,21 @@ impl OrderType {
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                         }),
-                        0,      // No se redujo cantidad oculta
-                        0,      // No queda cantidad pendiente
+                        0, // No se redujo cantidad oculta
+                        0, // No queda cantidad pendiente
                     )
                 }
-            },
+            }
 
             Self::ReserveOrder {
-                id, price, visible_quantity, hidden_quantity, side, timestamp,
-                time_in_force, replenish_threshold,
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
             } => {
                 if *visible_quantity <= incoming_quantity {
                     // Full match of visible portion
@@ -483,7 +496,7 @@ impl OrderType {
 
                         // Return updated order with refreshed quantities
                         (
-                            consumed,        // consumed full visible quantity
+                            consumed, // consumed full visible quantity
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
@@ -494,21 +507,21 @@ impl OrderType {
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
                             }),
-                            hidden_reduced,  // amount reduced from hidden
-                            remaining,       // remaining quantity
+                            hidden_reduced, // amount reduced from hidden
+                            remaining,      // remaining quantity
                         )
                     } else if *hidden_quantity == 0 {
                         // No hidden quantity, order is fully matched
                         (
-                            consumed,        // consumed full visible quantity
-                            None,            // fully matched
-                            0,               // no hidden reduced
-                            remaining,       // remaining quantity
+                            consumed,  // consumed full visible quantity
+                            None,      // fully matched
+                            0,         // no hidden reduced
+                            remaining, // remaining quantity
                         )
                     } else {
                         // Has hidden quantity but not below threshold
                         (
-                            consumed,        // consumed full visible quantity
+                            consumed, // consumed full visible quantity
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
@@ -519,14 +532,14 @@ impl OrderType {
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
                             }),
-                            0,               // no hidden reduced
-                            remaining,       // remaining quantity
+                            0,         // no hidden reduced
+                            remaining, // remaining quantity
                         )
                     }
                 } else {
                     // Partial match of visible portion
                     (
-                        incoming_quantity,   // consumed all incoming
+                        incoming_quantity, // consumed all incoming
                         Some(Self::ReserveOrder {
                             id: *id,
                             price: *price,
@@ -537,11 +550,11 @@ impl OrderType {
                             time_in_force: *time_in_force,
                             replenish_threshold: *replenish_threshold,
                         }),
-                        0,                   // no hidden reduced
-                        0,                   // no remaining quantity
+                        0, // no hidden reduced
+                        0, // no remaining quantity
                     )
                 }
-            },
+            }
 
             // For all other order types, use standard matching logic
             _ => {
@@ -550,18 +563,18 @@ impl OrderType {
                 if visible_qty <= incoming_quantity {
                     // Full match
                     (
-                        visible_qty,         // consumed full visible quantity
-                        None,                // fully matched
-                        0,                   // no hidden reduced
+                        visible_qty,                     // consumed full visible quantity
+                        None,                            // fully matched
+                        0,                               // no hidden reduced
                         incoming_quantity - visible_qty, // remaining quantity
                     )
                 } else {
                     // Partial match
                     (
-                        incoming_quantity,   // consumed all incoming
+                        incoming_quantity, // consumed all incoming
                         Some(self.with_reduced_quantity(visible_qty - incoming_quantity)),
-                        0,                   // no hidden reduced
-                        0,                   // no remaining quantity
+                        0, // no hidden reduced
+                        0, // no remaining quantity
                     )
                 }
             }

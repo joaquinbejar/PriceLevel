@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
+    use crate::price_level::PriceLevelStatistics;
     use std::str::FromStr;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use crate::price_level::PriceLevelStatistics;
 
     #[test]
     fn test_new() {
@@ -55,7 +55,8 @@ mod tests {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64 - 1000; // 1 second ago
+            .as_millis() as u64
+            - 1000; // 1 second ago
 
         // Sleep to ensure waiting time is measurable
         thread::sleep(Duration::from_millis(10));
@@ -185,8 +186,14 @@ mod tests {
         assert_eq!(stats.orders_executed(), 2);
         assert_eq!(stats.quantity_executed(), 15);
         assert_eq!(stats.value_executed(), 2000);
-        assert_eq!(stats.last_execution_time.load(Ordering::Relaxed), 1616823000000);
-        assert_eq!(stats.first_arrival_time.load(Ordering::Relaxed), 1616823000001);
+        assert_eq!(
+            stats.last_execution_time.load(Ordering::Relaxed),
+            1616823000000
+        );
+        assert_eq!(
+            stats.first_arrival_time.load(Ordering::Relaxed),
+            1616823000001
+        );
         assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 1000);
     }
 
@@ -246,8 +253,12 @@ mod tests {
 
         // Use precise timestamps to avoid timing issues
         let current_time: u64 = 1616823000000;
-        stats.last_execution_time.store(current_time, Ordering::Relaxed);
-        stats.first_arrival_time.store(current_time + 1, Ordering::Relaxed);
+        stats
+            .last_execution_time
+            .store(current_time, Ordering::Relaxed);
+        stats
+            .first_arrival_time
+            .store(current_time + 1, Ordering::Relaxed);
 
         // Add some data
         stats.record_order_added();

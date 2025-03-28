@@ -1,11 +1,11 @@
+use crate::errors::PriceLevelError;
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
-use serde::ser::SerializeStruct;
-use serde::de::{self, Visitor, MapAccess};
-use crate::errors::PriceLevelError;
 
 /// Tracks performance statistics for a price level
 #[derive(Debug)]
@@ -177,7 +177,6 @@ impl Default for PriceLevelStatistics {
     }
 }
 
-
 impl fmt::Display for PriceLevelStatistics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -285,13 +284,34 @@ impl Serialize for PriceLevelStatistics {
         let mut state = serializer.serialize_struct("PriceLevelStatistics", 8)?;
 
         state.serialize_field("orders_added", &self.orders_added.load(Ordering::Relaxed))?;
-        state.serialize_field("orders_removed", &self.orders_removed.load(Ordering::Relaxed))?;
-        state.serialize_field("orders_executed", &self.orders_executed.load(Ordering::Relaxed))?;
-        state.serialize_field("quantity_executed", &self.quantity_executed.load(Ordering::Relaxed))?;
-        state.serialize_field("value_executed", &self.value_executed.load(Ordering::Relaxed))?;
-        state.serialize_field("last_execution_time", &self.last_execution_time.load(Ordering::Relaxed))?;
-        state.serialize_field("first_arrival_time", &self.first_arrival_time.load(Ordering::Relaxed))?;
-        state.serialize_field("sum_waiting_time", &self.sum_waiting_time.load(Ordering::Relaxed))?;
+        state.serialize_field(
+            "orders_removed",
+            &self.orders_removed.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "orders_executed",
+            &self.orders_executed.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "quantity_executed",
+            &self.quantity_executed.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "value_executed",
+            &self.value_executed.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "last_execution_time",
+            &self.last_execution_time.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "first_arrival_time",
+            &self.first_arrival_time.load(Ordering::Relaxed),
+        )?;
+        state.serialize_field(
+            "sum_waiting_time",
+            &self.sum_waiting_time.load(Ordering::Relaxed),
+        )?;
 
         state.end()
     }
@@ -454,8 +474,14 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
         }
 
         const FIELDS: &[&str] = &[
-            "orders_added", "orders_removed", "orders_executed", "quantity_executed",
-            "value_executed", "last_execution_time", "first_arrival_time", "sum_waiting_time"
+            "orders_added",
+            "orders_removed",
+            "orders_executed",
+            "quantity_executed",
+            "value_executed",
+            "last_execution_time",
+            "first_arrival_time",
+            "sum_waiting_time",
         ];
 
         deserializer.deserialize_struct("PriceLevelStatistics", FIELDS, StatisticsVisitor)

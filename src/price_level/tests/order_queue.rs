@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-    use std::sync::Arc;
     use crate::orders::{OrderId, OrderType, Side, TimeInForce};
     use crate::price_level::order_queue::OrderQueue;
+    use std::str::FromStr;
+    use std::sync::Arc;
 
     fn create_test_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::Standard {
@@ -70,8 +70,12 @@ mod tests {
         assert_eq!(orders.len(), 2, "Expected 2 orders in parsed queue");
 
         // Verify individual orders (order might not be preserved)
-        let has_order1 = orders.iter().any(|o| o.id() == OrderId(1) && o.price() == 1000 && o.visible_quantity() == 10);
-        let has_order2 = orders.iter().any(|o| o.id() == OrderId(2) && o.price() == 1100 && o.visible_quantity() == 20);
+        let has_order1 = orders
+            .iter()
+            .any(|o| o.id() == OrderId(1) && o.price() == 1000 && o.visible_quantity() == 10);
+        let has_order2 = orders
+            .iter()
+            .any(|o| o.id() == OrderId(2) && o.price() == 1100 && o.visible_quantity() == 20);
 
         assert!(has_order1, "First order not found or incorrect");
         assert!(has_order2, "Second order not found or incorrect");
@@ -80,15 +84,27 @@ mod tests {
         let round_trip_queue = OrderQueue::from_str(&display_string).unwrap();
         let round_trip_orders = round_trip_queue.to_vec();
 
-        assert_eq!(round_trip_orders.len(), 2, "Round-trip parsing should preserve order count");
+        assert_eq!(
+            round_trip_orders.len(),
+            2,
+            "Round-trip parsing should preserve order count"
+        );
 
-        let round_trip_has_order1 = round_trip_orders.iter()
+        let round_trip_has_order1 = round_trip_orders
+            .iter()
             .any(|o| o.id() == OrderId(1) && o.price() == 1000 && o.visible_quantity() == 10);
-        let round_trip_has_order2 = round_trip_orders.iter()
+        let round_trip_has_order2 = round_trip_orders
+            .iter()
             .any(|o| o.id() == OrderId(2) && o.price() == 1100 && o.visible_quantity() == 20);
 
-        assert!(round_trip_has_order1, "First order not preserved in round-trip");
-        assert!(round_trip_has_order2, "Second order not preserved in round-trip");
+        assert!(
+            round_trip_has_order1,
+            "First order not preserved in round-trip"
+        );
+        assert!(
+            round_trip_has_order2,
+            "Second order not preserved in round-trip"
+        );
     }
 
     #[test]
@@ -113,7 +129,11 @@ mod tests {
         // Since the order of orders might not be preserved, compare individual orders
         for order in original_orders {
             let found = deserialized_orders.iter().any(|o| o.id() == order.id());
-            assert!(found, "Order with ID {} not found after deserialization", order.id());
+            assert!(
+                found,
+                "Order with ID {} not found after deserialization",
+                order.id()
+            );
         }
     }
 

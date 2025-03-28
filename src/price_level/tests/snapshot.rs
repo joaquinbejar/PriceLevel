@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::orders::{OrderId, OrderType, Side, TimeInForce};
+    use crate::price_level::PriceLevelSnapshot;
     use std::str::FromStr;
     use std::sync::Arc;
-    use crate::price_level::PriceLevelSnapshot;
 
     fn create_sample_orders() -> Vec<Arc<OrderType>> {
         vec![
@@ -112,7 +112,8 @@ mod tests {
 
     #[test]
     fn test_from_str() {
-        let input = "PriceLevelSnapshot:price=1000;visible_quantity=50;hidden_quantity=150;order_count=2";
+        let input =
+            "PriceLevelSnapshot:price=1000;visible_quantity=50;hidden_quantity=150;order_count=2";
         let snapshot = PriceLevelSnapshot::from_str(input).unwrap();
 
         assert_eq!(snapshot.price, 1000);

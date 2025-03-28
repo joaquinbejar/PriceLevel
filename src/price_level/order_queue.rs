@@ -1,13 +1,13 @@
+use crate::errors::PriceLevelError;
 use crate::orders::{OrderId, OrderType};
 use crossbeam::queue::SegQueue;
+use serde::de::{SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
-use serde::ser::SerializeSeq;
-use serde::de::{Visitor, SeqAccess};
-use std::marker::PhantomData;
-use crate::errors::PriceLevelError;
 
 /// A thread-safe queue of orders with specialized operations
 #[derive(Debug)]
@@ -123,7 +123,8 @@ pub struct OrderQueueData {
 impl From<&OrderQueue> for OrderQueueData {
     fn from(queue: &OrderQueue) -> Self {
         Self {
-            orders: queue.to_vec()
+            orders: queue
+                .to_vec()
                 .into_iter()
                 .map(|order_arc| (*order_arc))
                 .collect(),
@@ -165,7 +166,7 @@ impl FromStr for OrderQueue {
             return Err(PriceLevelError::InvalidFormat);
         }
 
-        let orders_content = &s[orders_start+1..orders_end];
+        let orders_content = &s[orders_start + 1..orders_end];
 
         // Create a new queue
         let queue = OrderQueue::new();
@@ -173,7 +174,7 @@ impl FromStr for OrderQueue {
         // Split the orders content by commas and parse each order
         if !orders_content.is_empty() {
             // We need to be careful with splitting because order strings might contain commas inside
-            // For simplicity, we'll use a basic split but in a more complex scenario 
+            // For simplicity, we'll use a basic split but in a more complex scenario
             // you might need a more sophisticated parser
             let mut current_order = String::new();
             let mut bracket_depth = 0;
@@ -183,11 +184,11 @@ impl FromStr for OrderQueue {
                     '[' => {
                         bracket_depth += 1;
                         current_order.push(c);
-                    },
+                    }
                     ']' => {
                         bracket_depth -= 1;
                         current_order.push(c);
-                    },
+                    }
                     ',' if bracket_depth == 0 => {
                         // End of an order
                         if !current_order.is_empty() {
@@ -196,7 +197,7 @@ impl FromStr for OrderQueue {
                             queue.push(Arc::new(order));
                             current_order.clear();
                         }
-                    },
+                    }
                     _ => current_order.push(c),
                 }
             }
@@ -287,4 +288,3 @@ impl<'de> Deserialize<'de> for OrderQueue {
         // Ok(queue)
     }
 }
-

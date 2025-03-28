@@ -1,14 +1,11 @@
-/******************************************************************************
-   Author: Joaquín Béjar García
-   Email: jb@taunais.com
-   Date: 28/3/25
-******************************************************************************/
 mod base;
+
 mod order_type;
 
 mod pegged;
 
 mod status;
+
 mod time_in_force;
 
 mod update;

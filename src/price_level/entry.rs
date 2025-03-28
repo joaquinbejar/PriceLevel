@@ -1,9 +1,9 @@
+use crate::errors::PriceLevelError;
+use crate::price_level::price_level::PriceLevel;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use crate::price_level::core::PriceLevel;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use crate::errors::PriceLevelError;
 
 /// Represents a price level entry in the order book
 #[derive(Debug)]
@@ -170,11 +170,6 @@ impl FromStr for OrderBookEntry {
         // Create a new price level with the given price
         let level = Arc::new(PriceLevel::new(price));
 
-        Ok(OrderBookEntry {
-            level,
-            index,
-        })
+        Ok(OrderBookEntry { level, index })
     }
 }
-
-

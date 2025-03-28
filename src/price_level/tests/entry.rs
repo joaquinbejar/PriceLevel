@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use crate::price_level::entry::OrderBookEntry;
+    use crate::price_level::price_level::PriceLevel;
     use std::str::FromStr;
     use std::sync::Arc;
-    use crate::price_level::core::PriceLevel;
-    use crate::price_level::entry::OrderBookEntry;
 
     #[test]
     fn test_display() {

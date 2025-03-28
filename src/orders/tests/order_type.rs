@@ -257,8 +257,8 @@ mod tests {
         match reduced {
             OrderType::TrailingStop { quantity, .. } => {
                 assert_eq!(quantity, 5);
-            },
-            _ => panic!("Expected TrailingStop order")
+            }
+            _ => panic!("Expected TrailingStop order"),
         }
 
         // NEW TEST: Test pegged order with reduced quantity
@@ -268,8 +268,8 @@ mod tests {
         match reduced {
             OrderType::PeggedOrder { quantity, .. } => {
                 assert_eq!(quantity, 5);
-            },
-            _ => panic!("Expected PeggedOrder")
+            }
+            _ => panic!("Expected PeggedOrder"),
         }
 
         // NEW TEST: Test market-to-limit order with reduced quantity
@@ -279,8 +279,8 @@ mod tests {
         match reduced {
             OrderType::MarketToLimit { quantity, .. } => {
                 assert_eq!(quantity, 5);
-            },
-            _ => panic!("Expected MarketToLimit order")
+            }
+            _ => panic!("Expected MarketToLimit order"),
         }
 
         // NEW TEST: Test reserve order with reduced quantity
@@ -288,11 +288,15 @@ mod tests {
         let reduced = order.with_reduced_quantity(0);
 
         match reduced {
-            OrderType::ReserveOrder { visible_quantity, hidden_quantity, .. } => {
+            OrderType::ReserveOrder {
+                visible_quantity,
+                hidden_quantity,
+                ..
+            } => {
                 assert_eq!(visible_quantity, 1);
                 assert_eq!(hidden_quantity, 4); // Hidden should remain unchanged
-            },
-            _ => panic!("Expected ReserveOrder")
+            }
+            _ => panic!("Expected ReserveOrder"),
         }
     }
 
@@ -538,14 +542,16 @@ mod tests {
         let display_str = format!("{}", order);
 
         // Assuming the Display implementation for PostOnly is completed
-        assert!(display_str.contains("OrderType variant not fully implemented for Display") ||
-            (display_str.starts_with("PostOnly:") &&
-                display_str.contains("id=125") &&
-                display_str.contains("price=10000") &&
-                display_str.contains("quantity=5") &&
-                display_str.contains("side=BUY") &&
-                display_str.contains("timestamp=1616823000000") &&
-                display_str.contains("time_in_force=GTC")));
+        assert!(
+            display_str.contains("OrderType variant not fully implemented for Display")
+                || (display_str.starts_with("PostOnly:")
+                    && display_str.contains("id=125")
+                    && display_str.contains("price=10000")
+                    && display_str.contains("quantity=5")
+                    && display_str.contains("side=BUY")
+                    && display_str.contains("timestamp=1616823000000")
+                    && display_str.contains("time_in_force=GTC"))
+        );
     }
 
     #[test]
@@ -557,9 +563,23 @@ mod tests {
 
         // If Display is properly implemented, this should work
         if let Ok(parsed) = parsed_order {
-            if let (OrderType::Standard { id: id1, price: price1, quantity: qty1, side: side1, .. },
-                OrderType::Standard { id: id2, price: price2, quantity: qty2, side: side2, .. }) =
-                (original_order, parsed) {
+            if let (
+                OrderType::Standard {
+                    id: id1,
+                    price: price1,
+                    quantity: qty1,
+                    side: side1,
+                    ..
+                },
+                OrderType::Standard {
+                    id: id2,
+                    price: price2,
+                    quantity: qty2,
+                    side: side2,
+                    ..
+                },
+            ) = (original_order, parsed)
+            {
                 assert_eq!(id1, id2);
                 assert_eq!(price1, price2);
                 assert_eq!(qty1, qty2);
@@ -581,7 +601,7 @@ mod tests {
             create_trailing_stop_order(),
             create_pegged_order(),
             create_market_to_limit_order(),
-            create_reserve_order()
+            create_reserve_order(),
         ];
 
         for order in orders {
@@ -589,8 +609,8 @@ mod tests {
 
             // Either properly implemented or properly indicates it's not implemented
             assert!(
-                display_str.contains(":id=") ||
-                    display_str.contains("OrderType variant not fully implemented for Display")
+                display_str.contains(":id=")
+                    || display_str.contains("OrderType variant not fully implemented for Display")
             );
         }
     }
@@ -623,7 +643,14 @@ mod test_order_type_display {
         let parsed = OrderType::from_str(&display_str);
         assert!(parsed.is_ok(), "Failed to parse Standard order string");
 
-        if let Ok(OrderType::Standard { id, price, quantity, side, .. }) = parsed {
+        if let Ok(OrderType::Standard {
+            id,
+            price,
+            quantity,
+            side,
+            ..
+        }) = parsed
+        {
             assert_eq!(id, OrderId(123));
             assert_eq!(price, 10000);
             assert_eq!(quantity, 5);
@@ -655,7 +682,15 @@ mod test_order_type_display {
         let parsed = OrderType::from_str(&display_str);
         assert!(parsed.is_ok(), "Failed to parse IcebergOrder string");
 
-        if let Ok(OrderType::IcebergOrder { id, price, visible_quantity, hidden_quantity, side, .. }) = parsed {
+        if let Ok(OrderType::IcebergOrder {
+            id,
+            price,
+            visible_quantity,
+            hidden_quantity,
+            side,
+            ..
+        }) = parsed
+        {
             assert_eq!(id, OrderId(124));
             assert_eq!(price, 10000);
             assert_eq!(visible_quantity, 1);
@@ -691,7 +726,10 @@ mod test_order_type_display {
             assert!(display_str.contains("time_in_force="));
         } else {
             // If not fully implemented, at least ensure we get the fallback message
-            assert_eq!(display_str, "OrderType variant not fully implemented for Display");
+            assert_eq!(
+                display_str,
+                "OrderType variant not fully implemented for Display"
+            );
         }
     }
 
@@ -719,7 +757,10 @@ mod test_order_type_display {
             assert!(display_str.contains("trail_amount=100"));
             assert!(display_str.contains("last_reference_price=10100"));
         } else {
-            assert_eq!(display_str, "OrderType variant not fully implemented for Display");
+            assert_eq!(
+                display_str,
+                "OrderType variant not fully implemented for Display"
+            );
         }
     }
 
@@ -747,7 +788,10 @@ mod test_order_type_display {
             assert!(display_str.contains("reference_price_offset=-50"));
             assert!(display_str.contains("reference_price_type=BestAsk"));
         } else {
-            assert_eq!(display_str, "OrderType variant not fully implemented for Display");
+            assert_eq!(
+                display_str,
+                "OrderType variant not fully implemented for Display"
+            );
         }
     }
 
@@ -771,7 +815,10 @@ mod test_order_type_display {
             assert!(display_str.contains("quantity=5"));
             assert!(display_str.contains("side=BUY"));
         } else {
-            assert_eq!(display_str, "OrderType variant not fully implemented for Display");
+            assert_eq!(
+                display_str,
+                "OrderType variant not fully implemented for Display"
+            );
         }
     }
 
@@ -799,7 +846,10 @@ mod test_order_type_display {
             assert!(display_str.contains("side=SELL"));
             assert!(display_str.contains("replenish_threshold=0"));
         } else {
-            assert_eq!(display_str, "OrderType variant not fully implemented for Display");
+            assert_eq!(
+                display_str,
+                "OrderType variant not fully implemented for Display"
+            );
         }
     }
 }

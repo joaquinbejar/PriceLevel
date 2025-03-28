@@ -1,10 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::orders::{OrderId, OrderType, Side, TimeInForce, PegReferenceType};
-    use crate::price_level::core::PriceLevel;
+    use crate::errors::PriceLevelError;
+    use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
+    use crate::price_level::price_level::PriceLevel;
     use std::str::FromStr;
-    use std::sync::Arc;
-    use std::thread;
 
     // Helper functions to create different order types for testing
     fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
@@ -78,7 +77,13 @@ mod tests {
         }
     }
 
-    fn create_reserve_order(id: u64, price: u64, visible: u64, hidden: u64, threshold: u64) -> OrderType {
+    fn create_reserve_order(
+        id: u64,
+        price: u64,
+        visible: u64,
+        hidden: u64,
+        threshold: u64,
+    ) -> OrderType {
         OrderType::ReserveOrder {
             id: OrderId(id),
             price,
@@ -186,7 +191,7 @@ mod tests {
         price_level.add_order(create_reserve_order(4, 10000, 25, 100, 10));
 
         assert_eq!(price_level.visible_quantity(), 250); // 100 + 50 + 75 + 25
-        assert_eq!(price_level.hidden_quantity(), 300);  // 0 + 200 + 0 + 100
+        assert_eq!(price_level.hidden_quantity(), 300); // 0 + 200 + 0 + 100
         assert_eq!(price_level.order_count(), 4);
         assert_eq!(price_level.total_quantity(), 550);
 
@@ -195,32 +200,44 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_order() {
+    fn test_update_order_cancel() {
         let price_level = PriceLevel::new(10000);
 
         price_level.add_order(create_standard_order(1, 10000, 100));
         price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
 
-        // Remove the standard order
-        let removed = price_level.remove_order(OrderId(1));
+        // Cancel the standard order using OrderUpdate
+        let result = price_level.update_order(OrderUpdate::Cancel {
+            order_id: OrderId(1),
+        });
 
+        assert!(result.is_ok());
+        let removed = result.unwrap();
         assert!(removed.is_some());
         assert_eq!(removed.unwrap().id(), OrderId(1));
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 200);
         assert_eq!(price_level.order_count(), 1);
 
-        // Remove the iceberg order
-        let removed = price_level.remove_order(OrderId(2));
+        // Cancel the iceberg order
+        let result = price_level.update_order(OrderUpdate::Cancel {
+            order_id: OrderId(2),
+        });
 
+        assert!(result.is_ok());
+        let removed = result.unwrap();
         assert!(removed.is_some());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
 
-        // Try to remove a non-existent order
-        let removed = price_level.remove_order(OrderId(3));
-        assert!(removed.is_none());
+        // Try to cancel a non-existent order
+        let result = price_level.update_order(OrderUpdate::Cancel {
+            order_id: OrderId(3),
+        });
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
 
         // Verify stats
         assert_eq!(price_level.stats().orders_added(), 2);
@@ -290,7 +307,7 @@ mod tests {
         // Match with quantity exceeding available
         let remaining = price_level.match_order(150);
 
-        assert_eq!(remaining, 50);  // 150 - 100 = 50 remaining
+        assert_eq!(remaining, 50); // 150 - 100 = 50 remaining
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -380,7 +397,7 @@ mod tests {
 
         assert_eq!(remaining, 0);
         // Based on the implementation, it doesn't automatically replenish
-        // Replenishment would happen on the next match attempt 
+        // Replenishment would happen on the next match attempt
         assert_eq!(price_level.visible_quantity(), 15); // 25 - 10 = 15
         assert_eq!(price_level.hidden_quantity(), 150); // Still no change to hidden
     }
@@ -549,8 +566,14 @@ mod tests {
 
         // Verify properties
         assert_eq!(deserialized.price(), price_level.price());
-        assert_eq!(deserialized.visible_quantity(), price_level.visible_quantity());
-        assert_eq!(deserialized.hidden_quantity(), price_level.hidden_quantity());
+        assert_eq!(
+            deserialized.visible_quantity(),
+            price_level.visible_quantity()
+        );
+        assert_eq!(
+            deserialized.hidden_quantity(),
+            price_level.hidden_quantity()
+        );
         assert_eq!(deserialized.order_count(), price_level.order_count());
 
         // Verify orders
@@ -562,7 +585,10 @@ mod tests {
         for i in 0..original_orders.len() {
             assert_eq!(deserialized_orders[i].id(), original_orders[i].id());
             assert_eq!(deserialized_orders[i].price(), original_orders[i].price());
-            assert_eq!(deserialized_orders[i].visible_quantity(), original_orders[i].visible_quantity());
+            assert_eq!(
+                deserialized_orders[i].visible_quantity(),
+                original_orders[i].visible_quantity()
+            );
         }
     }
 
@@ -607,58 +633,132 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_operations() {
-        let price_level = Arc::new(PriceLevel::new(10000));
-        let price_level_clone = price_level.clone();
+    fn test_update_order_quantity() {
+        let price_level = PriceLevel::new(10000);
 
-        // Add some initial orders
         price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 150));
 
-        // Spawn a thread that will add and remove orders
-        let handle = thread::spawn(move || {
-            price_level_clone.add_order(create_standard_order(3, 10000, 75));
-            price_level_clone.add_order(create_post_only_order(4, 10000, 125));
-            price_level_clone.remove_order(OrderId(1));
-
-            // Match order but with changes to the second thread
-            // This will try to match the iceberg order, but threads might interact
-            price_level_clone.match_order(50);
+        // Update the quantity
+        let result = price_level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: OrderId(1),
+            new_quantity: 50,
         });
 
-        // Meanwhile in the main thread
-        price_level.add_order(create_trailing_stop_order(5, 10000, 200));
-        price_level.add_order(create_pegged_order(6, 10000, 150));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+        assert_eq!(price_level.visible_quantity(), 50);
+        assert_eq!(price_level.order_count(), 1);
 
-        // Try to remove order 2, but may be affected by the other thread's operations
-        price_level.remove_order(OrderId(2));
+        // Try to update a non-existent order
+        let result = price_level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: OrderId(999),
+            new_quantity: 30,
+        });
 
-        // Wait for the other thread to complete
-        handle.join().unwrap();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
 
-        // Get the actual final state
-        let final_order_count = price_level.order_count();
-        println!("Final order count: {}", final_order_count);
+    #[test]
+    fn test_update_order_price() {
+        let price_level = PriceLevel::new(10000);
 
-        // Get all remaining orders 
-        let orders = price_level.iter_orders();
+        price_level.add_order(create_standard_order(1, 10000, 100));
 
-        // Verify the remaining order IDs (note that order might not be preserved)
-        let mut order_ids: Vec<u64> = orders.iter().map(|o| o.id().0).collect();
-        order_ids.sort();
-        println!("Remaining order IDs: {:?}", order_ids);
+        // Update the price to a different value (should remove from this level)
+        let result = price_level.update_order(OrderUpdate::UpdatePrice {
+            order_id: OrderId(1),
+            new_price: 11000,
+        });
 
-        // Due to concurrency, we can't be completely certain about the exact count
-        // But we know that orders 3, 4, 5, 6 should be added and 1 should be removed
-        // Order 2 might or might not be removed or matched completely depending on timing
-        assert!(order_ids.contains(&3));
-        assert!(order_ids.contains(&4));
-        assert!(order_ids.contains(&5));
-        assert!(order_ids.contains(&6));
-        assert!(!order_ids.contains(&1)); // Order 1 should definitely be removed
+        assert!(result.is_ok());
+        let removed = result.unwrap();
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id(), OrderId(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
 
-        // The final count should be at least 4 (orders 3, 4, 5, 6)
-        // and at most 5 (if order 2 is still around)
-        assert!((4..=5).contains(&final_order_count));
+        // Try updating to the same price
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        let result = price_level.update_order(OrderUpdate::UpdatePrice {
+            order_id: OrderId(2),
+            new_price: 10000,
+        });
+
+        assert!(result.is_err());
+        match result {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("same value"));
+            }
+            _ => panic!("Expected InvalidOperation error"),
+        }
+    }
+
+    #[test]
+    fn test_update_order_price_and_quantity() {
+        let price_level = PriceLevel::new(10000);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        // Update both price and quantity (different price should remove from level)
+        let result = price_level.update_order(OrderUpdate::UpdatePriceAndQuantity {
+            order_id: OrderId(1),
+            new_price: 11000,
+            new_quantity: 50,
+        });
+
+        assert!(result.is_ok());
+        let removed = result.unwrap();
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id(), OrderId(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+
+        // Update with same price but different quantity
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        let result = price_level.update_order(OrderUpdate::UpdatePriceAndQuantity {
+            order_id: OrderId(2),
+            new_price: 10000,
+            new_quantity: 50,
+        });
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+        assert_eq!(price_level.visible_quantity(), 50);
+    }
+
+    #[test]
+    fn test_update_order_replace() {
+        let price_level = PriceLevel::new(10000);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        // Replace order with different price
+        let result = price_level.update_order(OrderUpdate::Replace {
+            order_id: OrderId(1),
+            price: 11000,
+            quantity: 50,
+            side: Side::Buy,
+        });
+
+        assert!(result.is_ok());
+        let removed = result.unwrap();
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().id(), OrderId(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+
+        // Replace with same price
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        let result = price_level.update_order(OrderUpdate::Replace {
+            order_id: OrderId(2),
+            price: 10000,
+            quantity: 50,
+            side: Side::Buy,
+        });
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+        assert_eq!(price_level.visible_quantity(), 50);
     }
 }

@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use crate::errors::PriceLevelError;
+use crate::orders::OrderType;
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
-use serde::ser::SerializeStruct;
-use serde::de::{self, Visitor, MapAccess};
-use crate::orders::OrderType;
-use crate::errors::PriceLevelError;
+use std::sync::Arc;
 
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
@@ -56,9 +56,8 @@ impl Serialize for PriceLevelSnapshot {
         state.serialize_field("hidden_quantity", &self.hidden_quantity)?;
         state.serialize_field("order_count", &self.order_count)?;
 
-        let plain_orders: Vec<OrderType> = self.orders.iter()
-            .map(|arc_order| (**arc_order))
-            .collect();
+        let plain_orders: Vec<OrderType> =
+            self.orders.iter().map(|arc_order| (**arc_order)).collect();
 
         state.serialize_field("orders", &plain_orders)?;
 
@@ -71,7 +70,13 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
     where
         D: Deserializer<'de>,
     {
-        enum Field { Price, VisibleQuantity, HiddenQuantity, OrderCount, Orders }
+        enum Field {
+            Price,
+            VisibleQuantity,
+            HiddenQuantity,
+            OrderCount,
+            Orders,
+        }
 
         impl<'de> Deserialize<'de> for Field {
             fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
@@ -97,7 +102,16 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             "hidden_quantity" => Ok(Field::HiddenQuantity),
                             "order_count" => Ok(Field::OrderCount),
                             "orders" => Ok(Field::Orders),
-                            _ => Err(de::Error::unknown_field(value, &["price", "visible_quantity", "hidden_quantity", "order_count", "orders"])),
+                            _ => Err(de::Error::unknown_field(
+                                value,
+                                &[
+                                    "price",
+                                    "visible_quantity",
+                                    "hidden_quantity",
+                                    "order_count",
+                                    "orders",
+                                ],
+                            )),
                         }
                     }
                 }
@@ -165,9 +179,12 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                 }
 
                 let price = price.ok_or_else(|| de::Error::missing_field("price"))?;
-                let visible_quantity = visible_quantity.ok_or_else(|| de::Error::missing_field("visible_quantity"))?;
-                let hidden_quantity = hidden_quantity.ok_or_else(|| de::Error::missing_field("hidden_quantity"))?;
-                let order_count = order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
+                let visible_quantity =
+                    visible_quantity.ok_or_else(|| de::Error::missing_field("visible_quantity"))?;
+                let hidden_quantity =
+                    hidden_quantity.ok_or_else(|| de::Error::missing_field("hidden_quantity"))?;
+                let order_count =
+                    order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
                 let orders = orders.unwrap_or_default();
 
                 Ok(PriceLevelSnapshot {
@@ -180,7 +197,13 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
             }
         }
 
-        const FIELDS: &[&str] = &["price", "visible_quantity", "hidden_quantity", "order_count", "orders"];
+        const FIELDS: &[&str] = &[
+            "price",
+            "visible_quantity",
+            "hidden_quantity",
+            "order_count",
+            "orders",
+        ];
         deserializer.deserialize_struct("PriceLevelSnapshot", FIELDS, PriceLevelSnapshotVisitor)
     }
 }
@@ -190,10 +213,7 @@ impl fmt::Display for PriceLevelSnapshot {
         write!(
             f,
             "PriceLevelSnapshot:price={};visible_quantity={};hidden_quantity={};order_count={}",
-            self.price,
-            self.visible_quantity,
-            self.hidden_quantity,
-            self.order_count
+            self.price, self.visible_quantity, self.hidden_quantity, self.order_count
         )
     }
 }

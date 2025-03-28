@@ -1,7 +1,7 @@
+use crate::errors::PriceLevelError;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
-use crate::errors::PriceLevelError;
 
 /// Specifies how long an order remains active before it is executed or expires
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
