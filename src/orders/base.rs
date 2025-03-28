@@ -25,7 +25,7 @@ impl FromStr for Side {
         match s.to_uppercase().as_str() {
             "BUY" => Ok(Side::Buy),
             "SELL" => Ok(Side::Sell),
-            _ => Err(PriceLevelError::ParseError{
+            _ => Err(PriceLevelError::ParseError {
                 message: "Failed to parse Side".to_string(),
             }),
         }

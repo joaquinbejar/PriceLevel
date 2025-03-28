@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests_side {
     use crate::orders::Side;
-    use serde_json;
 
     #[test]
     fn test_side_equality() {
@@ -13,11 +12,11 @@ mod tests_side {
     #[test]
     fn test_side_clone() {
         let buy = Side::Buy;
-        let cloned_buy = buy.clone();
+        let cloned_buy = buy;
         assert_eq!(buy, cloned_buy);
 
         let sell = Side::Sell;
-        let cloned_sell = sell.clone();
+        let cloned_sell = sell;
         assert_eq!(sell, cloned_sell);
     }
 
@@ -93,7 +92,6 @@ mod tests_side {
 #[cfg(test)]
 mod tests_orderid {
     use crate::orders::OrderId;
-    use serde_json;
 
     #[test]
     fn test_order_id_creation() {
@@ -113,7 +111,7 @@ mod tests_orderid {
     #[test]
     fn test_order_id_clone() {
         let id = OrderId(12345);
-        let cloned_id = id.clone();
+        let cloned_id = id;
         assert_eq!(id, cloned_id);
     }
 
@@ -188,7 +186,6 @@ mod tests_order {
     use crate::errors::PriceLevelError::ParseError;
     use crate::orders::base::Order;
     use crate::orders::{OrderId, Side};
-    use serde_json;
 
     #[test]
     fn test_order_creation() {
@@ -235,7 +232,7 @@ mod tests_order {
     #[test]
     fn test_order_clone() {
         let order = Order::buy(1, 100, 10, 1656789012345);
-        let cloned = order.clone();
+        let cloned = order;
         assert_eq!(order, cloned);
     }
 

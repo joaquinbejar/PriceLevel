@@ -32,7 +32,7 @@ mod tests {
     #[test]
     fn test_is_expired_day() {
         let tif = TimeInForce::Day;
-        let market_close = 1600; 
+        let market_close = 1600;
         assert!(!tif.is_expired(1500, None));
         assert!(!tif.is_expired(1500, Some(market_close)));
         assert!(tif.is_expired(1600, Some(market_close)));
@@ -56,44 +56,106 @@ mod tests {
 
     #[test]
     fn test_serialize_gtd() {
-        assert_eq!(serde_json::to_string(&TimeInForce::Gtd(12345)).unwrap(), "{\"GTD\":12345}");
+        assert_eq!(
+            serde_json::to_string(&TimeInForce::Gtd(12345)).unwrap(),
+            "{\"GTD\":12345}"
+        );
     }
 
     #[test]
     fn test_deserialize_standard_format() {
         // Formato estándar, usando los nombres exactos de las variantes
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Gtc\"").unwrap(), TimeInForce::Gtc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"GTC\"").unwrap(), TimeInForce::Gtc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Ioc\"").unwrap(), TimeInForce::Ioc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"IOC\"").unwrap(), TimeInForce::Ioc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Fok\"").unwrap(), TimeInForce::Fok);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"FOK\"").unwrap(), TimeInForce::Fok);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Day\"").unwrap(), TimeInForce::Day);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"DAY\"").unwrap(), TimeInForce::Day);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Gtc\"").unwrap(),
+            TimeInForce::Gtc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"GTC\"").unwrap(),
+            TimeInForce::Gtc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Ioc\"").unwrap(),
+            TimeInForce::Ioc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"IOC\"").unwrap(),
+            TimeInForce::Ioc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Fok\"").unwrap(),
+            TimeInForce::Fok
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"FOK\"").unwrap(),
+            TimeInForce::Fok
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Day\"").unwrap(),
+            TimeInForce::Day
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"DAY\"").unwrap(),
+            TimeInForce::Day
+        );
     }
 
     #[test]
     fn test_deserialize_mixed_case() {
-
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Gtc\"").unwrap(), TimeInForce::Gtc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"gtc\"").unwrap(), TimeInForce::Gtc);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Gtc\"").unwrap(),
+            TimeInForce::Gtc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"gtc\"").unwrap(),
+            TimeInForce::Gtc
+        );
         // assert_eq!(serde_json::from_str::<TimeInForce>("\"iOc\"").unwrap(), TimeInForce::Ioc); // Esto fallará
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Ioc\"").unwrap(), TimeInForce::Ioc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"ioc\"").unwrap(), TimeInForce::Ioc);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Ioc\"").unwrap(),
+            TimeInForce::Ioc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"ioc\"").unwrap(),
+            TimeInForce::Ioc
+        );
         // assert_eq!(serde_json::from_str::<TimeInForce>("\"fOk\"").unwrap(), TimeInForce::Fok); // Esto fallará
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Fok\"").unwrap(), TimeInForce::Fok);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"fok\"").unwrap(), TimeInForce::Fok);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Fok\"").unwrap(),
+            TimeInForce::Fok
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"fok\"").unwrap(),
+            TimeInForce::Fok
+        );
         // assert_eq!(serde_json::from_str::<TimeInForce>("\"dAy\"").unwrap(), TimeInForce::Day); // Esto fallará
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"Day\"").unwrap(), TimeInForce::Day);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"day\"").unwrap(), TimeInForce::Day);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"Day\"").unwrap(),
+            TimeInForce::Day
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"day\"").unwrap(),
+            TimeInForce::Day
+        );
     }
 
     #[test]
     fn test_deserialize_lowercase() {
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"gtc\"").unwrap(), TimeInForce::Gtc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"ioc\"").unwrap(), TimeInForce::Ioc);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"fok\"").unwrap(), TimeInForce::Fok);
-        assert_eq!(serde_json::from_str::<TimeInForce>("\"day\"").unwrap(), TimeInForce::Day);
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"gtc\"").unwrap(),
+            TimeInForce::Gtc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"ioc\"").unwrap(),
+            TimeInForce::Ioc
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"fok\"").unwrap(),
+            TimeInForce::Fok
+        );
+        assert_eq!(
+            serde_json::from_str::<TimeInForce>("\"day\"").unwrap(),
+            TimeInForce::Day
+        );
     }
 
     #[test]

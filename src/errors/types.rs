@@ -1,30 +1,40 @@
-use std::fmt;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter, Result};
 
 pub enum PriceLevelError {
-    ParseError{ 
-        message: String
-    },
+    ParseError { message: String },
+    InvalidFormat,
+    UnknownOrderType(String),
+    MissingField(String),
+    InvalidFieldValue { field: String, value: String },
 }
 
-impl fmt::Display for PriceLevelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for PriceLevelError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             PriceLevelError::ParseError { message } => write!(f, "{}", message),
-            _ => {
-                write!(f, "An unknown error occurred")
+            PriceLevelError::InvalidFormat => write!(f, "Invalid format"),
+            PriceLevelError::UnknownOrderType(order_type) => {
+                write!(f, "Unknown order type: {}", order_type)
+            }
+            PriceLevelError::MissingField(field) => write!(f, "Missing field: {}", field),
+            PriceLevelError::InvalidFieldValue { field, value } => {
+                write!(f, "Invalid value for field {}: {}", field, value)
             }
         }
     }
 }
 
-
 impl Debug for PriceLevelError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            PriceLevelError::ParseError{ message } => write!(f, "{}", message),
-            _ => {
-                write!(f, "An unknown error occurred")
+            PriceLevelError::ParseError { message } => write!(f, "{}", message),
+            PriceLevelError::InvalidFormat => write!(f, "Invalid format"),
+            PriceLevelError::UnknownOrderType(order_type) => {
+                write!(f, "Unknown order type: {}", order_type)
+            }
+            PriceLevelError::MissingField(field) => write!(f, "Missing field: {}", field),
+            PriceLevelError::InvalidFieldValue { field, value } => {
+                write!(f, "Invalid value for field {}: {}", field, value)
             }
         }
     }

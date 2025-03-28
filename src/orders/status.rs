@@ -1,5 +1,9 @@
+use crate::errors::PriceLevelError;
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+
 /// Represents the current status of an order in the system
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrderStatus {
     /// Order has been created but not yet processed
     New,
@@ -36,5 +40,38 @@ impl OrderStatus {
             self,
             Self::Filled | Self::Canceled | Self::Rejected | Self::Expired
         )
+    }
+}
+
+impl FromStr for OrderStatus {
+    type Err = PriceLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "NEW" => Ok(OrderStatus::New),
+            "ACTIVE" => Ok(OrderStatus::Active),
+            "PARTIALLYFILLED" => Ok(OrderStatus::PartiallyFilled),
+            "FILLED" => Ok(OrderStatus::Filled),
+            "CANCELED" => Ok(OrderStatus::Canceled),
+            "REJECTED" => Ok(OrderStatus::Rejected),
+            "EXPIRED" => Ok(OrderStatus::Expired),
+            _ => Err(PriceLevelError::ParseError {
+                message: format!("Invalid OrderStatus: {}", s),
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for OrderStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OrderStatus::New => write!(f, "NEW"),
+            OrderStatus::Active => write!(f, "ACTIVE"),
+            OrderStatus::PartiallyFilled => write!(f, "PARTIALLYFILLED"),
+            OrderStatus::Filled => write!(f, "FILLED"),
+            OrderStatus::Canceled => write!(f, "CANCELED"),
+            OrderStatus::Rejected => write!(f, "REJECTED"),
+            OrderStatus::Expired => write!(f, "EXPIRED"),
+        }
     }
 }

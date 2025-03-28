@@ -1,10 +1,14 @@
 //! Limit order type definitions
 
+use crate::errors::PriceLevelError;
 use crate::orders::time_in_force::TimeInForce;
 use crate::orders::{OrderId, PegReferenceType, Side};
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 
 /// Represents different types of limit orders
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum OrderType {
     /// Standard limit order
     Standard {
@@ -298,7 +302,7 @@ impl OrderType {
                 time_in_force: *time_in_force,
             },
             // For other order types, similar pattern...
-            _ => self.clone(), // Default fallback, though this should be implemented for all types
+            _ => *self, // Default fallback, though this should be implemented for all types
         }
     }
 
@@ -357,7 +361,289 @@ impl OrderType {
                     used_hidden,
                 )
             }
-            _ => (self.clone(), 0), // Non-iceberg orders don't refresh
+            _ => (*self, 0), // Non-iceberg orders don't refresh
+        }
+    }
+}
+
+/// Expected string format:
+/// ORDER_TYPE:id=<id>;price=<price>;quantity=<qty>;side=<BUY|SELL>;timestamp=<ts>;time_in_force=<tif>;[additional fields]
+///
+/// Examples:
+/// - Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC
+/// - IcebergOrder:id=124;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC
+impl FromStr for OrderType {
+    type Err = PriceLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err(PriceLevelError::InvalidFormat);
+        }
+
+        let order_type = parts[0];
+        let fields_str = parts[1];
+
+        let mut fields = std::collections::HashMap::new();
+        for field_pair in fields_str.split(';') {
+            let kv: Vec<&str> = field_pair.split('=').collect();
+            if kv.len() == 2 {
+                fields.insert(kv[0], kv[1]);
+            }
+        }
+
+        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
+            match fields.get(field) {
+                Some(result) => Ok(*result),
+                None => Err(PriceLevelError::MissingField(field.to_string())),
+            }
+        };
+
+        let parse_u64 = |field: &str, value: &str| -> Result<u64, PriceLevelError> {
+            value
+                .parse::<u64>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
+        let parse_i64 = |field: &str, value: &str| -> Result<i64, PriceLevelError> {
+            value
+                .parse::<i64>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
+        // Parse common fields
+        let id_str = get_field("id")?;
+        let id = OrderId(parse_u64("id", id_str)?);
+
+        let price_str = get_field("price")?;
+        let price = parse_u64("price", price_str)?;
+
+        let side_str = get_field("side")?;
+        let side = match side_str {
+            "BUY" => Side::Buy,
+            "SELL" => Side::Sell,
+            _ => {
+                return Err(PriceLevelError::InvalidFieldValue {
+                    field: "side".to_string(),
+                    value: side_str.to_string(),
+                });
+            }
+        };
+
+        let timestamp_str = get_field("timestamp")?;
+        let timestamp = parse_u64("timestamp", timestamp_str)?;
+
+        let tif_str = get_field("time_in_force")?;
+        let time_in_force = match tif_str {
+            "GTC" => TimeInForce::Gtc,
+            "IOC" => TimeInForce::Ioc,
+            "FOK" => TimeInForce::Fok,
+            "DAY" => TimeInForce::Day,
+            _ if tif_str.starts_with("GTD-") => {
+                let date_str = &tif_str[4..];
+                let expiry = parse_u64("time_in_force", date_str)?;
+                TimeInForce::Gtd(expiry)
+            }
+            _ => {
+                return Err(PriceLevelError::InvalidFieldValue {
+                    field: "time_in_force".to_string(),
+                    value: tif_str.to_string(),
+                });
+            }
+        };
+
+        // Parse specific order types
+        match order_type {
+            "Standard" => {
+                let quantity_str = get_field("quantity")?;
+                let quantity = parse_u64("quantity", quantity_str)?;
+
+                Ok(OrderType::Standard {
+                    id,
+                    price,
+                    quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                })
+            }
+            "IcebergOrder" => {
+                let visible_quantity_str = get_field("visible_quantity")?;
+                let visible_quantity = parse_u64("visible_quantity", visible_quantity_str)?;
+
+                let hidden_quantity_str = get_field("hidden_quantity")?;
+                let hidden_quantity = parse_u64("hidden_quantity", hidden_quantity_str)?;
+
+                Ok(OrderType::IcebergOrder {
+                    id,
+                    price,
+                    visible_quantity,
+                    hidden_quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                })
+            }
+            "PostOnly" => {
+                let quantity_str = get_field("quantity")?;
+                let quantity = parse_u64("quantity", quantity_str)?;
+
+                Ok(OrderType::PostOnly {
+                    id,
+                    price,
+                    quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                })
+            }
+            "TrailingStop" => {
+                let quantity_str = get_field("quantity")?;
+                let quantity = parse_u64("quantity", quantity_str)?;
+
+                let trail_amount_str = get_field("trail_amount")?;
+                let trail_amount = parse_u64("trail_amount", trail_amount_str)?;
+
+                let last_reference_price_str = get_field("last_reference_price")?;
+                let last_reference_price =
+                    parse_u64("last_reference_price", last_reference_price_str)?;
+
+                Ok(OrderType::TrailingStop {
+                    id,
+                    price,
+                    quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                    trail_amount,
+                    last_reference_price,
+                })
+            }
+            "PeggedOrder" => {
+                let quantity_str = get_field("quantity")?;
+                let quantity = parse_u64("quantity", quantity_str)?;
+
+                let reference_price_offset_str = get_field("reference_price_offset")?;
+                let reference_price_offset =
+                    parse_i64("reference_price_offset", reference_price_offset_str)?;
+
+                let reference_price_type_str = get_field("reference_price_type")?;
+                let reference_price_type = match reference_price_type_str {
+                    "BestBid" => PegReferenceType::BestBid,
+                    "BestAsk" => PegReferenceType::BestAsk,
+                    "MidPrice" => PegReferenceType::MidPrice,
+                    "LastTrade" => PegReferenceType::LastTrade,
+                    _ => {
+                        return Err(PriceLevelError::InvalidFieldValue {
+                            field: "reference_price_type".to_string(),
+                            value: reference_price_type_str.to_string(),
+                        });
+                    }
+                };
+
+                Ok(OrderType::PeggedOrder {
+                    id,
+                    price,
+                    quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                    reference_price_offset,
+                    reference_price_type,
+                })
+            }
+            "MarketToLimit" => {
+                let quantity_str = get_field("quantity")?;
+                let quantity = parse_u64("quantity", quantity_str)?;
+
+                Ok(OrderType::MarketToLimit {
+                    id,
+                    price,
+                    quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                })
+            }
+            "ReserveOrder" => {
+                let visible_quantity_str = get_field("visible_quantity")?;
+                let visible_quantity = parse_u64("visible_quantity", visible_quantity_str)?;
+
+                let hidden_quantity_str = get_field("hidden_quantity")?;
+                let hidden_quantity = parse_u64("hidden_quantity", hidden_quantity_str)?;
+
+                let replenish_threshold_str = get_field("replenish_threshold")?;
+                let replenish_threshold =
+                    parse_u64("replenish_threshold", replenish_threshold_str)?;
+
+                Ok(OrderType::ReserveOrder {
+                    id,
+                    price,
+                    visible_quantity,
+                    hidden_quantity,
+                    side,
+                    timestamp,
+                    time_in_force,
+                    replenish_threshold,
+                })
+            }
+            _ => Err(PriceLevelError::UnknownOrderType(order_type.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for OrderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OrderType::Standard {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
+                write!(
+                    f,
+                    "Standard:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    id.0,
+                    price,
+                    quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    format!("{:?}", time_in_force)
+                )
+            }
+            OrderType::IcebergOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
+                write!(
+                    f,
+                    "IcebergOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={}",
+                    id.0,
+                    price,
+                    visible_quantity,
+                    hidden_quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    format!("{:?}", time_in_force)
+                )
+            }
+            // Implement the rest of the order types similarly
+            // This is a simplified implementation for demonstration
+            _ => write!(f, "OrderType variant not fully implemented for Display"),
         }
     }
 }

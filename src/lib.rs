@@ -184,5 +184,5 @@ mod orders;
 mod price_level;
 mod utils;
 
-mod execution;
 mod errors;
+mod execution;

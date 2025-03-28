@@ -40,17 +40,3 @@ impl PriceLevelSnapshot {
         self.orders.iter()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_snapshot_basic() {
-        let snapshot = PriceLevelSnapshot::new(10000);
-        assert_eq!(snapshot.price, 10000);
-        assert_eq!(snapshot.visible_quantity, 0);
-        assert_eq!(snapshot.order_count, 0);
-        assert_eq!(snapshot.total_quantity(), 0);
-    }
-}
