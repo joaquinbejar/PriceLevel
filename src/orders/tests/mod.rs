@@ -1,5 +1,5 @@
 mod base;
-mod limit;
+mod order_type;
 mod pegged;
 mod status;
 mod time_in_force;

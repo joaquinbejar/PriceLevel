@@ -659,6 +659,6 @@ mod tests {
 
         // The final count should be at least 4 (orders 3, 4, 5, 6)
         // and at most 5 (if order 2 is still around)
-        assert!(final_order_count >= 4 && final_order_count <= 5);
+        assert!((4..=5).contains(&final_order_count));
     }
 }

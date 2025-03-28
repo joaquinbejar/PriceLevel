@@ -4,11 +4,11 @@ use std::fmt;
 use std::str::FromStr;
 use crate::orders::{OrderId, OrderType};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
-use crossbeam::queue::SegQueue;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
 use crate::errors::PriceLevelError;
+use crate::price_level::order_queue::OrderQueue;
 
 /// A lock-free implementation of a price level in a limit order book
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct PriceLevel {
     order_count: AtomicUsize,
 
     /// Queue of orders at this price level
-    orders: SegQueue<Arc<OrderType>>,
+    orders: OrderQueue,
 
     /// Statistics for this price level
     stats: Arc<PriceLevelStatistics>,
@@ -40,7 +40,7 @@ impl PriceLevel {
             visible_quantity: AtomicU64::new(0),
             hidden_quantity: AtomicU64::new(0),
             order_count: AtomicUsize::new(0),
-            orders: SegQueue::new(),
+            orders: OrderQueue::new(),
             stats: Arc::new(PriceLevelStatistics::new()),
         }
     }
@@ -99,285 +99,87 @@ impl PriceLevel {
 
     /// Remove an order by ID
     pub fn remove_order(&self, order_id: OrderId) -> Option<Arc<OrderType>> {
-        // Since SegQueue doesn't support direct removal, pop all elements and keep those we want
-        let mut temp_storage = Vec::new();
-        let mut removed_order = None;
+        let removed_order = self.orders.remove(order_id);
 
-        // Pop all items from the queue
-        while let Some(order_arc) = self.orders.pop() {
-            if order_arc.id() == order_id {
-                // Found the order to remove
-                let order_arc_clone = order_arc.clone();
-                removed_order = Some(order_arc);
+        if let Some(ref order_arc) = removed_order {
+            // Update atomic counters
+            let visible_qty = order_arc.visible_quantity();
+            let hidden_qty = order_arc.hidden_quantity();
 
-                // Update atomic counters
-                let visible_qty = order_arc_clone.visible_quantity();
-                let hidden_qty = order_arc_clone.hidden_quantity();
+            self.visible_quantity.fetch_sub(visible_qty, Ordering::AcqRel);
+            self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
+            self.order_count.fetch_sub(1, Ordering::AcqRel);
 
-                self.visible_quantity
-                    .fetch_sub(visible_qty, Ordering::AcqRel);
-                self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
-                self.order_count.fetch_sub(1, Ordering::AcqRel);
-
-                // Update statistics
-                self.stats.record_order_removed();
-            } else {
-                // Keep this order
-                temp_storage.push(order_arc);
-            }
-        }
-
-        // Push back the orders we want to keep
-        for order in temp_storage {
-            self.orders.push(order);
+            // Update statistics
+            self.stats.record_order_removed();
         }
 
         removed_order
     }
 
     /// Creates an iterator over the orders in the price level.
-    ///
-    /// Note: This method temporarily drains and reconstructs the queue.
-    /// In a high-concurrency environment, this might have performance implications.
     pub fn iter_orders(&self) -> Vec<Arc<OrderType>> {
-        let mut temp_storage = Vec::new();
-
-        while let Some(order) = self.orders.pop() {
-            temp_storage.push(order);
-        }
-
-        for order in &temp_storage {
-            self.orders.push(order.clone());
-        }
-
-        temp_storage
+        self.orders.to_vec()
     }
 
-    /// Process a matching order against this price level
     pub fn match_order(&self, incoming_quantity: u64) -> u64 {
         let mut remaining = incoming_quantity;
-        let mut matched_orders = Vec::new();
 
-        // Find orders to match
         while remaining > 0 {
             if let Some(order_arc) = self.orders.pop() {
-                match &*order_arc {
-                    OrderType::Standard {
-                        quantity, price, ..
-                    } => {
-                        if *quantity <= remaining {
-                            // Full match of the order
-                            remaining -= *quantity;
-                            self.visible_quantity.fetch_sub(*quantity, Ordering::AcqRel);
-                            self.order_count.fetch_sub(1, Ordering::AcqRel);
-                            matched_orders.push(order_arc.clone());
+                // Obtener resultados del matching
+                let (consumed, updated_order, hidden_reduced, new_remaining) =
+                    order_arc.match_against(remaining);
 
-                            // Record execution statistics
-                            self.stats
-                                .record_execution(*quantity, *price, order_arc.timestamp());
-                        } else {
-                            // Partial match of the order
-                            let executed = remaining;
-                            remaining = 0;
-                            self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
+                // Actualizar la cantidad restante
+                remaining = new_remaining;
 
-                            // Create an updated order with reduced quantity
-                            let updated_order =
-                                order_arc.with_reduced_quantity(*quantity - executed);
+                // Actualizar contadores atómicos
+                self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
 
-                            // Record partial execution statistics
-                            self.stats
-                                .record_execution(executed, *price, order_arc.timestamp());
+                // Actualizar estadísticas
+                self.stats.record_execution(consumed, order_arc.price(), order_arc.timestamp());
 
-                            // Put the partially filled order back into the queue
-                            self.orders.push(Arc::new(updated_order));
-                            break;
-                        }
+                if let Some(updated) = updated_order {
+                    // Si hidden_reduced > 0, se refrescó de la cantidad oculta
+                    if hidden_reduced > 0 {
+                        self.hidden_quantity.fetch_sub(hidden_reduced, Ordering::AcqRel);
+                        self.visible_quantity.fetch_add(hidden_reduced, Ordering::AcqRel);
                     }
-                    OrderType::IcebergOrder {
-                        visible_quantity,
-                        hidden_quantity,
-                        price,
-                        ..
-                    } => {
-                        if *visible_quantity <= remaining {
-                            // Fully match the visible portion of the iceberg order
-                            remaining -= *visible_quantity;
-                            self.visible_quantity
-                                .fetch_sub(*visible_quantity, Ordering::AcqRel);
 
-                            // Record execution statistics
-                            self.stats.record_execution(
-                                *visible_quantity,
-                                *price,
-                                order_arc.timestamp(),
-                            );
+                    // Poner la orden actualizada de vuelta en la cola
+                    self.orders.push(Arc::new(updated));
+                } else {
+                    // Orden completamente consumida
+                    self.order_count.fetch_sub(1, Ordering::AcqRel);
 
-                            if *hidden_quantity > 0 {
-                                // Refresh visible portion from hidden quantity
-                                let refresh_qty =
-                                    std::cmp::min(*hidden_quantity, *visible_quantity);
-
-                                // Update the order with refreshed quantities
-                                let (updated_order, used_hidden) =
-                                    order_arc.refresh_iceberg(refresh_qty);
-
-                                // Update atomic counters
-                                self.hidden_quantity
-                                    .fetch_sub(used_hidden, Ordering::AcqRel);
-                                self.visible_quantity
-                                    .fetch_add(refresh_qty, Ordering::AcqRel);
-
-                                if refresh_qty > 0 {
-                                    // Put the updated order back into the queue
-                                    self.orders.push(Arc::new(updated_order));
-                                } else {
-                                    // No more hidden quantity left
-                                    self.order_count.fetch_sub(1, Ordering::AcqRel);
-                                    matched_orders.push(order_arc.clone());
-                                }
-                            } else {
-                                // No hidden quantity left
-                                self.order_count.fetch_sub(1, Ordering::AcqRel);
-                                matched_orders.push(order_arc.clone());
+                    // Si tenía cantidad oculta y no fue considerada en hidden_reduced,
+                    // actualizar hidden_quantity
+                    match &*order_arc {
+                        OrderType::IcebergOrder { hidden_quantity, .. } => {
+                            if *hidden_quantity > 0 && hidden_reduced == 0 {
+                                self.hidden_quantity.fetch_sub(*hidden_quantity, Ordering::AcqRel);
                             }
-                        } else {
-                            // Partially match the visible portion
-                            let executed = remaining;
-                            remaining = 0;
-                            self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
-
-                            // Record partial execution statistics
-                            self.stats
-                                .record_execution(executed, *price, order_arc.timestamp());
-
-                            // Create an updated order with reduced visible quantity
-                            let updated_order =
-                                order_arc.with_reduced_quantity(*visible_quantity - executed);
-
-                            // Put the partially filled order back into the queue
-                            self.orders.push(Arc::new(updated_order));
-                            break;
-                        }
-                    }
-                    OrderType::ReserveOrder {
-                        visible_quantity,
-                        hidden_quantity,
-                        price,
-                        replenish_threshold,
-                        ..
-                    } => {
-                        if *visible_quantity <= remaining {
-                            // Fully match the visible portion of the reserve order
-                            remaining -= *visible_quantity;
-                            self.visible_quantity
-                                .fetch_sub(*visible_quantity, Ordering::AcqRel);
-
-                            // Record execution statistics
-                            self.stats.record_execution(
-                                *visible_quantity,
-                                *price,
-                                order_arc.timestamp(),
-                            );
-
-                            // Check if we need to replenish
-                            if *hidden_quantity > 0 && *visible_quantity <= *replenish_threshold {
-                                // Replenish visible quantity from hidden
-                                let refresh_qty =
-                                    std::cmp::min(*hidden_quantity, *visible_quantity);
-
-                                // Update the order
-                                let (updated_order, used_hidden) =
-                                    order_arc.refresh_iceberg(refresh_qty);
-
-                                // Update atomic counters
-                                self.hidden_quantity
-                                    .fetch_sub(used_hidden, Ordering::AcqRel);
-                                self.visible_quantity
-                                    .fetch_add(refresh_qty, Ordering::AcqRel);
-
-                                if refresh_qty > 0 {
-                                    // Put the updated order back into the queue
-                                    self.orders.push(Arc::new(updated_order));
-                                } else {
-                                    // No more quantity left
-                                    self.order_count.fetch_sub(1, Ordering::AcqRel);
-                                    matched_orders.push(order_arc.clone());
-                                }
-                            } else {
-                                // Either no hidden quantity or not below threshold
-                                if *hidden_quantity == 0 {
-                                    // Remove the order completely
-                                    self.order_count.fetch_sub(1, Ordering::AcqRel);
-                                    matched_orders.push(order_arc.clone());
-                                } else {
-                                    // Put the order back into the queue
-                                    self.orders.push(order_arc);
-                                }
+                        },
+                        OrderType::ReserveOrder { hidden_quantity, .. } => {
+                            if *hidden_quantity > 0 && hidden_reduced == 0 {
+                                self.hidden_quantity.fetch_sub(*hidden_quantity, Ordering::AcqRel);
                             }
-                        } else {
-                            // Partially match the visible portion
-                            let executed = remaining;
-                            remaining = 0;
-                            self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
-
-                            // Record partial execution statistics
-                            self.stats
-                                .record_execution(executed, *price, order_arc.timestamp());
-
-                            // Create an updated order with reduced visible quantity
-                            let updated_order =
-                                order_arc.with_reduced_quantity(*visible_quantity - executed);
-
-                            // Put the partially filled order back into the queue
-                            self.orders.push(Arc::new(updated_order));
-                            break;
-                        }
-                    }
-                    // Handle other order types with a default behavior
-                    _ => {
-                        let visible_qty = order_arc.visible_quantity();
-                        let price = order_arc.price();
-
-                        if visible_qty <= remaining {
-                            // Full match
-                            remaining -= visible_qty;
-                            self.visible_quantity
-                                .fetch_sub(visible_qty, Ordering::AcqRel);
-                            self.order_count.fetch_sub(1, Ordering::AcqRel);
-
-                            // Record execution statistics
-                            self.stats
-                                .record_execution(visible_qty, price, order_arc.timestamp());
-
-                            matched_orders.push(order_arc.clone());
-                        } else {
-                            // Partial match
-                            let executed = remaining;
-                            remaining = 0;
-                            self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
-
-                            // Record partial execution statistics
-                            self.stats
-                                .record_execution(executed, price, order_arc.timestamp());
-
-                            // Create an updated order with reduced quantity
-                            let updated_order =
-                                order_arc.with_reduced_quantity(visible_qty - executed);
-
-                            // Put the partially filled order back into the queue
-                            self.orders.push(Arc::new(updated_order));
-                            break;
-                        }
+                        },
+                        _ => {}
                     }
                 }
+
+                // Si ya no hay cantidad restante, salir del bucle
+                if remaining == 0 {
+                    break;
+                }
             } else {
-                // No more orders at this price level
+                // No más órdenes en este nivel de precio
                 break;
             }
         }
 
-        // Return the remaining quantity that couldn't be matched
         remaining
     }
 
@@ -418,7 +220,7 @@ impl From<&PriceLevel> for PriceLevelData {
             order_count: price_level.order_count(),
             orders: price_level.iter_orders()
                 .into_iter()
-                .map(|order_arc| (*order_arc).clone())
+                .map(|order_arc| (*order_arc))
                 .collect(),
         }
     }
@@ -428,7 +230,7 @@ impl TryFrom<PriceLevelData> for PriceLevel {
     type Error = PriceLevelError;
 
     fn try_from(data: PriceLevelData) -> Result<Self, Self::Error> {
-        let mut price_level = PriceLevel::new(data.price);
+        let price_level = PriceLevel::new(data.price);
 
         // Add orders to the price level
         for order in data.orders {
@@ -492,14 +294,12 @@ impl FromStr for PriceLevel {
         })?;
 
         // Create price level
-        let mut price_level = PriceLevel::new(price);
+        let price_level = PriceLevel::new(price);
 
-        // Parse orders if they exist
         if let Ok(orders_str) = get_field("orders") {
-            // Remove brackets
-            let orders_str = orders_str.trim_matches(|c| c == '[' || c == ']');
 
-            // Split and parse individual orders
+
+            let orders_str = orders_str.trim_matches(|c| c == '[' || c == ']');
             if !orders_str.is_empty() {
                 for order_str in orders_str.split(',') {
                     let order = OrderType::from_str(order_str.trim())?;
