@@ -18,6 +18,15 @@ pub enum Side {
     Sell,
 }
 
+impl Side {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Side::Buy => Side::Sell,
+            Side::Sell => Side::Buy,
+        }
+    }
+}
+
 impl FromStr for Side {
     type Err = PriceLevelError;
 

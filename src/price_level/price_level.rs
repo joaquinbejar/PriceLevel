@@ -1,7 +1,7 @@
 //! Core price level implementation
 
 use crate::errors::PriceLevelError;
-use crate::orders::{OrderType, OrderUpdate};
+use crate::orders::{OrderId, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use crate::execution::{MatchResult, Transaction};
 
 /// A lock-free implementation of a price level in a limit order book
 #[derive(Debug)]
@@ -102,7 +103,8 @@ impl PriceLevel {
         self.orders.to_vec()
     }
 
-    pub fn match_order(&self, incoming_quantity: u64) -> u64 {
+    pub fn match_order(&self, incoming_quantity: u64, taker_order_id: OrderId, transaction_id_generator: &AtomicU64) -> MatchResult {
+        let mut result = MatchResult::new(taker_order_id, incoming_quantity);
         let mut remaining = incoming_quantity;
 
         while remaining > 0 {
@@ -110,13 +112,30 @@ impl PriceLevel {
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
+                if consumed > 0 {
+                    let transaction_id = transaction_id_generator.fetch_add(1, Ordering::SeqCst);
+                    let transaction = Transaction::new(
+                        transaction_id,
+                        taker_order_id,
+                        order_arc.id(),
+                        self.price,
+                        consumed,
+                        order_arc.side().opposite(), 
+                    );
+
+                    result.add_transaction(transaction);
+
+                    // If the order was completely executed, add it to filled_order_ids
+                    if updated_order.is_none() {
+                        result.add_filled_order_id(order_arc.id());
+                    }
+                }
+
                 remaining = new_remaining;
 
-                self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
-
-                self.stats
-                    .record_execution(consumed, order_arc.price(), order_arc.timestamp());
-
+                // update statistics
+                self.stats.record_execution(consumed, order_arc.price(), order_arc.timestamp());
+                
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {
                         self.hidden_quantity
@@ -157,7 +176,10 @@ impl PriceLevel {
             }
         }
 
-        remaining
+        result.remaining_quantity = remaining;
+        result.is_complete = remaining == 0;
+
+        result
     }
 
     /// Create a snapshot of the current price level state
