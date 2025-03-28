@@ -107,22 +107,17 @@ impl PriceLevel {
 
         while remaining > 0 {
             if let Some(order_arc) = self.orders.pop() {
-                // Obtener resultados del matching
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
-                // Actualizar la cantidad restante
                 remaining = new_remaining;
 
-                // Actualizar contadores atómicos
                 self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
 
-                // Actualizar estadísticas
                 self.stats
                     .record_execution(consumed, order_arc.price(), order_arc.timestamp());
 
                 if let Some(updated) = updated_order {
-                    // Si hidden_reduced > 0, se refrescó de la cantidad oculta
                     if hidden_reduced > 0 {
                         self.hidden_quantity
                             .fetch_sub(hidden_reduced, Ordering::AcqRel);
@@ -130,14 +125,9 @@ impl PriceLevel {
                             .fetch_add(hidden_reduced, Ordering::AcqRel);
                     }
 
-                    // Poner la orden actualizada de vuelta en la cola
                     self.orders.push(Arc::new(updated));
                 } else {
-                    // Orden completamente consumida
                     self.order_count.fetch_sub(1, Ordering::AcqRel);
-
-                    // Si tenía cantidad oculta y no fue considerada en hidden_reduced,
-                    // actualizar hidden_quantity
                     match &*order_arc {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
@@ -159,12 +149,10 @@ impl PriceLevel {
                     }
                 }
 
-                // Si ya no hay cantidad restante, salir del bucle
                 if remaining == 0 {
                     break;
                 }
             } else {
-                // No más órdenes en este nivel de precio
                 break;
             }
         }
@@ -173,7 +161,6 @@ impl PriceLevel {
     }
 
     /// Create a snapshot of the current price level state
-    /// Creates a snapshot of the current price level state
     pub fn snapshot(&self) -> PriceLevelSnapshot {
         PriceLevelSnapshot {
             price: self.price,

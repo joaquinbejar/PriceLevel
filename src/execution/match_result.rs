@@ -1,14 +1,16 @@
+use serde::{Deserialize, Serialize};
+use crate::execution::list::TransactionList;
 use crate::execution::transaction::Transaction;
 use crate::orders::OrderId;
 
 /// Represents the result of a matching operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
     pub order_id: OrderId,
 
     /// List of transactions that resulted from the match
-    pub transactions: Vec<Transaction>,
+    pub transactions: TransactionList,
 
     /// Remaining quantity of the incoming order after matching
     pub remaining_quantity: u64,
@@ -25,7 +27,7 @@ impl MatchResult {
     pub fn new(order_id: OrderId, initial_quantity: u64) -> Self {
         Self {
             order_id,
-            transactions: Vec::new(),
+            transactions: TransactionList::new(),
             remaining_quantity: initial_quantity,
             is_complete: false,
             filled_order_ids: Vec::new(),
@@ -36,7 +38,7 @@ impl MatchResult {
     pub fn add_transaction(&mut self, transaction: Transaction) {
         self.remaining_quantity = self.remaining_quantity.saturating_sub(transaction.quantity);
         self.is_complete = self.remaining_quantity == 0;
-        self.transactions.push(transaction);
+        self.transactions.add(transaction);
     }
 
     /// Add a filled order ID to track orders removed from the book
@@ -46,12 +48,12 @@ impl MatchResult {
 
     /// Get the total executed quantity
     pub fn executed_quantity(&self) -> u64 {
-        self.transactions.iter().map(|t| t.quantity).sum()
+        self.transactions.as_vec().iter().map(|t| t.quantity).sum()
     }
 
     /// Get the total value executed
     pub fn executed_value(&self) -> u64 {
-        self.transactions.iter().map(|t| t.price * t.quantity).sum()
+        self.transactions.as_vec().iter().map(|t| t.price * t.quantity).sum()
     }
 
     /// Calculate the average execution price
