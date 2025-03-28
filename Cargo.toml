@@ -1,0 +1,61 @@
+[package]
+name = "pricelevel"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joaquin Bejar <jb@taunais.com>"]
+description = "A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/joaquinbejar/PriceLevel"
+homepage = "https://github.com/joaquinbejar/PriceLevel"
+keywords = ["finance", "orderbook", "trading"]
+categories = ["finance", "data-structures"]
+
+
+include = [
+    "benches/**/*",
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+    "examples/**/*.rs",
+    "tests/**/*.rs",
+    "Makefile",
+    "rust-toolchain.toml",
+    "Draws/**/*.png",
+    "Docker/**/*.Dockerfile",
+    "Docker/**/*.yml",
+]
+
+[dependencies]
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19"}
+serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+crossbeam = "0.8.4"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", default-features = false, features = ["html_reports"] }
+
+[[test]]
+name = "tests"
+path = "tests/unit/mod.rs"
+
+[[bench]]
+name = "benches"
+path = "benches/mod.rs"
+harness = false
+
+[lib]
+name = "pricelevel"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = [
+    "examples"
+]
+
+[workspace.dependencies]
+pricelevel = { path = "." }
+tracing = "0.1.41"
