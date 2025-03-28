@@ -1,7 +1,7 @@
 //! Limit order type definitions
 
-use crate::orders::{OrderId, PegReferenceType, Side};
 use crate::orders::time_in_force::TimeInForce;
+use crate::orders::{OrderId, PegReferenceType, Side};
 
 /// Represents different types of limit orders
 #[derive(Debug, Clone)]
@@ -164,20 +164,28 @@ impl OrderType {
     pub fn visible_quantity(&self) -> u64 {
         match self {
             Self::Standard { quantity, .. } => *quantity,
-            Self::IcebergOrder { visible_quantity, .. } => *visible_quantity,
+            Self::IcebergOrder {
+                visible_quantity, ..
+            } => *visible_quantity,
             Self::PostOnly { quantity, .. } => *quantity,
             Self::TrailingStop { quantity, .. } => *quantity,
             Self::PeggedOrder { quantity, .. } => *quantity,
             Self::MarketToLimit { quantity, .. } => *quantity,
-            Self::ReserveOrder { visible_quantity, .. } => *visible_quantity,
+            Self::ReserveOrder {
+                visible_quantity, ..
+            } => *visible_quantity,
         }
     }
 
     /// Get the hidden quantity
     pub fn hidden_quantity(&self) -> u64 {
         match self {
-            Self::IcebergOrder { hidden_quantity, .. } => *hidden_quantity,
-            Self::ReserveOrder { hidden_quantity, .. } => *hidden_quantity,
+            Self::IcebergOrder {
+                hidden_quantity, ..
+            } => *hidden_quantity,
+            Self::ReserveOrder {
+                hidden_quantity, ..
+            } => *hidden_quantity,
             _ => 0,
         }
     }
@@ -239,17 +247,30 @@ impl OrderType {
     /// Create a new standard order with reduced quantity
     pub fn with_reduced_quantity(&self, new_quantity: u64) -> Self {
         match self {
-            Self::Standard { id, price, side, timestamp, time_in_force, .. } => {
-                Self::Standard {
-                    id: *id,
-                    price: *price,
-                    quantity: new_quantity,
-                    side: *side,
-                    timestamp: *timestamp,
-                    time_in_force: *time_in_force,
-                }
+            Self::Standard {
+                id,
+                price,
+                side,
+                timestamp,
+                time_in_force,
+                ..
+            } => Self::Standard {
+                id: *id,
+                price: *price,
+                quantity: new_quantity,
+                side: *side,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
             },
-            Self::IcebergOrder { id, price, side, timestamp, time_in_force, hidden_quantity, .. } => {
+            Self::IcebergOrder {
+                id,
+                price,
+                side,
+                timestamp,
+                time_in_force,
+                hidden_quantity,
+                ..
+            } => {
                 // Update visible quantity but keep hidden the same
                 Self::IcebergOrder {
                     id: *id,
@@ -260,54 +281,82 @@ impl OrderType {
                     timestamp: *timestamp,
                     time_in_force: *time_in_force,
                 }
-            },
-            Self::PostOnly { id, price, side, timestamp, time_in_force, .. } => {
-                Self::PostOnly {
-                    id: *id,
-                    price: *price,
-                    quantity: new_quantity,
-                    side: *side,
-                    timestamp: *timestamp,
-                    time_in_force: *time_in_force,
-                }
+            }
+            Self::PostOnly {
+                id,
+                price,
+                side,
+                timestamp,
+                time_in_force,
+                ..
+            } => Self::PostOnly {
+                id: *id,
+                price: *price,
+                quantity: new_quantity,
+                side: *side,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
             },
             // For other order types, similar pattern...
-            _ => self.clone() // Default fallback, though this should be implemented for all types
+            _ => self.clone(), // Default fallback, though this should be implemented for all types
         }
     }
 
     /// Update an iceberg order, refreshing visible part from hidden
     pub fn refresh_iceberg(&self, refresh_amount: u64) -> (Self, u64) {
         match self {
-            Self::IcebergOrder { id, price, visible_quantity: _, hidden_quantity, side, timestamp, time_in_force } => {
+            Self::IcebergOrder {
+                id,
+                price,
+                visible_quantity: _,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
                 let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
                 let used_hidden = hidden_quantity - new_hidden;
 
-                (Self::IcebergOrder {
-                    id: *id,
-                    price: *price,
-                    visible_quantity: refresh_amount,
-                    hidden_quantity: new_hidden,
-                    side: *side,
-                    timestamp: *timestamp,
-                    time_in_force: *time_in_force,
-                }, used_hidden)
-            },
-            Self::ReserveOrder { id, price, visible_quantity: _, hidden_quantity, side, timestamp, time_in_force, replenish_threshold } => {
+                (
+                    Self::IcebergOrder {
+                        id: *id,
+                        price: *price,
+                        visible_quantity: refresh_amount,
+                        hidden_quantity: new_hidden,
+                        side: *side,
+                        timestamp: *timestamp,
+                        time_in_force: *time_in_force,
+                    },
+                    used_hidden,
+                )
+            }
+            Self::ReserveOrder {
+                id,
+                price,
+                visible_quantity: _,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+            } => {
                 let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
                 let used_hidden = hidden_quantity - new_hidden;
 
-                (Self::ReserveOrder {
-                    id: *id,
-                    price: *price,
-                    visible_quantity: refresh_amount,
-                    hidden_quantity: new_hidden,
-                    side: *side,
-                    timestamp: *timestamp,
-                    time_in_force: *time_in_force,
-                    replenish_threshold: *replenish_threshold,
-                }, used_hidden)
-            },
+                (
+                    Self::ReserveOrder {
+                        id: *id,
+                        price: *price,
+                        visible_quantity: refresh_amount,
+                        hidden_quantity: new_hidden,
+                        side: *side,
+                        timestamp: *timestamp,
+                        time_in_force: *time_in_force,
+                        replenish_threshold: *replenish_threshold,
+                    },
+                    used_hidden,
+                )
+            }
             _ => (self.clone(), 0), // Non-iceberg orders don't refresh
         }
     }

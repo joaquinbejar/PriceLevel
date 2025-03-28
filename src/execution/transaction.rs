@@ -1,5 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::orders::{OrderId, Side};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a completed transaction between two orders
 #[derive(Debug, Clone)]

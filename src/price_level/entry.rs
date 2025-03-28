@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::price_level::core::PriceLevel;
+use std::sync::Arc;
 
 /// Represents a price level entry in the order book
 #[derive(Debug)]

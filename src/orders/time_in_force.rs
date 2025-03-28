@@ -38,7 +38,7 @@ impl TimeInForce {
                 } else {
                     false
                 }
-            },
+            }
             _ => false,
         }
     }

@@ -1,5 +1,5 @@
-use crate::orders::OrderId;
 use crate::execution::transaction::Transaction;
+use crate::orders::OrderId;
 
 /// Represents the result of a matching operation
 #[derive(Debug, Clone)]

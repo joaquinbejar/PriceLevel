@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use crate::orders::{OrderId, OrderType};
 use crossbeam::queue::SegQueue;
-use crate::orders::{OrderType, OrderId};
+use std::sync::Arc;
 
 /// A thread-safe queue of orders with specialized operations
 pub struct OrderQueue {

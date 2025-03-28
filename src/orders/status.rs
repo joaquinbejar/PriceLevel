@@ -1,4 +1,3 @@
-
 /// Represents the current status of an order in the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderStatus {
@@ -30,9 +29,12 @@ impl OrderStatus {
         matches!(self, Self::Active | Self::PartiallyFilled)
     }
 
-    /// Returns true if the order has been terminated 
+    /// Returns true if the order has been terminated
     /// (filled, canceled, rejected, or expired)
     pub fn is_terminated(&self) -> bool {
-        matches!(self, Self::Filled | Self::Canceled | Self::Rejected | Self::Expired)
+        matches!(
+            self,
+            Self::Filled | Self::Canceled | Self::Rejected | Self::Expired
+        )
     }
 }

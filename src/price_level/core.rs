@@ -1,10 +1,10 @@
 //! Core price level implementation
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use crossbeam::queue::SegQueue;
 use crate::orders::{OrderId, OrderType};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
+use crossbeam::queue::SegQueue;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// A lock-free implementation of a price level in a limit order book
 #[derive(Debug)]
@@ -78,7 +78,8 @@ impl PriceLevel {
         let hidden_qty = order.hidden_quantity();
 
         // Update atomic counters
-        self.visible_quantity.fetch_add(visible_qty, Ordering::AcqRel);
+        self.visible_quantity
+            .fetch_add(visible_qty, Ordering::AcqRel);
         self.hidden_quantity.fetch_add(hidden_qty, Ordering::AcqRel);
         self.order_count.fetch_add(1, Ordering::AcqRel);
 
@@ -109,7 +110,8 @@ impl PriceLevel {
                 let visible_qty = order_arc_clone.visible_quantity();
                 let hidden_qty = order_arc_clone.hidden_quantity();
 
-                self.visible_quantity.fetch_sub(visible_qty, Ordering::AcqRel);
+                self.visible_quantity
+                    .fetch_sub(visible_qty, Ordering::AcqRel);
                 self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
                 self.order_count.fetch_sub(1, Ordering::AcqRel);
 
@@ -152,7 +154,9 @@ impl PriceLevel {
         while remaining > 0 {
             if let Some(order_arc) = self.orders.pop() {
                 match &*order_arc {
-                    OrderType::Standard { quantity,  price, .. } => {
+                    OrderType::Standard {
+                        quantity, price, ..
+                    } => {
                         if *quantity <= remaining {
                             // Full match
                             remaining -= *quantity;
@@ -161,7 +165,8 @@ impl PriceLevel {
                             matched_orders.push(order_arc.clone());
 
                             // Record statistics
-                            self.stats.record_execution(*quantity, *price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(*quantity, *price, order_arc.timestamp());
                         } else {
                             // Partial match
                             let executed = remaining;
@@ -169,34 +174,50 @@ impl PriceLevel {
                             self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
 
                             // Create updated order with reduced quantity
-                            let updated_order = order_arc.with_reduced_quantity(*quantity - executed);
+                            let updated_order =
+                                order_arc.with_reduced_quantity(*quantity - executed);
 
                             // Record statistics
-                            self.stats.record_execution(executed, *price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(executed, *price, order_arc.timestamp());
 
                             self.orders.push(Arc::new(updated_order));
                             break;
                         }
-                    },
-                    OrderType::IcebergOrder { visible_quantity, hidden_quantity, price, .. } => {
+                    }
+                    OrderType::IcebergOrder {
+                        visible_quantity,
+                        hidden_quantity,
+                        price,
+                        ..
+                    } => {
                         if *visible_quantity <= remaining {
                             // Visible portion is fully matched
                             remaining -= *visible_quantity;
-                            self.visible_quantity.fetch_sub(*visible_quantity, Ordering::AcqRel);
+                            self.visible_quantity
+                                .fetch_sub(*visible_quantity, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(*visible_quantity, *price, order_arc.timestamp());
+                            self.stats.record_execution(
+                                *visible_quantity,
+                                *price,
+                                order_arc.timestamp(),
+                            );
 
                             if *hidden_quantity > 0 {
                                 // Refresh visible portion from hidden
-                                let refresh_qty = std::cmp::min(*hidden_quantity, *visible_quantity);
+                                let refresh_qty =
+                                    std::cmp::min(*hidden_quantity, *visible_quantity);
 
                                 // Update the order with refreshed quantities
-                                let (updated_order, used_hidden) = order_arc.refresh_iceberg(refresh_qty);
+                                let (updated_order, used_hidden) =
+                                    order_arc.refresh_iceberg(refresh_qty);
 
                                 // Update atomic counters
-                                self.hidden_quantity.fetch_sub(used_hidden, Ordering::AcqRel);
-                                self.visible_quantity.fetch_add(refresh_qty, Ordering::AcqRel);
+                                self.hidden_quantity
+                                    .fetch_sub(used_hidden, Ordering::AcqRel);
+                                self.visible_quantity
+                                    .fetch_add(refresh_qty, Ordering::AcqRel);
 
                                 if refresh_qty > 0 {
                                     self.orders.push(Arc::new(updated_order));
@@ -217,35 +238,52 @@ impl PriceLevel {
                             self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(executed, *price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(executed, *price, order_arc.timestamp());
 
                             // Create updated order with reduced visible quantity
-                            let updated_order = order_arc.with_reduced_quantity(*visible_quantity - executed);
+                            let updated_order =
+                                order_arc.with_reduced_quantity(*visible_quantity - executed);
 
                             self.orders.push(Arc::new(updated_order));
                             break;
                         }
-                    },
-                    OrderType::ReserveOrder { visible_quantity, hidden_quantity, price, replenish_threshold, .. } => {
+                    }
+                    OrderType::ReserveOrder {
+                        visible_quantity,
+                        hidden_quantity,
+                        price,
+                        replenish_threshold,
+                        ..
+                    } => {
                         if *visible_quantity <= remaining {
                             // Visible portion is fully matched
                             remaining -= *visible_quantity;
-                            self.visible_quantity.fetch_sub(*visible_quantity, Ordering::AcqRel);
+                            self.visible_quantity
+                                .fetch_sub(*visible_quantity, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(*visible_quantity, *price, order_arc.timestamp());
+                            self.stats.record_execution(
+                                *visible_quantity,
+                                *price,
+                                order_arc.timestamp(),
+                            );
 
                             // Check if we need to replenish
                             if *hidden_quantity > 0 && *visible_quantity <= *replenish_threshold {
                                 // Replenish visible quantity from hidden
-                                let refresh_qty = std::cmp::min(*hidden_quantity, *visible_quantity);
+                                let refresh_qty =
+                                    std::cmp::min(*hidden_quantity, *visible_quantity);
 
                                 // Update the order
-                                let (updated_order, used_hidden) = order_arc.refresh_iceberg(refresh_qty);
+                                let (updated_order, used_hidden) =
+                                    order_arc.refresh_iceberg(refresh_qty);
 
                                 // Update atomic counters
-                                self.hidden_quantity.fetch_sub(used_hidden, Ordering::AcqRel);
-                                self.visible_quantity.fetch_add(refresh_qty, Ordering::AcqRel);
+                                self.hidden_quantity
+                                    .fetch_sub(used_hidden, Ordering::AcqRel);
+                                self.visible_quantity
+                                    .fetch_add(refresh_qty, Ordering::AcqRel);
 
                                 if refresh_qty > 0 {
                                     self.orders.push(Arc::new(updated_order));
@@ -271,15 +309,17 @@ impl PriceLevel {
                             self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(executed, *price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(executed, *price, order_arc.timestamp());
 
                             // Create updated order with reduced visible quantity
-                            let updated_order = order_arc.with_reduced_quantity(*visible_quantity - executed);
+                            let updated_order =
+                                order_arc.with_reduced_quantity(*visible_quantity - executed);
 
                             self.orders.push(Arc::new(updated_order));
                             break;
                         }
-                    },
+                    }
                     // Handle other order types or use a default behavior
                     _ => {
                         let visible_qty = order_arc.visible_quantity();
@@ -288,11 +328,13 @@ impl PriceLevel {
                         if visible_qty <= remaining {
                             // Full match
                             remaining -= visible_qty;
-                            self.visible_quantity.fetch_sub(visible_qty, Ordering::AcqRel);
+                            self.visible_quantity
+                                .fetch_sub(visible_qty, Ordering::AcqRel);
                             self.order_count.fetch_sub(1, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(visible_qty, price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(visible_qty, price, order_arc.timestamp());
 
                             matched_orders.push(order_arc.clone());
                         } else {
@@ -302,10 +344,12 @@ impl PriceLevel {
                             self.visible_quantity.fetch_sub(executed, Ordering::AcqRel);
 
                             // Record execution
-                            self.stats.record_execution(executed, price, order_arc.timestamp());
+                            self.stats
+                                .record_execution(executed, price, order_arc.timestamp());
 
                             // Create updated order with reduced quantity
-                            let updated_order = order_arc.with_reduced_quantity(visible_qty - executed);
+                            let updated_order =
+                                order_arc.with_reduced_quantity(visible_qty - executed);
 
                             self.orders.push(Arc::new(updated_order));
                             break;

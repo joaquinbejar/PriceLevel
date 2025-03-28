@@ -67,14 +67,18 @@ impl PriceLevelStatistics {
             .as_millis() as u64;
 
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
-        self.quantity_executed.fetch_add(quantity, Ordering::Relaxed);
-        self.value_executed.fetch_add(quantity * price, Ordering::Relaxed);
-        self.last_execution_time.store(current_time, Ordering::Relaxed);
+        self.quantity_executed
+            .fetch_add(quantity, Ordering::Relaxed);
+        self.value_executed
+            .fetch_add(quantity * price, Ordering::Relaxed);
+        self.last_execution_time
+            .store(current_time, Ordering::Relaxed);
 
         // Calculate waiting time for this order
         if order_timestamp > 0 {
             let waiting_time = current_time.saturating_sub(order_timestamp);
-            self.sum_waiting_time.fetch_add(waiting_time, Ordering::Relaxed);
+            self.sum_waiting_time
+                .fetch_add(waiting_time, Ordering::Relaxed);
         }
     }
 
@@ -155,7 +159,8 @@ impl PriceLevelStatistics {
         self.quantity_executed.store(0, Ordering::Relaxed);
         self.value_executed.store(0, Ordering::Relaxed);
         self.last_execution_time.store(0, Ordering::Relaxed);
-        self.first_arrival_time.store(current_time, Ordering::Relaxed);
+        self.first_arrival_time
+            .store(current_time, Ordering::Relaxed);
         self.sum_waiting_time.store(0, Ordering::Relaxed);
     }
 }

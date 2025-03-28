@@ -1,7 +1,7 @@
 //! Snapshot functionality for price levels
 
-use std::sync::Arc;
 use crate::orders::OrderType;
+use std::sync::Arc;
 
 /// A snapshot of the price level's state at a point in time
 #[derive(Debug)]
@@ -44,7 +44,6 @@ impl PriceLevelSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_snapshot_basic() {
