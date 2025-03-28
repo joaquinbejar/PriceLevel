@@ -10,7 +10,10 @@ mod pegged;
 
 mod status;
 mod time_in_force;
+
 mod update;
+
+mod tests;
 
 pub(crate) use base::{OrderId, Side};
 pub(crate) use limit::OrderType;

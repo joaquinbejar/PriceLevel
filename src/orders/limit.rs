@@ -236,7 +236,7 @@ impl OrderType {
 
     /// Check if the order is fill-or-kill
     pub fn is_fill_or_kill(&self) -> bool {
-        matches!(self.time_in_force(), TimeInForce::FOK)
+        matches!(self.time_in_force(), TimeInForce::Fok)
     }
 
     /// Check if this is a post-only order
