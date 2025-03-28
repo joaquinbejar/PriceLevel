@@ -1,9 +1,9 @@
+use crate::errors::PriceLevelError;
+use crate::orders::{OrderId, Side};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use crate::orders::{OrderId, Side};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use crate::errors::PriceLevelError;
 
 /// Represents a completed transaction between two orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -70,7 +70,6 @@ impl Transaction {
     }
 }
 
-
 impl fmt::Display for Transaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -128,19 +127,21 @@ impl FromStr for Transaction {
 
         // Parse taker_order_id
         let taker_order_id_str = get_field("taker_order_id")?;
-        let taker_order_id = OrderId::from_str(taker_order_id_str)
-            .map_err(|_| PriceLevelError::InvalidFieldValue {
+        let taker_order_id = OrderId::from_str(taker_order_id_str).map_err(|_| {
+            PriceLevelError::InvalidFieldValue {
                 field: "taker_order_id".to_string(),
                 value: taker_order_id_str.to_string(),
-            })?;
+            }
+        })?;
 
         // Parse maker_order_id
         let maker_order_id_str = get_field("maker_order_id")?;
-        let maker_order_id = OrderId::from_str(maker_order_id_str)
-            .map_err(|_| PriceLevelError::InvalidFieldValue {
+        let maker_order_id = OrderId::from_str(maker_order_id_str).map_err(|_| {
+            PriceLevelError::InvalidFieldValue {
                 field: "maker_order_id".to_string(),
                 value: maker_order_id_str.to_string(),
-            })?;
+            }
+        })?;
 
         // Parse price
         let price_str = get_field("price")?;
@@ -152,8 +153,8 @@ impl FromStr for Transaction {
 
         // Parse taker_side
         let taker_side_str = get_field("taker_side")?;
-        let taker_side = Side::from_str(taker_side_str)
-            .map_err(|_| PriceLevelError::InvalidFieldValue {
+        let taker_side =
+            Side::from_str(taker_side_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "taker_side".to_string(),
                 value: taker_side_str.to_string(),
             })?;
@@ -173,4 +174,3 @@ impl FromStr for Transaction {
         })
     }
 }
-

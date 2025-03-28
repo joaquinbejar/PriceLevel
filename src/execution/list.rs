@@ -1,19 +1,21 @@
 use crate::errors::PriceLevelError;
 use crate::execution::transaction::Transaction;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 
 /// A wrapper for a vector of transactions to implement custom serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TransactionList {
-    pub transactions: Vec<Transaction>
+    pub transactions: Vec<Transaction>,
 }
 
 impl TransactionList {
     /// Create a new empty transaction list
     pub fn new() -> Self {
-        Self { transactions: Vec::new() }
+        Self {
+            transactions: Vec::new(),
+        }
     }
 
     /// Create a transaction list from an existing vector
@@ -35,16 +37,15 @@ impl TransactionList {
     pub fn into_vec(self) -> Vec<Transaction> {
         self.transactions
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
     }
-    
+
     pub fn len(&self) -> usize {
         self.transactions.len()
     }
 }
-
 
 impl Default for TransactionList {
     fn default() -> Self {
@@ -95,7 +96,6 @@ impl FromStr for TransactionList {
         for c in content.chars() {
             match c {
                 ',' if bracket_depth == 0 => {
-                    // Fin de una transacción
                     if !current_transaction.is_empty() {
                         let transaction = Transaction::from_str(&current_transaction)?;
                         transactions.push(transaction);

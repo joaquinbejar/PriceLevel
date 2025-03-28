@@ -403,8 +403,8 @@ impl OrderType {
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                         }),
-                        0, // no hidden quantity reduced
-                        0, // no remaining quantity
+                        0, // not hidden quantity reduced
+                        0, // not remaining quantity
                     )
                 }
             }
@@ -434,22 +434,18 @@ impl OrderType {
                             Some(Self::IcebergOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: refresh_qty, // Actualizar cantidad visible
-                                hidden_quantity: new_hidden,   // Reducir cantidad oculta
+                                visible_quantity: refresh_qty,
+                                hidden_quantity: new_hidden,
                                 side: *side,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                             }),
-                            refresh_qty, // Cantidad reducida de hidden
+                            refresh_qty,
                             remaining,
                         )
                     } else {
                         // No hidden quantity left
-                        (
-                            consumed, None, // Orden completamente consumida
-                            0,    // No se redujo cantidad oculta
-                            remaining,
-                        )
+                        (consumed, None, 0, remaining)
                     }
                 } else {
                     // Partial match of visible quantity
@@ -466,8 +462,8 @@ impl OrderType {
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                         }),
-                        0, // No se redujo cantidad oculta
-                        0, // No queda cantidad pendiente
+                        0,
+                        0,
                     )
                 }
             }
@@ -573,8 +569,8 @@ impl OrderType {
                     (
                         incoming_quantity, // consumed all incoming
                         Some(self.with_reduced_quantity(visible_qty - incoming_quantity)),
-                        0, // no hidden reduced
-                        0, // no remaining quantity
+                        0, // not hidden reduced
+                        0, // not remaining quantity
                     )
                 }
             }

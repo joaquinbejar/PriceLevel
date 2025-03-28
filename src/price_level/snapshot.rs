@@ -139,7 +139,6 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                 let mut order_count = None;
                 let mut orders = None;
 
-                // Leer todos los campos del mapa
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Price => {
@@ -170,9 +169,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             if orders.is_some() {
                                 return Err(de::Error::duplicate_field("orders"));
                             }
-                            // Deserializar como Vec<OrderType>
                             let plain_orders: Vec<OrderType> = map.next_value()?;
-                            // Convertir a Vec<Arc<OrderType>>
                             orders = Some(plain_orders.into_iter().map(Arc::new).collect());
                         }
                     }

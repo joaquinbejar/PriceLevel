@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use crate::errors::PriceLevelError;
+    use crate::execution::transaction::Transaction;
     use crate::orders::{OrderId, Side};
     use std::str::FromStr;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use crate::errors::PriceLevelError;
-    use crate::execution::transaction::Transaction;
 
     fn create_test_transaction() -> Transaction {
         Transaction {
@@ -147,14 +147,7 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
-        let transaction = Transaction::new(
-            12345,
-            OrderId(1),
-            OrderId(2),
-            10000,
-            5,
-            Side::Buy,
-        );
+        let transaction = Transaction::new(12345, OrderId(1), OrderId(2), 10000, 5, Side::Buy);
 
         assert_eq!(transaction.transaction_id, 12345);
         assert_eq!(transaction.taker_order_id, OrderId(1));
@@ -171,7 +164,11 @@ mod tests {
         };
 
         // Timestamp should be within 100ms of current time
-        assert!(timestamp_diff < 100, "Timestamp difference is too large: {}", timestamp_diff);
+        assert!(
+            timestamp_diff < 100,
+            "Timestamp difference is too large: {}",
+            timestamp_diff
+        );
     }
 }
 
@@ -179,7 +176,7 @@ mod tests {
 mod transaction_serialization_tests {
     use crate::orders::{OrderId, Side};
     use std::str::FromStr;
-    use serde_json;
+
     use crate::execution::transaction::Transaction;
 
     fn create_test_transaction() -> Transaction {
@@ -197,11 +194,7 @@ mod transaction_serialization_tests {
     #[test]
     fn test_serde_json_serialization() {
         let transaction = create_test_transaction();
-
-        // Serializar a JSON
         let json = serde_json::to_string(&transaction).unwrap();
-
-        // Verificar que el JSON contiene todos los campos
         assert!(json.contains("\"transaction_id\":12345"));
         assert!(json.contains("\"taker_order_id\":1"));
         assert!(json.contains("\"maker_order_id\":2"));
@@ -223,10 +216,8 @@ mod transaction_serialization_tests {
             "timestamp": 1616823000000
         }"#;
 
-        // Deserializar desde JSON
         let transaction: Transaction = serde_json::from_str(json).unwrap();
 
-        // Verificar campos
         assert_eq!(transaction.transaction_id, 12345);
         assert_eq!(transaction.taker_order_id, OrderId(1));
         assert_eq!(transaction.maker_order_id, OrderId(2));
@@ -240,13 +231,10 @@ mod transaction_serialization_tests {
     fn test_serde_json_round_trip() {
         let original = create_test_transaction();
 
-        // Serializar a JSON
         let json = serde_json::to_string(&original).unwrap();
 
-        // Deserializar de vuelta
         let deserialized: Transaction = serde_json::from_str(&json).unwrap();
 
-        // Verificar que todos los campos son iguales
         assert_eq!(deserialized.transaction_id, original.transaction_id);
         assert_eq!(deserialized.taker_order_id, original.taker_order_id);
         assert_eq!(deserialized.maker_order_id, original.maker_order_id);
@@ -361,7 +349,6 @@ mod transaction_serialization_tests {
 
         assert_eq!(transaction.total_value(), 50000);
 
-        // Probar con otros valores
         transaction.price = 12345;
         transaction.quantity = 67;
 

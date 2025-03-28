@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
     use crate::errors::PriceLevelError;
+    use std::error::Error;
 
     #[test]
     fn test_parse_error_display() {
@@ -43,7 +43,10 @@ mod tests {
         let error = PriceLevelError::InvalidOperation {
             message: "Cannot update price to same value".to_string(),
         };
-        assert_eq!(error.to_string(), "Invalid operation: Cannot update price to same value");
+        assert_eq!(
+            error.to_string(),
+            "Invalid operation: Cannot update price to same value"
+        );
     }
 
     #[test]
@@ -104,7 +107,7 @@ mod tests {
     fn test_error_formatting_consistency() {
         // Test that formatting is consistent across different error variants
         let parse_error = PriceLevelError::ParseError {
-            message: "test message".to_string()
+            message: "test message".to_string(),
         };
         assert_eq!(parse_error.to_string(), "test message");
 
@@ -117,13 +120,19 @@ mod tests {
             PriceLevelError::UnknownOrderType("Test".to_string()).to_string(),
             PriceLevelError::InvalidFieldValue {
                 field: "f".to_string(),
-                value: "v".to_string()
-            }.to_string(),
+                value: "v".to_string(),
+            }
+            .to_string(),
             PriceLevelError::InvalidOperation {
-                message: "op".to_string()
-            }.to_string(),
+                message: "op".to_string(),
+            }
+            .to_string(),
         ] {
-            assert_eq!(error.trim(), error, "Error message contains unexpected whitespace");
+            assert_eq!(
+                error.trim(),
+                error,
+                "Error message contains unexpected whitespace"
+            );
         }
     }
 }

@@ -83,7 +83,6 @@ mod tests_side {
 
     #[test]
     fn test_serialized_size() {
-        // Verificar que la serialización produce el tamaño esperado
         assert_eq!(serde_json::to_string(&Side::Buy).unwrap().len(), 5); // "BUY"
         assert_eq!(serde_json::to_string(&Side::Sell).unwrap().len(), 6); // "SELL"
     }
@@ -263,7 +262,6 @@ mod tests_order {
 
     #[test]
     fn test_from_str_valid() {
-        // Casos válidos
         let order1: Order = "1:100:10:BUY:1656789012345".parse().unwrap();
         let expected1 = Order::buy(1, 100, 10, 1656789012345);
         assert_eq!(order1, expected1);
@@ -272,7 +270,6 @@ mod tests_order {
         let expected2 = Order::sell(2, 200, 20, 1656789012346);
         assert_eq!(order2, expected2);
 
-        // Casos con diferente formato en el lado (insensible a mayúsculas/minúsculas)
         let order3: Order = "3:300:30:buy:1656789012347".parse().unwrap();
         let expected3 = Order::buy(3, 300, 30, 1656789012347);
         assert_eq!(order3, expected3);
@@ -327,7 +324,6 @@ mod tests_order {
 
     #[test]
     fn test_roundtrip() {
-        // Conversión de ida y vuelta: Order -> String -> Order
         let original = Order::buy(12345, 9876, 54321, 1656789012345);
         let string = original.to_string();
         let parsed = string.parse::<Order>().unwrap();
@@ -337,7 +333,6 @@ mod tests_order {
 
     #[test]
     fn test_json_deserialization_case_insensitivity() {
-        // Prueba deserialización JSON con diferentes casos para el lado
         let json_upper =
             r#"{"id":1,"price":100,"quantity":10,"side":"BUY","timestamp":1656789012345}"#;
         let json_lower =

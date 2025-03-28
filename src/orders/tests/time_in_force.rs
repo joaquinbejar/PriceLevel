@@ -65,7 +65,6 @@ mod tests {
 
     #[test]
     fn test_deserialize_standard_format() {
-        // Formato estándar, usando los nombres exactos de las variantes
         assert_eq!(
             serde_json::from_str::<TimeInForce>("\"Gtc\"").unwrap(),
             TimeInForce::Gtc
