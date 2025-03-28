@@ -4,6 +4,7 @@ mod tests {
     use crate::price_level::price_level::PriceLevel;
     use std::str::FromStr;
     use std::sync::Arc;
+    use tracing::info;
 
     #[test]
     fn test_display() {
@@ -11,7 +12,7 @@ mod tests {
         let entry = OrderBookEntry::new(level.clone(), 5);
 
         let display_str = entry.to_string();
-        println!("Display string: {}", display_str);
+        info!("Display string: {}", display_str);
 
         assert!(display_str.starts_with("OrderBookEntry:"));
         assert!(display_str.contains("price=1000"));
@@ -47,7 +48,7 @@ mod tests {
         let entry = OrderBookEntry::new(level.clone(), 5);
 
         let serialized = serde_json::to_string(&entry).unwrap();
-        println!("Serialized: {}", serialized);
+        info!("Serialized: {}", serialized);
 
         // Verify basic structure of JSON
         assert!(serialized.contains("\"price\":1000"));

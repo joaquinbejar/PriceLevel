@@ -4,6 +4,7 @@ mod tests {
     use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::price_level::PriceLevel;
     use std::str::FromStr;
+    use tracing::info;
 
     // Helper functions to create different order types for testing
     fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
@@ -602,7 +603,7 @@ mod tests {
         let string_representation = price_level.to_string();
 
         // Let's print the string representation to debug
-        println!("String representation: {}", string_representation);
+        info!("String representation: {}", string_representation);
 
         // Check that the string contains key information
         assert!(string_representation.contains("PriceLevel"));
@@ -623,7 +624,7 @@ mod tests {
         let parsed_level = match PriceLevel::from_str(basic_string) {
             Ok(level) => level,
             Err(e) => {
-                println!("Error parsing '{}': {:?}", basic_string, e);
+                info!("Error parsing '{}': {:?}", basic_string, e);
                 // Just create a new level for the test to continue
                 PriceLevel::new(15000)
             }

@@ -6,6 +6,7 @@ mod tests {
     use crate::orders::OrderId;
     use crate::orders::Side;
     use std::str::FromStr;
+    use tracing::info;
 
     // Helper function to create a test transaction
     fn create_test_transaction(
@@ -217,17 +218,13 @@ mod tests {
 
         // Convert to string
         let string_representation = original.to_string();
-        println!("Cadena generada: '{}'", string_representation);
+        info!("String generate: '{}'", string_representation);
 
         // Parse back
         let parsed = match MatchResult::from_str(&string_representation) {
-            Ok(r) => {
-                println!("Análisis exitoso");
-                r
-            }
+            Ok(r) => r,
             Err(e) => {
-                println!("Error en el análisis: {:?}", e);
-                panic!("Test falló en el roundtrip");
+                panic!("Test failed: {:?}", e);
             }
         };
 

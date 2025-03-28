@@ -4,6 +4,7 @@ mod tests {
     use crate::price_level::order_queue::OrderQueue;
     use std::str::FromStr;
     use std::sync::Arc;
+    use tracing::info;
 
     fn create_test_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::Standard {
@@ -23,7 +24,7 @@ mod tests {
         queue.push(Arc::new(create_test_order(2, 1100, 20)));
 
         let display_string = queue.to_string();
-        println!("Display: {}", display_string);
+        info!("Display: {}", display_string);
 
         assert!(display_string.starts_with("OrderQueue:orders=["));
         assert!(display_string.contains("id=1"));
@@ -56,8 +57,8 @@ mod tests {
         let parsed_queue = match OrderQueue::from_str(input) {
             Ok(q) => q,
             Err(e) => {
-                println!("Parse error: {:?}", e);
-                println!("Input string: {}", input);
+                info!("Parse error: {:?}", e);
+                info!("Input string: {}", input);
                 panic!("Failed to parse OrderQueue from string");
             }
         };
@@ -115,7 +116,7 @@ mod tests {
 
         // Serialize to JSON
         let serialized = serde_json::to_string(&queue).unwrap();
-        println!("Serialized: {}", serialized);
+        info!("Serialized: {}", serialized);
 
         // Deserialize back
         let deserialized: OrderQueue = serde_json::from_str(&serialized).unwrap();
@@ -149,7 +150,7 @@ mod tests {
         let parsed_queue = match OrderQueue::from_str(&string_rep) {
             Ok(q) => q,
             Err(e) => {
-                println!("Parse error: {:?}", e);
+                info!("Parse error: {:?}", e);
                 panic!("Failed to parse: {}", string_rep);
             }
         };

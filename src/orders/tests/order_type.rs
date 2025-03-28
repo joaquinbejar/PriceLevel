@@ -3,6 +3,7 @@ mod tests {
     use crate::orders::time_in_force::TimeInForce;
     use crate::orders::{OrderId, OrderType, PegReferenceType, Side};
     use std::str::FromStr;
+    use tracing::info;
 
     fn create_standard_order() -> OrderType {
         OrderType::Standard {
@@ -511,7 +512,7 @@ mod tests {
         let order = create_standard_order();
         let display_str = format!("{}", order);
 
-        println!("{}", display_str);
+        info!("{}", display_str);
         assert!(display_str.starts_with("Standard:"));
         assert!(display_str.contains("id=123"));
         assert!(display_str.contains("price=10000"));
@@ -586,7 +587,7 @@ mod tests {
                 assert_eq!(side1, side2);
             } else {
                 // This will happen if Display for non-Standard orders isn't complete
-                println!("Note: Display implementation may not be complete for all order types");
+                info!("Note: Display implementation may not be complete for all order types");
             }
         }
     }
