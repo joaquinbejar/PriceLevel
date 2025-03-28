@@ -1,4 +1,7 @@
+use std::fmt;
+use std::str::FromStr;
 use serde::{Deserialize, Serialize};
+use crate::errors::PriceLevelError;
 
 /// Specifies how long an order remains active before it is executed or expires
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +50,49 @@ impl TimeInForce {
                 }
             }
             _ => false,
+        }
+    }
+}
+
+impl fmt::Display for TimeInForce {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimeInForce::Gtc => write!(f, "GTC"),
+            TimeInForce::Ioc => write!(f, "IOC"),
+            TimeInForce::Fok => write!(f, "FOK"),
+            TimeInForce::Gtd(expiry) => write!(f, "GTD-{}", expiry),
+            TimeInForce::Day => write!(f, "DAY"),
+        }
+    }
+}
+
+impl FromStr for TimeInForce {
+    type Err = PriceLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "GTC" => Ok(TimeInForce::Gtc),
+            "IOC" => Ok(TimeInForce::Ioc),
+            "FOK" => Ok(TimeInForce::Fok),
+            "DAY" => Ok(TimeInForce::Day),
+            s if s.starts_with("GTD-") => {
+                let parts: Vec<&str> = s.split('-').collect();
+                if parts.len() != 2 {
+                    return Err(PriceLevelError::ParseError {
+                        message: format!("Invalid GTD format: {}", s),
+                    });
+                }
+
+                match parts[1].parse::<u64>() {
+                    Ok(expiry) => Ok(TimeInForce::Gtd(expiry)),
+                    Err(_) => Err(PriceLevelError::ParseError {
+                        message: format!("Invalid expiry timestamp in GTD: {}", parts[1]),
+                    }),
+                }
+            }
+            _ => Err(PriceLevelError::ParseError {
+                message: format!("Invalid TimeInForce: {}", s),
+            }),
         }
     }
 }

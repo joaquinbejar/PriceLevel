@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use crate::orders::time_in_force::TimeInForce;
 
     #[test]
@@ -211,6 +212,86 @@ mod tests {
 
         for (tif, expected) in test_cases {
             assert_eq!(serde_json::to_string(&tif).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_display() {
+        assert_eq!(TimeInForce::Gtc.to_string(), "GTC");
+        assert_eq!(TimeInForce::Ioc.to_string(), "IOC");
+        assert_eq!(TimeInForce::Fok.to_string(), "FOK");
+        assert_eq!(TimeInForce::Gtd(1616823000000).to_string(), "GTD-1616823000000");
+        assert_eq!(TimeInForce::Day.to_string(), "DAY");
+    }
+
+    #[test]
+    fn test_from_str_valid() {
+        assert_eq!(TimeInForce::from_str("GTC").unwrap(), TimeInForce::Gtc);
+        assert_eq!(TimeInForce::from_str("IOC").unwrap(), TimeInForce::Ioc);
+        assert_eq!(TimeInForce::from_str("FOK").unwrap(), TimeInForce::Fok);
+        assert_eq!(TimeInForce::from_str("DAY").unwrap(), TimeInForce::Day);
+        assert_eq!(
+            TimeInForce::from_str("GTD-1616823000000").unwrap(),
+            TimeInForce::Gtd(1616823000000)
+        );
+
+        // Test case insensitivity
+        assert_eq!(TimeInForce::from_str("gtc").unwrap(), TimeInForce::Gtc);
+        assert_eq!(TimeInForce::from_str("ioc").unwrap(), TimeInForce::Ioc);
+        assert_eq!(TimeInForce::from_str("fok").unwrap(), TimeInForce::Fok);
+        assert_eq!(TimeInForce::from_str("day").unwrap(), TimeInForce::Day);
+        assert_eq!(
+            TimeInForce::from_str("gtd-1616823000000").unwrap(),
+            TimeInForce::Gtd(1616823000000)
+        );
+
+        // Test mixed case
+        assert_eq!(TimeInForce::from_str("Gtc").unwrap(), TimeInForce::Gtc);
+        assert_eq!(TimeInForce::from_str("IoC").unwrap(), TimeInForce::Ioc);
+    }
+
+    #[test]
+    fn test_from_str_invalid() {
+        // Test invalid time-in-force values
+        assert!(TimeInForce::from_str("").is_err());
+        assert!(TimeInForce::from_str("INVALID").is_err());
+        assert!(TimeInForce::from_str("GTD").is_err());
+        assert!(TimeInForce::from_str("GTD-").is_err());
+        assert!(TimeInForce::from_str("GTD-INVALID").is_err());
+
+        // Test error messages
+        let error = TimeInForce::from_str("INVALID").unwrap_err();
+        match error {
+            crate::errors::PriceLevelError::ParseError { message } => {
+                assert!(message.contains("Invalid TimeInForce: INVALID"));
+            }
+            _ => panic!("Expected ParseError"),
+        }
+
+        let error = TimeInForce::from_str("GTD-INVALID").unwrap_err();
+        match error {
+            crate::errors::PriceLevelError::ParseError { message } => {
+                assert!(message.contains("Invalid expiry timestamp in GTD: INVALID"));
+            }
+            _ => panic!("Expected ParseError"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        // Test round-trip conversion (Display -> FromStr)
+        let time_in_force_values = [
+            TimeInForce::Gtc,
+            TimeInForce::Ioc,
+            TimeInForce::Fok,
+            TimeInForce::Gtd(1616823000000),
+            TimeInForce::Day,
+        ];
+
+        for &original in &time_in_force_values {
+            let string_representation = original.to_string();
+            let parsed = TimeInForce::from_str(&string_representation).unwrap();
+            assert_eq!(original, parsed);
         }
     }
 }

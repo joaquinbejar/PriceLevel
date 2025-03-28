@@ -617,7 +617,7 @@ impl fmt::Display for OrderType {
                     quantity,
                     format!("{:?}", side).to_uppercase(),
                     timestamp,
-                    format!("{:?}", time_in_force)
+                    time_in_force
                 )
             }
             OrderType::IcebergOrder {
@@ -638,12 +638,116 @@ impl fmt::Display for OrderType {
                     hidden_quantity,
                     format!("{:?}", side).to_uppercase(),
                     timestamp,
-                    format!("{:?}", time_in_force)
+                    time_in_force
                 )
             }
-            // Implement the rest of the order types similarly
-            // This is a simplified implementation for demonstration
-            _ => write!(f, "OrderType variant not fully implemented for Display"),
+            OrderType::PostOnly {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
+                write!(
+                    f,
+                    "PostOnly:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    id.0,
+                    price,
+                    quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    time_in_force
+                )
+            }
+            OrderType::TrailingStop {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                trail_amount,
+                last_reference_price,
+            } => {
+                write!(
+                    f,
+                    "TrailingStop:id={};price={};quantity={};side={};timestamp={};time_in_force={};trail_amount={};last_reference_price={}",
+                    id.0,
+                    price,
+                    quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    time_in_force,
+                    trail_amount,
+                    last_reference_price
+                )
+            }
+            OrderType::PeggedOrder {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+            } => {
+                write!(
+                    f,
+                    "PeggedOrder:id={};price={};quantity={};side={};timestamp={};time_in_force={};reference_price_offset={};reference_price_type={}",
+                    id.0,
+                    price,
+                    quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    time_in_force,
+                    reference_price_offset,
+                    reference_price_type
+                )
+            }
+            OrderType::MarketToLimit {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
+                write!(
+                    f,
+                    "MarketToLimit:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    id.0,
+                    price,
+                    quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    time_in_force
+                )
+            }
+            OrderType::ReserveOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+            } => {
+                write!(
+                    f,
+                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={};replenish_threshold={}",
+                    id.0,
+                    price,
+                    visible_quantity,
+                    hidden_quantity,
+                    format!("{:?}", side).to_uppercase(),
+                    timestamp,
+                    time_in_force,
+                    replenish_threshold
+                )
+            }
         }
     }
 }
