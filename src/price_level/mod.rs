@@ -13,6 +13,7 @@ mod entry;
 mod order_queue;
 
 mod statistics;
+mod tests;
 
 pub(crate) use snapshot::PriceLevelSnapshot;
 pub(crate) use statistics::PriceLevelStatistics;

@@ -18,3 +18,5 @@ mod tests;
 pub(crate) use base::{OrderId, Side};
 pub(crate) use limit::OrderType;
 pub(crate) use pegged::PegReferenceType;
+pub(crate) use time_in_force::TimeInForce;
+pub(crate) use update::OrderUpdate;
