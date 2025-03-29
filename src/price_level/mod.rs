@@ -15,5 +15,6 @@ mod order_queue;
 mod statistics;
 mod tests;
 
-pub(crate) use snapshot::PriceLevelSnapshot;
-pub(crate) use statistics::PriceLevelStatistics;
+pub use level::{PriceLevel, PriceLevelData};
+pub use snapshot::PriceLevelSnapshot;
+pub use statistics::PriceLevelStatistics;

@@ -68,6 +68,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use {std::env, tracing::Level};
 
+#[allow(dead_code)]
 static INIT: Once = Once::new();
 
 /// Sets up a logger for the application
@@ -85,6 +86,7 @@ static INIT: Once = Once::new();
 ///
 /// # Panics
 /// This function panics if setting the default subscriber fails.
+#[allow(dead_code)]
 pub fn setup_logger() {
     INIT.call_once(|| {
         let log_level = env::var("LOGLEVEL")

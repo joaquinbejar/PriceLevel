@@ -615,7 +615,7 @@ impl OrderType {
 }
 
 /// Expected string format:
-/// ORDER_TYPE:id=<id>;price=<price>;quantity=<qty>;side=<BUY|SELL>;timestamp=<ts>;time_in_force=<tif>;[additional fields]
+/// ORDER_TYPE:id=`<id>`;price=`<price>`;quantity=`<qty>`;side=<BUY|SELL>;timestamp=`<ts>`;time_in_force=`<tif>`;[additional fields]
 ///
 /// Examples:
 /// - Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC

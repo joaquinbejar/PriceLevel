@@ -29,12 +29,14 @@ pub enum OrderStatus {
 
 impl OrderStatus {
     /// Returns true if the order is still active in the book
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         matches!(self, Self::Active | Self::PartiallyFilled)
     }
 
     /// Returns true if the order has been terminated
     /// (filled, canceled, rejected, or expired)
+    #[allow(dead_code)]
     pub fn is_terminated(&self) -> bool {
         matches!(
             self,

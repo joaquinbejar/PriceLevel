@@ -103,6 +103,26 @@ impl PriceLevel {
         self.orders.to_vec()
     }
 
+    /// Matches an incoming order against existing orders at this price level.
+    ///
+    /// This function attempts to match the incoming order quantity against the orders present in the
+    /// `OrderQueue`. It iterates through the queue, matching orders until the incoming quantity is
+    /// fully filled or the queue is exhausted.  Transactions are generated for each successful match,
+    /// and filled orders are removed from the queue.  The function also updates the visible and hidden
+    /// quantity counters and records statistics for each execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `incoming_quantity`: The quantity of the incoming order to be matched.
+    /// * `taker_order_id`: The ID of the incoming order (the "taker" order).
+    /// * `transaction_id_generator`: An atomic counter used to generate unique transaction IDs.
+    ///
+    /// # Returns
+    ///
+    /// A `MatchResult` object containing the results of the matching operation, including a list of
+    /// generated transactions, the remaining unmatched quantity, a flag indicating whether the
+    /// incoming order was completely filled, and a list of IDs of orders that were completely filled
+    /// during the matching process.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -254,7 +274,10 @@ impl PriceLevel {
                     let old_hidden = order.hidden_quantity();
 
                     // Remove the old order
-                    let old_order = self.orders.remove(order_id).unwrap();
+                    let old_order = match self.orders.remove(order_id) {
+                        Some(order) => order,
+                        None => return Ok(None), // Order not found, remove by other thread
+                    };
 
                     // Create updated order with new quantity
                     let new_order = old_order.with_reduced_quantity(new_quantity);
@@ -351,7 +374,7 @@ impl PriceLevel {
                 order_id,
                 price,
                 quantity,
-                side,
+                side: _,
             } => {
                 // For replacement, check if the price is changing
                 if price != self.price {

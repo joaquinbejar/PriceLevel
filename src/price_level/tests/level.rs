@@ -728,7 +728,7 @@ mod tests {
     /// 1. Matching above the threshold
     /// 2. Matching below the threshold with automatic replenishment
     /// 3. Matching with an amount larger than available
-    /// This test verifies correct transaction generation and order state throughout.
+    ///    This test verifies correct transaction generation and order state throughout.
     fn test_match_reserve_order_overlapping() {
         let price_level = PriceLevel::new(10000);
         let transaction_id_generator = AtomicU64::new(1);
@@ -1287,8 +1287,6 @@ mod tests {
     #[test]
     fn test_price_level_from_str() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
-
         price_level.add_order(create_standard_order(1, 10000, 50));
         price_level.add_order(create_standard_order(2, 10000, 75));
         price_level.add_order(create_good_till_date_order(1, 10000, 100, 1617000000000));
@@ -1296,7 +1294,6 @@ mod tests {
         price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
 
         let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=1;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=2;price=10000;quantity=75;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=1;price=10000;quantity=100;side=BUY;timestamp=1616823000000;time_in_force=GTD-1617000000000,ReserveOrder:id=1;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=1;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC]";
-
         let result = PriceLevel::from_str(input);
 
         if let Err(ref err) = result {

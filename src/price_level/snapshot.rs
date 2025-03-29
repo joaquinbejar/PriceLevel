@@ -7,17 +7,20 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// A snapshot of a price level in the order book. This struct provides a summary of the state of a specific price level
+/// at a given point in time, including the price, visible and hidden quantities, order count, and a vector of the orders
+/// at that level.
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
-    /// The price of this level
+    /// The price of this level.
     pub price: u64,
-    /// Total visible quantity at this level
+    /// Total visible quantity at this level. This represents the sum of the visible quantities of all orders at this price level.
     pub visible_quantity: u64,
-    /// Total hidden quantity at this level
+    /// Total hidden quantity at this level. This represents the sum of the hidden quantities of all orders at this price level.
     pub hidden_quantity: u64,
-    /// Number of orders at this level
+    /// Number of orders at this level.
     pub order_count: usize,
-    /// Orders at this level
+    /// Orders at this level.  This is a vector of `Arc<OrderType>` representing each individual order at this price level.
     pub orders: Vec<Arc<OrderType>>,
 }
 

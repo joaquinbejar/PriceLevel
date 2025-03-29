@@ -96,6 +96,7 @@ impl OrderQueue {
     }
 
     /// Check if the queue is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         // This is a heuristic and not guaranteed to be accurate in a concurrent environment
         let mut is_empty = true;

@@ -188,3 +188,6 @@ mod errors;
 mod execution;
 
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
+pub use orders::PegReferenceType;
+pub use orders::{OrderId, OrderType, OrderUpdate, Side, TimeInForce};
+pub use price_level::{PriceLevel, PriceLevelData, PriceLevelSnapshot};
