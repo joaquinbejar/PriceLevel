@@ -1280,7 +1280,7 @@ mod tests {
         assert!(display_str.contains("hidden_quantity=0"));
         assert!(display_str.contains("order_count=1"));
         assert!(display_str.contains("orders=["));
-        assert!(display_str.contains("Standard:id=1"));
+        assert!(display_str.contains("Standard:id=00000000-0000-0001-0000-000000000000"));
     }
 
     // Test FromStr implementation for PriceLevel
@@ -1293,7 +1293,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 100, 100, 20, true, None));
         price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
 
-        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=1;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=2;price=10000;quantity=75;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=1;price=10000;quantity=100;side=BUY;timestamp=1616823000000;time_in_force=GTD-1617000000000,ReserveOrder:id=1;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=1;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC]";
+        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000000;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0001-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0001-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC]";
         let result = PriceLevel::from_str(input);
 
         if let Err(ref err) = result {
