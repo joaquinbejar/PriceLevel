@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn test_transaction_list_from_str_valid() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=3;maker_order_id=4;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
+        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
         let list = TransactionList::from_str(input).unwrap();
 
         assert_eq!(list.transactions.len(), 2);
@@ -233,11 +233,11 @@ mod transaction_list_serialization_tests {
         assert!(display_str.ends_with("]"));
 
         assert!(display_str.contains("transaction_id=12345"));
-        assert!(display_str.contains("taker_order_id=1"));
-        assert!(display_str.contains("maker_order_id=2"));
+        assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
+        assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
         assert!(display_str.contains("transaction_id=12346"));
-        assert!(display_str.contains("taker_order_id=3"));
-        assert!(display_str.contains("maker_order_id=4"));
+        assert!(display_str.contains("taker_order_id=00000000-0000-0003-0000-000000000000"));
+        assert!(display_str.contains("maker_order_id=00000000-0000-0004-0000-000000000000"));
     }
 
     #[test]
@@ -250,7 +250,7 @@ mod transaction_list_serialization_tests {
 
     #[test]
     fn test_from_str_valid() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=3;maker_order_id=4;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
+        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
         let list = TransactionList::from_str(input).unwrap();
 
         assert_eq!(list.len(), 2);
@@ -424,7 +424,7 @@ mod transaction_list_serialization_tests {
 
     #[test]
     fn test_complex_transaction_list_parsing() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=3;maker_order_id=4;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001,Transaction:transaction_id=12347;taker_order_id=5;maker_order_id=6;price=10002;quantity=15;taker_side=BUY;timestamp=1616823000002]";
+        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001,Transaction:transaction_id=12347;taker_order_id=00000000-0000-0005-0000-000000000000;maker_order_id=00000000-0000-0006-0000-000000000000;price=10002;quantity=15;taker_side=BUY;timestamp=1616823000002]";
 
         let list = TransactionList::from_str(input).unwrap();
 
