@@ -1,6 +1,7 @@
 //! Core price level implementation
 
 use crate::errors::PriceLevelError;
+use crate::execution::{MatchResult, Transaction};
 use crate::orders::{OrderId, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
@@ -9,7 +10,6 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use crate::execution::{MatchResult, Transaction};
 
 /// A lock-free implementation of a price level in a limit order book
 #[derive(Debug)]
@@ -103,7 +103,12 @@ impl PriceLevel {
         self.orders.to_vec()
     }
 
-    pub fn match_order(&self, incoming_quantity: u64, taker_order_id: OrderId, transaction_id_generator: &AtomicU64) -> MatchResult {
+    pub fn match_order(
+        &self,
+        incoming_quantity: u64,
+        taker_order_id: OrderId,
+        transaction_id_generator: &AtomicU64,
+    ) -> MatchResult {
         let mut result = MatchResult::new(taker_order_id, incoming_quantity);
         let mut remaining = incoming_quantity;
 
@@ -113,6 +118,9 @@ impl PriceLevel {
                     order_arc.match_against(remaining);
 
                 if consumed > 0 {
+                    // Update visible quantity counter
+                    self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
+
                     let transaction_id = transaction_id_generator.fetch_add(1, Ordering::SeqCst);
                     let transaction = Transaction::new(
                         transaction_id,
@@ -120,7 +128,7 @@ impl PriceLevel {
                         order_arc.id(),
                         self.price,
                         consumed,
-                        order_arc.side().opposite(), 
+                        order_arc.side().opposite(),
                     );
 
                     result.add_transaction(transaction);
@@ -134,8 +142,9 @@ impl PriceLevel {
                 remaining = new_remaining;
 
                 // update statistics
-                self.stats.record_execution(consumed, order_arc.price(), order_arc.timestamp());
-                
+                self.stats
+                    .record_execution(consumed, order_arc.price(), order_arc.timestamp());
+
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {
                         self.hidden_quantity
@@ -448,47 +457,98 @@ impl FromStr for PriceLevel {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 || parts[0] != "PriceLevel" {
+        // Check if the string starts with "PriceLevel:"
+        if !s.starts_with("PriceLevel:") {
             return Err(PriceLevelError::InvalidFormat);
         }
 
-        // Parse fields
-        let mut fields = std::collections::HashMap::new();
-        for field_pair in parts[1].split(';') {
-            let kv: Vec<&str> = field_pair.split('=').collect();
-            if kv.len() == 2 {
-                fields.insert(kv[0], kv[1]);
-            }
-        }
+        // Parse the fields
+        let fields_start = "PriceLevel:".len();
+        let mut fields_map = std::collections::HashMap::new();
 
-        // Helper function to parse a field
-        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
-            match fields.get(field) {
-                Some(result) => Ok(*result),
-                None => Err(PriceLevelError::MissingField(field.to_string())),
-            }
+        // Find the start of the orders list
+        let orders_start = match s[fields_start..].find("orders=[") {
+            Some(idx) => fields_start + idx,
+            None => return Err(PriceLevelError::MissingField("orders".to_string())),
         };
 
-        // Parse required fields
-        let price_str = get_field("price")?;
-        let price = price_str
-            .parse::<u64>()
-            .map_err(|_| PriceLevelError::InvalidFieldValue {
-                field: "price".to_string(),
-                value: price_str.to_string(),
-            })?;
+        // Parse the field section before orders
+        let fields_section = &s[fields_start..orders_start];
+        for field_pair in fields_section.split(';') {
+            if field_pair.is_empty() {
+                continue;
+            }
 
-        // Create price level
+            let parts: Vec<&str> = field_pair.split('=').collect();
+            if parts.len() != 2 {
+                return Err(PriceLevelError::InvalidFormat);
+            }
+
+            fields_map.insert(parts[0].to_string(), parts[1].to_string());
+        }
+
+        // Get required price field
+        let price = match fields_map.get("price") {
+            Some(price_str) => match price_str.parse::<u64>() {
+                Ok(price) => price,
+                Err(_) => {
+                    return Err(PriceLevelError::InvalidFieldValue {
+                        field: "price".to_string(),
+                        value: price_str.clone(),
+                    });
+                }
+            },
+            None => return Err(PriceLevelError::MissingField("price".to_string())),
+        };
+
+        // Create a new price level with the given price
         let price_level = PriceLevel::new(price);
 
-        if let Ok(orders_str) = get_field("orders") {
-            let orders_str = orders_str.trim_matches(|c| c == '[' || c == ']');
-            if !orders_str.is_empty() {
-                for order_str in orders_str.split(',') {
-                    let order = OrderType::from_str(order_str.trim())?;
-                    price_level.add_order(order);
+        // Parse orders list
+        let orders_list_start = orders_start + "orders=[".len();
+        let orders_list_end = match s.rfind(']') {
+            Some(idx) => idx,
+            None => return Err(PriceLevelError::InvalidFormat),
+        };
+
+        let orders_str = &s[orders_list_start..orders_list_end];
+
+        // If there are orders, parse them
+        if !orders_str.is_empty() {
+            let mut current_order = String::new();
+            let mut bracket_depth = 0;
+            let mut in_quotes = false;
+
+            // Parse each order carefully, handling potential commas inside order strings
+            for c in orders_str.chars() {
+                match c {
+                    ',' if bracket_depth == 0 && !in_quotes => {
+                        if !current_order.is_empty() {
+                            let order = OrderType::from_str(&current_order)?;
+                            price_level.add_order(order);
+                            current_order.clear();
+                        }
+                    }
+                    '[' => {
+                        bracket_depth += 1;
+                        current_order.push(c);
+                    }
+                    ']' => {
+                        bracket_depth -= 1;
+                        current_order.push(c);
+                    }
+                    '"' => {
+                        in_quotes = !in_quotes;
+                        current_order.push(c);
+                    }
+                    _ => current_order.push(c),
                 }
+            }
+
+            // Parse the last order if there is one
+            if !current_order.is_empty() {
+                let order = OrderType::from_str(&current_order)?;
+                price_level.add_order(order);
             }
         }
 

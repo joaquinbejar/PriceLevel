@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+/// Default amount to replenish the reserve with.
+pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
+
 /// Represents different types of limit orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum OrderType {
@@ -116,6 +119,10 @@ pub enum OrderType {
     },
 
     /// Reserve order with custom replenishment
+    /// if `replenish_amount` is None, it uses DEFAULT_RESERVE_REPLENISH_AMOUNT
+    /// if `auto_replenish` is false, and visible quantity is below threshold, it will not replenish
+    /// if `auto_replenish` is false and visible quantity is zero it will be removed from the book
+    /// if `auto_replenish` is true, and replenish_threshold is 0, it will use 1
     ReserveOrder {
         /// The order ID
         id: OrderId,
@@ -133,6 +140,10 @@ pub enum OrderType {
         time_in_force: TimeInForce,
         /// Threshold at which to replenish
         replenish_threshold: u64,
+        /// Optional amount to replenish by. If None, uses DEFAULT_RESERVE_REPLENISH_AMOUNT
+        replenish_amount: Option<u64>,
+        /// Whether to replenish automatically when below threshold. If false, only replenish on next match
+        auto_replenish: bool,
     },
 }
 
@@ -342,6 +353,8 @@ impl OrderType {
                 timestamp,
                 time_in_force,
                 replenish_threshold,
+                replenish_amount,
+                auto_replenish,
             } => {
                 let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
                 let used_hidden = hidden_quantity - new_hidden;
@@ -356,6 +369,8 @@ impl OrderType {
                         timestamp: *timestamp,
                         time_in_force: *time_in_force,
                         replenish_threshold: *replenish_threshold,
+                        replenish_amount: *replenish_amount,
+                        auto_replenish: *auto_replenish,
                     },
                     used_hidden,
                 )
@@ -409,6 +424,7 @@ impl OrderType {
                 }
             }
 
+            // En OrderType::match_against para IcebergOrder
             Self::IcebergOrder {
                 id,
                 price,
@@ -477,78 +493,98 @@ impl OrderType {
                 timestamp,
                 time_in_force,
                 replenish_threshold,
+                replenish_amount,
+                auto_replenish,
             } => {
+                // Ensure the threshold is never 0 if auto_replenish is true
+                let safe_threshold = if *auto_replenish && *replenish_threshold == 0 {
+                    1
+                } else {
+                    *replenish_threshold
+                };
+
+                let replenish_qty = replenish_amount
+                    .unwrap_or(DEFAULT_RESERVE_REPLENISH_AMOUNT)
+                    .min(*hidden_quantity);
+
                 if *visible_quantity <= incoming_quantity {
-                    // Full match of visible portion
+                    // Full match of the visible part
                     let consumed = *visible_quantity;
                     let remaining = incoming_quantity - consumed;
 
-                    // Check if we need to replenish
-                    if *hidden_quantity > 0 && *visible_quantity <= *replenish_threshold {
-                        // Replenish visible quantity from hidden
-                        let refresh_qty = std::cmp::min(*hidden_quantity, *visible_quantity);
-                        let new_hidden = *hidden_quantity - refresh_qty;
-                        let hidden_reduced = refresh_qty; // Amount reduced from hidden
+                    // Verify if we need and can replenish
+                    if *hidden_quantity > 0 && *auto_replenish {
+                        // Restore from the hidden quantity
+                        let new_hidden = *hidden_quantity - replenish_qty;
 
-                        // Return updated order with refreshed quantities
                         (
-                            consumed, // consumed full visible quantity
+                            consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: refresh_qty,
+                                visible_quantity: replenish_qty,
                                 hidden_quantity: new_hidden,
                                 side: *side,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
+                                replenish_amount: *replenish_amount,
+                                auto_replenish: *auto_replenish,
                             }),
-                            hidden_reduced, // amount reduced from hidden
-                            remaining,      // remaining quantity
-                        )
-                    } else if *hidden_quantity == 0 {
-                        // No hidden quantity, order is fully matched
-                        (
-                            consumed,  // consumed full visible quantity
-                            None,      // fully matched
-                            0,         // no hidden reduced
-                            remaining, // remaining quantity
+                            replenish_qty,
+                            remaining,
                         )
                     } else {
-                        // Has hidden quantity but not below threshold
+                        // If there is no auto-replenishment or no hidden quantity, delete the order
+                        (consumed, None, 0, remaining)
+                    }
+                } else {
+                    // Partial match of the visible part
+                    let consumed = incoming_quantity;
+                    let new_visible = *visible_quantity - consumed;
+
+                    // Check if we need to replenish (we fell below the threshold)
+                    if new_visible < safe_threshold && *hidden_quantity > 0 && *auto_replenish {
+                        // Restore from the hidden quantity
+                        let new_hidden = *hidden_quantity - replenish_qty;
+
                         (
-                            consumed, // consumed full visible quantity
+                            consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: *visible_quantity, // keep as is
+                                visible_quantity: new_visible + replenish_qty,
+                                hidden_quantity: new_hidden,
+                                side: *side,
+                                timestamp: *timestamp,
+                                time_in_force: *time_in_force,
+                                replenish_threshold: *replenish_threshold,
+                                replenish_amount: *replenish_amount,
+                                auto_replenish: *auto_replenish,
+                            }),
+                            replenish_qty,
+                            0,
+                        )
+                    } else {
+                        // We don't need to replenish or it is not automatic
+                        (
+                            consumed,
+                            Some(Self::ReserveOrder {
+                                id: *id,
+                                price: *price,
+                                visible_quantity: new_visible,
                                 hidden_quantity: *hidden_quantity,
                                 side: *side,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
+                                replenish_amount: *replenish_amount,
+                                auto_replenish: *auto_replenish,
                             }),
-                            0,         // no hidden reduced
-                            remaining, // remaining quantity
+                            0,
+                            0,
                         )
                     }
-                } else {
-                    // Partial match of visible portion
-                    (
-                        incoming_quantity, // consumed all incoming
-                        Some(Self::ReserveOrder {
-                            id: *id,
-                            price: *price,
-                            visible_quantity: *visible_quantity - incoming_quantity,
-                            hidden_quantity: *hidden_quantity,
-                            side: *side,
-                            timestamp: *timestamp,
-                            time_in_force: *time_in_force,
-                            replenish_threshold: *replenish_threshold,
-                        }),
-                        0, // no hidden reduced
-                        0, // no remaining quantity
-                    )
                 }
             }
 
@@ -637,38 +673,13 @@ impl FromStr for OrderType {
         let price = parse_u64("price", price_str)?;
 
         let side_str = get_field("side")?;
-        let side = match side_str {
-            "BUY" => Side::Buy,
-            "SELL" => Side::Sell,
-            _ => {
-                return Err(PriceLevelError::InvalidFieldValue {
-                    field: "side".to_string(),
-                    value: side_str.to_string(),
-                });
-            }
-        };
+        let side: Side = Side::from_str(side_str)?;
 
         let timestamp_str = get_field("timestamp")?;
         let timestamp = parse_u64("timestamp", timestamp_str)?;
 
         let tif_str = get_field("time_in_force")?;
-        let time_in_force = match tif_str {
-            "GTC" => TimeInForce::Gtc,
-            "IOC" => TimeInForce::Ioc,
-            "FOK" => TimeInForce::Fok,
-            "DAY" => TimeInForce::Day,
-            _ if tif_str.starts_with("GTD-") => {
-                let date_str = &tif_str[4..];
-                let expiry = parse_u64("time_in_force", date_str)?;
-                TimeInForce::Gtd(expiry)
-            }
-            _ => {
-                return Err(PriceLevelError::InvalidFieldValue {
-                    field: "time_in_force".to_string(),
-                    value: tif_str.to_string(),
-                });
-            }
-        };
+        let time_in_force = TimeInForce::from_str(tif_str)?;
 
         // Parse specific order types
         match order_type {
@@ -793,6 +804,23 @@ impl FromStr for OrderType {
                 let replenish_threshold_str = get_field("replenish_threshold")?;
                 let replenish_threshold =
                     parse_u64("replenish_threshold", replenish_threshold_str)?;
+                let replenish_amount_str = get_field("replenish_amount")?;
+                let replenish_amount = if replenish_amount_str == "None" {
+                    None
+                } else {
+                    Some(parse_u64("replenish_amount", replenish_amount_str)?)
+                };
+                let auto_replenish_str = get_field("auto_replenish")?;
+                let auto_replenish = match auto_replenish_str {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        return Err(PriceLevelError::InvalidFieldValue {
+                            field: "auto_replenish".to_string(),
+                            value: auto_replenish_str.to_string(),
+                        });
+                    }
+                };
 
                 Ok(OrderType::ReserveOrder {
                     id,
@@ -803,6 +831,8 @@ impl FromStr for OrderType {
                     timestamp,
                     time_in_force,
                     replenish_threshold,
+                    replenish_amount,
+                    auto_replenish,
                 })
             }
             _ => Err(PriceLevelError::UnknownOrderType(order_type.to_string())),
@@ -946,10 +976,12 @@ impl fmt::Display for OrderType {
                 timestamp,
                 time_in_force,
                 replenish_threshold,
+                replenish_amount,
+                auto_replenish,
             } => {
                 write!(
                     f,
-                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={};replenish_threshold={}",
+                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount={};auto_replenish={}",
                     id.0,
                     price,
                     visible_quantity,
@@ -957,7 +989,9 @@ impl fmt::Display for OrderType {
                     format!("{:?}", side).to_uppercase(),
                     timestamp,
                     time_in_force,
-                    replenish_threshold
+                    replenish_threshold,
+                    replenish_amount.map_or("None".to_string(), |v| v.to_string()),
+                    auto_replenish
                 )
             }
         }

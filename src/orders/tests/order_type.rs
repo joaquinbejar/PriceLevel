@@ -92,6 +92,8 @@ mod tests {
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: 0,
+            replenish_amount: Some(1),
+            auto_replenish: false,
         }
     }
 
@@ -834,6 +836,8 @@ mod test_order_type_display {
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: 0,
+            replenish_amount: Some(1),
+            auto_replenish: false,
         };
 
         let display_str = order.to_string();
@@ -851,6 +855,441 @@ mod test_order_type_display {
                 display_str,
                 "OrderType variant not fully implemented for Display"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod from_str_specific_tests {
+    use crate::orders::{OrderId, OrderType, PegReferenceType, Side, TimeInForce};
+    use std::str::FromStr;
+
+    #[test]
+    fn test_from_str_reserve_order() {
+        // Test a complete reserve order string
+        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=false";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::ReserveOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+                replenish_amount,
+                auto_replenish,
+            } => {
+                assert_eq!(id, OrderId(129));
+                assert_eq!(price, 10000);
+                assert_eq!(visible_quantity, 1);
+                assert_eq!(hidden_quantity, 4);
+                assert_eq!(side, Side::Sell);
+                assert_eq!(timestamp, 1616823000000);
+                assert_eq!(time_in_force, TimeInForce::Gtc);
+                assert_eq!(replenish_threshold, 0);
+                assert_eq!(replenish_amount, Some(1));
+                assert!(!auto_replenish);
+            }
+            _ => panic!("Expected ReserveOrder"),
+        }
+
+        // Test with None replenish_amount
+        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=10;replenish_amount=None;auto_replenish=true";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::ReserveOrder {
+                replenish_amount,
+                replenish_threshold,
+                auto_replenish,
+                ..
+            } => {
+                assert_eq!(replenish_amount, None);
+                assert_eq!(replenish_threshold, 10);
+                assert!(auto_replenish);
+            }
+            _ => panic!("Expected ReserveOrder"),
+        }
+
+        // Test with different time_in_force
+        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTD-1617000000000;replenish_threshold=5;replenish_amount=2;auto_replenish=true";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::ReserveOrder {
+                time_in_force,
+                replenish_threshold,
+                replenish_amount,
+                auto_replenish,
+                ..
+            } => {
+                assert_eq!(time_in_force, TimeInForce::Gtd(1617000000000));
+                assert_eq!(replenish_threshold, 5);
+                assert_eq!(replenish_amount, Some(2));
+                assert!(auto_replenish);
+            }
+            _ => panic!("Expected ReserveOrder"),
+        }
+    }
+
+    #[test]
+    fn test_from_str_market_to_limit_order() {
+        // Test basic market-to-limit order
+        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::MarketToLimit {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+            } => {
+                assert_eq!(id, OrderId(128));
+                assert_eq!(price, 10000);
+                assert_eq!(quantity, 5);
+                assert_eq!(side, Side::Buy);
+                assert_eq!(timestamp, 1616823000000);
+                assert_eq!(time_in_force, TimeInForce::Gtc);
+            }
+            _ => panic!("Expected MarketToLimit"),
+        }
+
+        // Test with IOC time-in-force
+        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=IOC";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::MarketToLimit { time_in_force, .. } => {
+                assert_eq!(time_in_force, TimeInForce::Ioc);
+            }
+            _ => panic!("Expected MarketToLimit"),
+        }
+
+        // Test with SELL side
+        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=GTC";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::MarketToLimit { side, .. } => {
+                assert_eq!(side, Side::Sell);
+            }
+            _ => panic!("Expected MarketToLimit"),
+        }
+    }
+
+    #[test]
+    fn test_from_str_pegged_order() {
+        // Test with BestAsk reference type
+        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=BestAsk";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+            } => {
+                assert_eq!(id, OrderId(127));
+                assert_eq!(price, 10000);
+                assert_eq!(quantity, 5);
+                assert_eq!(side, Side::Buy);
+                assert_eq!(timestamp, 1616823000000);
+                assert_eq!(time_in_force, TimeInForce::Gtc);
+                assert_eq!(reference_price_offset, -50);
+                assert_eq!(reference_price_type, PegReferenceType::BestAsk);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+
+        // Test with BestBid reference type
+        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=IOC;reference_price_offset=50;reference_price_type=BestBid";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                side,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+                ..
+            } => {
+                assert_eq!(side, Side::Sell);
+                assert_eq!(time_in_force, TimeInForce::Ioc);
+                assert_eq!(reference_price_offset, 50);
+                assert_eq!(reference_price_type, PegReferenceType::BestBid);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+
+        // Test with MidPrice reference type
+        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=0;reference_price_type=MidPrice";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                reference_price_offset,
+                reference_price_type,
+                ..
+            } => {
+                assert_eq!(reference_price_offset, 0);
+                assert_eq!(reference_price_type, PegReferenceType::MidPrice);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+
+        // Test with LastTrade reference type
+        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-100;reference_price_type=LastTrade";
+        let order = OrderType::from_str(input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                reference_price_offset,
+                reference_price_type,
+                ..
+            } => {
+                assert_eq!(reference_price_offset, -100);
+                assert_eq!(reference_price_type, PegReferenceType::LastTrade);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+    }
+
+    #[test]
+    fn test_from_str_invalid_pegged_reference_type() {
+        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=InvalidType";
+        let result = OrderType::from_str(input);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::errors::PriceLevelError::InvalidFieldValue { field, value } => {
+                assert_eq!(field, "reference_price_type");
+                assert_eq!(value, "InvalidType");
+            }
+            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_from_str_invalid_reserve_order_auto_replenish() {
+        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=invalid";
+        let result = OrderType::from_str(input);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::errors::PriceLevelError::InvalidFieldValue { field, value } => {
+                assert_eq!(field, "auto_replenish");
+                assert_eq!(value, "invalid");
+            }
+            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // Test case-insensitivity for side
+        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=bUY;timestamp=1616823000000;time_in_force=GTC";
+        let order_result = OrderType::from_str(input);
+        assert!(
+            order_result.is_ok(),
+            "Failed to parse MarketToLimit order string"
+        );
+        let order = order_result.unwrap();
+
+        match order {
+            OrderType::MarketToLimit { side, .. } => {
+                assert_eq!(side, Side::Buy);
+            }
+            _ => panic!("Expected MarketToLimit"),
+        }
+
+        // Test with maximum values
+        let input = format!(
+            "PeggedOrder:id={};price={};quantity={};side=BUY;timestamp={};time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            i64::MAX
+        );
+        let order = OrderType::from_str(&input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                id,
+                price,
+                quantity,
+                timestamp,
+                reference_price_offset,
+                ..
+            } => {
+                assert_eq!(id, OrderId(u64::MAX));
+                assert_eq!(price, u64::MAX);
+                assert_eq!(quantity, u64::MAX);
+                assert_eq!(timestamp, u64::MAX);
+                assert_eq!(reference_price_offset, i64::MAX);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+
+        // Test with minimum values for reference_price_offset
+        let input = format!(
+            "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
+            i64::MIN
+        );
+        let order = OrderType::from_str(&input).unwrap();
+
+        match order {
+            OrderType::PeggedOrder {
+                reference_price_offset,
+                ..
+            } => {
+                assert_eq!(reference_price_offset, i64::MIN);
+            }
+            _ => panic!("Expected PeggedOrder"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_serialization() {
+        // Create sample orders
+        let orders = vec![
+            OrderType::ReserveOrder {
+                id: OrderId(129),
+                price: 10000,
+                visible_quantity: 1,
+                hidden_quantity: 4,
+                side: Side::Sell,
+                timestamp: 1616823000000,
+                time_in_force: TimeInForce::Gtc,
+                replenish_threshold: 0,
+                replenish_amount: Some(1),
+                auto_replenish: false,
+            },
+            OrderType::MarketToLimit {
+                id: OrderId(128),
+                price: 10000,
+                quantity: 5,
+                side: Side::Buy,
+                timestamp: 1616823000000,
+                time_in_force: TimeInForce::Ioc,
+            },
+            OrderType::PeggedOrder {
+                id: OrderId(127),
+                price: 10000,
+                quantity: 5,
+                side: Side::Buy,
+                timestamp: 1616823000000,
+                time_in_force: TimeInForce::Gtc,
+                reference_price_offset: -50,
+                reference_price_type: PegReferenceType::MidPrice,
+            },
+        ];
+
+        // Test round-trip for each order type
+        for original_order in orders {
+            let string_representation = original_order.to_string();
+            let parsed_order = OrderType::from_str(&string_representation).unwrap();
+
+            // Compare specific fields based on order type
+            match (original_order, parsed_order) {
+                (
+                    OrderType::ReserveOrder {
+                        id: id1,
+                        price: price1,
+                        visible_quantity: vis1,
+                        hidden_quantity: hid1,
+                        side: side1,
+                        replenish_threshold: thresh1,
+                        replenish_amount: amt1,
+                        auto_replenish: auto1,
+                        ..
+                    },
+                    OrderType::ReserveOrder {
+                        id: id2,
+                        price: price2,
+                        visible_quantity: vis2,
+                        hidden_quantity: hid2,
+                        side: side2,
+                        replenish_threshold: thresh2,
+                        replenish_amount: amt2,
+                        auto_replenish: auto2,
+                        ..
+                    },
+                ) => {
+                    assert_eq!(id1, id2);
+                    assert_eq!(price1, price2);
+                    assert_eq!(vis1, vis2);
+                    assert_eq!(hid1, hid2);
+                    assert_eq!(side1, side2);
+                    assert_eq!(thresh1, thresh2);
+                    assert_eq!(amt1, amt2);
+                    assert_eq!(auto1, auto2);
+                }
+                (
+                    OrderType::MarketToLimit {
+                        id: id1,
+                        price: price1,
+                        quantity: qty1,
+                        side: side1,
+                        time_in_force: tif1,
+                        ..
+                    },
+                    OrderType::MarketToLimit {
+                        id: id2,
+                        price: price2,
+                        quantity: qty2,
+                        side: side2,
+                        time_in_force: tif2,
+                        ..
+                    },
+                ) => {
+                    assert_eq!(id1, id2);
+                    assert_eq!(price1, price2);
+                    assert_eq!(qty1, qty2);
+                    assert_eq!(side1, side2);
+                    assert_eq!(tif1, tif2);
+                }
+                (
+                    OrderType::PeggedOrder {
+                        id: id1,
+                        price: price1,
+                        quantity: qty1,
+                        side: side1,
+                        reference_price_offset: offset1,
+                        reference_price_type: ref_type1,
+                        ..
+                    },
+                    OrderType::PeggedOrder {
+                        id: id2,
+                        price: price2,
+                        quantity: qty2,
+                        side: side2,
+                        reference_price_offset: offset2,
+                        reference_price_type: ref_type2,
+                        ..
+                    },
+                ) => {
+                    assert_eq!(id1, id2);
+                    assert_eq!(price1, price2);
+                    assert_eq!(qty1, qty2);
+                    assert_eq!(side1, side2);
+                    assert_eq!(offset1, offset2);
+                    assert_eq!(ref_type1, ref_type2);
+                }
+                _ => panic!("Order types don't match after round-trip"),
+            }
         }
     }
 }
