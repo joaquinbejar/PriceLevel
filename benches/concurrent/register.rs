@@ -68,7 +68,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                         |price_level, thread_id, iteration| {
                             let transaction_id_generator = AtomicU64::new(1);
                             // Use different taker order IDs for each thread/iteration
-                            let taker_id = OrderId(thread_id as u64 * 1_000_000 + iteration);
+                            let taker_id =
+                                OrderId::from_u64(thread_id as u64 * 1_000_000 + iteration);
                             price_level.match_order(5, taker_id, &transaction_id_generator);
                         },
                     )
@@ -94,7 +95,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                         iters,
                         |price_level, thread_id, iteration| {
                             // Each thread cancels a different order
-                            let order_id = OrderId(thread_id as u64 * 100 + iteration % 100);
+                            let order_id =
+                                OrderId::from_u64(thread_id as u64 * 100 + iteration % 100);
                             let _ = price_level.update_order(OrderUpdate::Cancel { order_id });
                         },
                     )
@@ -301,19 +303,19 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                     }
                     1 => {
                         // Match against existing orders
-                        let taker_id = OrderId(thread_id as u64 * 1_000_000 + i);
+                        let taker_id = OrderId::from_u64(thread_id as u64 * 1_000_000 + i);
                         thread_price_level.match_order(5, taker_id, &thread_transaction_id_gen);
                     }
                     2 => {
                         // Cancel one of the initial orders
-                        let order_id = OrderId(i % 200);
+                        let order_id = OrderId::from_u64(i % 200);
                         let _ = thread_price_level.update_order(OrderUpdate::Cancel { order_id });
                     }
                     _ => {
                         // Update quantity
                         let base_id = thread_id as u64 * 1_000_000 + (i - 1);
                         let _ = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
-                            order_id: OrderId(base_id),
+                            order_id: OrderId::from_u64(base_id),
                             new_quantity: 20,
                         });
                     }
@@ -424,7 +426,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::Standard {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             quantity: 10,
             side: Side::Buy,

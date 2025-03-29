@@ -24,20 +24,23 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Phase 2: Execute some matches
             for _ in 0..5 {
-                let _ =
-                    black_box(price_level.match_order(50, OrderId(999), &transaction_id_generator));
+                let _ = black_box(price_level.match_order(
+                    50,
+                    OrderId::from_u64(999),
+                    &transaction_id_generator,
+                ));
             }
 
             // Phase 3: Update some orders
             for i in 20..40 {
                 if i % 2 == 0 {
                     let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
-                        order_id: OrderId(i),
+                        order_id: OrderId::from_u64(i),
                         new_quantity: 20,
                     }));
                 } else {
                     let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                        order_id: OrderId(i),
+                        order_id: OrderId::from_u64(i),
                     }));
                 }
             }
@@ -54,7 +57,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Phase 5: Execute final matches
             for _ in 0..3 {
-                black_box(price_level.match_order(100, OrderId(1000), &transaction_id_generator));
+                black_box(price_level.match_order(
+                    100,
+                    OrderId::from_u64(1000),
+                    &transaction_id_generator,
+                ));
             }
         })
     });
@@ -74,7 +81,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
             // Execute many small matches interspersed with new orders and cancellations
             for i in 0..100 {
                 // Match a small amount
-                black_box(price_level.match_order(2, OrderId(1000 + i), &transaction_id_generator));
+                black_box(price_level.match_order(
+                    2,
+                    OrderId::from_u64(1000 + i),
+                    &transaction_id_generator,
+                ));
 
                 // Add a new order
                 let order = create_standard_order(200 + i, 10000, 5);
@@ -83,7 +94,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // Cancel an order
                 if i % 10 == 0 {
                     let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                        order_id: OrderId(i),
+                        order_id: OrderId::from_u64(i),
                     }));
                 }
             }
@@ -103,9 +114,21 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Execute a few large matches
-            black_box(price_level.match_order(300, OrderId(1001), &transaction_id_generator));
-            black_box(price_level.match_order(400, OrderId(1002), &transaction_id_generator));
-            black_box(price_level.match_order(300, OrderId(1003), &transaction_id_generator));
+            black_box(price_level.match_order(
+                300,
+                OrderId::from_u64(1001),
+                &transaction_id_generator,
+            ));
+            black_box(price_level.match_order(
+                400,
+                OrderId::from_u64(1002),
+                &transaction_id_generator,
+            ));
+            black_box(price_level.match_order(
+                300,
+                OrderId::from_u64(1003),
+                &transaction_id_generator,
+            ));
         })
     });
 

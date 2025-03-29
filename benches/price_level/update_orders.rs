@@ -12,7 +12,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             // Cancel orders from the middle to avoid best/worst case scenarios
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                    order_id: OrderId(i),
+                    order_id: OrderId::from_u64(i),
                 }));
             }
         })
@@ -24,7 +24,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_standard_orders(100);
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
-                    order_id: OrderId(i),
+                    order_id: OrderId::from_u64(i),
                     new_quantity: 200,
                 }));
             }
@@ -37,7 +37,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_standard_orders(100);
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::Replace {
-                    order_id: OrderId(i),
+                    order_id: OrderId::from_u64(i),
                     price: 10000, // Same price
                     quantity: 150,
                     side: Side::Buy,
@@ -52,7 +52,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_standard_orders(100);
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::Replace {
-                    order_id: OrderId(i),
+                    order_id: OrderId::from_u64(i),
                     price: 10100, // Different price
                     quantity: 150,
                     side: Side::Buy,
@@ -69,7 +69,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // In a real scenario we'd be updating both visible and hidden
                 // but for benchmark we're just using the UpdateQuantity which works on visible
                 let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
-                    order_id: OrderId(i),
+                    order_id: OrderId::from_u64(i),
                     new_quantity: 15,
                 }));
             }
@@ -88,7 +88,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     let cancel_count = order_count / 4;
                     for i in 0..cancel_count {
                         let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                            order_id: OrderId(i),
+                            order_id: OrderId::from_u64(i),
                         }));
                     }
                 })
@@ -107,7 +107,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::Standard {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             quantity: 10,
             side: Side::Buy,
@@ -126,7 +126,7 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::IcebergOrder {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             visible_quantity: 5,
             hidden_quantity: 15,

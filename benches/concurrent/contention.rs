@@ -102,12 +102,12 @@ fn measure_read_write_contention(
                         }
                         1 => {
                             // Match against existing orders
-                            let taker_id = OrderId(thread_id as u64 * 1_000_000 + i);
+                            let taker_id = OrderId::from_u64(thread_id as u64 * 1_000_000 + i);
                             thread_price_level.match_order(2, taker_id, &thread_transaction_id_gen);
                         }
                         _ => {
                             // Cancel an order
-                            let order_id = OrderId(i % 500);
+                            let order_id = OrderId::from_u64(i % 500);
                             let _ =
                                 thread_price_level.update_order(OrderUpdate::Cancel { order_id });
                         }
@@ -193,7 +193,7 @@ fn measure_hot_spot_contention(
                     0 => {
                         // Cancel an order
                         let _ = thread_price_level.update_order(OrderUpdate::Cancel {
-                            order_id: OrderId(order_idx),
+                            order_id: OrderId::from_u64(order_idx),
                         });
                     }
                     1 => {
@@ -205,13 +205,13 @@ fn measure_hot_spot_contention(
                     2 => {
                         // Update quantity
                         let _ = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
-                            order_id: OrderId(order_idx),
+                            order_id: OrderId::from_u64(order_idx),
                             new_quantity: 15,
                         });
                     }
                     _ => {
                         // Match operations
-                        let taker_id = OrderId(thread_id as u64 * 1_000_000 + i);
+                        let taker_id = OrderId::from_u64(thread_id as u64 * 1_000_000 + i);
                         thread_price_level.match_order(1, taker_id, &thread_transaction_id_gen);
                     }
                 }

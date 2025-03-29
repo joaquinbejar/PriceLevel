@@ -966,8 +966,16 @@ mod tests {
         assert_eq!(transaction3.quantity, 15);
 
         assert_eq!(match_result.filled_order_ids.len(), 2);
-        assert!(match_result.filled_order_ids.contains(&OrderId::from_u64(1)));
-        assert!(match_result.filled_order_ids.contains(&OrderId::from_u64(2)));
+        assert!(
+            match_result
+                .filled_order_ids
+                .contains(&OrderId::from_u64(1))
+        );
+        assert!(
+            match_result
+                .filled_order_ids
+                .contains(&OrderId::from_u64(2))
+        );
 
         let orders = price_level.iter_orders();
         assert_eq!(orders.len(), 1);

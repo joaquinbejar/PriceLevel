@@ -147,7 +147,14 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
-        let transaction = Transaction::new(12345, OrderId::from_u64(1), OrderId::from_u64(2), 10000, 5, Side::Buy);
+        let transaction = Transaction::new(
+            12345,
+            OrderId::from_u64(1),
+            OrderId::from_u64(2),
+            10000,
+            5,
+            Side::Buy,
+        );
 
         assert_eq!(transaction.transaction_id, 12345);
         assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));

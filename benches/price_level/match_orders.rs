@@ -12,7 +12,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let price_level = setup_standard_orders(100);
             let transaction_id_generator = AtomicU64::new(1);
-            black_box(price_level.match_order(50, OrderId(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                50,
+                OrderId::from_u64(999),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -21,7 +25,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let price_level = setup_iceberg_orders(100);
             let transaction_id_generator = AtomicU64::new(1);
-            black_box(price_level.match_order(75, OrderId(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                75,
+                OrderId::from_u64(999),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -30,7 +38,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let price_level = setup_reserve_orders(100);
             let transaction_id_generator = AtomicU64::new(1);
-            black_box(price_level.match_order(60, OrderId(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                60,
+                OrderId::from_u64(999),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -39,7 +51,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let price_level = setup_mixed_orders(100);
             let transaction_id_generator = AtomicU64::new(1);
-            black_box(price_level.match_order(100, OrderId(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                100,
+                OrderId::from_u64(999),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -54,7 +70,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     let transaction_id_generator = AtomicU64::new(1);
                     black_box(price_level.match_order(
                         match_quantity,
-                        OrderId(999),
+                        OrderId::from_u64(999),
                         &transaction_id_generator,
                     ));
                 })
@@ -73,7 +89,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     let transaction_id_generator = AtomicU64::new(1);
                     black_box(price_level.match_order(
                         match_quantity,
-                        OrderId(999),
+                        OrderId::from_u64(999),
                         &transaction_id_generator,
                     ));
                 })
@@ -92,7 +108,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::Standard {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             quantity: 10,
             side: Side::Buy,
@@ -111,7 +127,7 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::IcebergOrder {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -131,7 +147,7 @@ fn setup_reserve_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::ReserveOrder {
-            id: OrderId(i),
+            id: OrderId::from_u64(i),
             price: 10000,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -155,7 +171,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = match i % 3 {
             0 => OrderType::Standard {
-                id: OrderId(i),
+                id: OrderId::from_u64(i),
                 price: 10000,
                 quantity: 10,
                 side: Side::Buy,
@@ -163,7 +179,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 time_in_force: TimeInForce::Gtc,
             },
             1 => OrderType::IcebergOrder {
-                id: OrderId(i),
+                id: OrderId::from_u64(i),
                 price: 10000,
                 visible_quantity: 5,
                 hidden_quantity: 15,
@@ -172,7 +188,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 time_in_force: TimeInForce::Gtc,
             },
             _ => OrderType::ReserveOrder {
-                id: OrderId(i),
+                id: OrderId::from_u64(i),
                 price: 10000,
                 visible_quantity: 5,
                 hidden_quantity: 15,

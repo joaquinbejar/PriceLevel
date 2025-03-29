@@ -2,7 +2,7 @@
 
 use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, setup_logger};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -102,7 +102,8 @@ fn test_read_write_ratio() {
                             }
                             1 => {
                                 // Match order
-                                let taker_id = OrderId(thread_id as u64 * 10000 + local_counter);
+                                let taker_id =
+                                    OrderId::from_u64(thread_id as u64 * 10000 + local_counter);
                                 thread_price_level.match_order(
                                     5, // Match 5 units
                                     taker_id,
@@ -111,7 +112,7 @@ fn test_read_write_ratio() {
                             }
                             _ => {
                                 // Cancel/update order
-                                let order_id = OrderId(local_counter % 500);
+                                let order_id = OrderId::from_u64(local_counter % 500);
                                 let _ = thread_price_level
                                     .update_order(OrderUpdate::Cancel { order_id });
                             }
@@ -149,7 +150,7 @@ fn test_read_write_ratio() {
 
         // Calculate total operations
         let total_ops: usize = if let Ok(counters) = operation_counters.lock() {
-            counters.iter().sum()
+            counters.iter().map(|&count| count as usize).sum()
         } else {
             0
         };
@@ -283,15 +284,15 @@ fn test_hot_spot_contention() {
                         }
                         1 => {
                             // Cancel an order
-                            let result = thread_price_level.update_order(OrderUpdate::Cancel {
-                                order_id: OrderId(order_idx),
+                            let _result = thread_price_level.update_order(OrderUpdate::Cancel {
+                                order_id: OrderId::from_u64(order_idx),
                             });
                         }
                         _ => {
                             // Update an order
-                            let result =
+                            let _result =
                                 thread_price_level.update_order(OrderUpdate::UpdateQuantity {
-                                    order_id: OrderId(order_idx),
+                                    order_id: OrderId::from_u64(order_idx),
                                     new_quantity: 15,
                                 });
                         }
@@ -328,7 +329,7 @@ fn test_hot_spot_contention() {
 
         // Calculate total operations
         let total_ops: usize = if let Ok(counters) = operation_counters.lock() {
-            counters.iter().sum()
+            counters.iter().map(|&count| count as usize).sum()
         } else {
             0
         };

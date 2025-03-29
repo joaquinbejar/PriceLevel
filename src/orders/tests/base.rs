@@ -90,8 +90,8 @@ mod tests_side {
 
 #[cfg(test)]
 mod tests_orderid {
-    use std::str::FromStr;
     use crate::orders::OrderId;
+    use std::str::FromStr;
     use uuid::Uuid;
 
     #[test]

@@ -71,12 +71,12 @@ mod tests {
         assert_eq!(orders.len(), 2, "Expected 2 orders in parsed queue");
 
         // Verify individual orders (order might not be preserved)
-        let has_order1 = orders
-            .iter()
-            .any(|o| o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10);
-        let has_order2 = orders
-            .iter()
-            .any(|o| o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20);
+        let has_order1 = orders.iter().any(|o| {
+            o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10
+        });
+        let has_order2 = orders.iter().any(|o| {
+            o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20
+        });
 
         assert!(has_order1, "First order not found or incorrect");
         assert!(has_order2, "Second order not found or incorrect");
@@ -91,12 +91,12 @@ mod tests {
             "Round-trip parsing should preserve order count"
         );
 
-        let round_trip_has_order1 = round_trip_orders
-            .iter()
-            .any(|o| o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10);
-        let round_trip_has_order2 = round_trip_orders
-            .iter()
-            .any(|o| o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20);
+        let round_trip_has_order1 = round_trip_orders.iter().any(|o| {
+            o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10
+        });
+        let round_trip_has_order2 = round_trip_orders.iter().any(|o| {
+            o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20
+        });
 
         assert!(
             round_trip_has_order1,

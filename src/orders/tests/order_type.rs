@@ -497,8 +497,7 @@ mod tests {
         assert!(result.is_err());
 
         // Test missing field
-        let order_str =
-            "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let result = OrderType::from_str(order_str);
         assert!(result.is_err());
 
@@ -1113,7 +1112,7 @@ mod from_str_specific_tests {
             }
             _ => panic!("Expected MarketToLimit"),
         }
-        
+
         // Test with maximum values
         let input = format!(
             "PeggedOrder:id=ffffffff-ffff-ffff-0000-000000000000;price={};quantity={};side=BUY;timestamp={};time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",

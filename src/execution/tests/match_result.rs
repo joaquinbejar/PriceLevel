@@ -130,7 +130,7 @@ mod tests {
 
         // Test display with empty transactions and filled_order_ids
         let display_str = result.to_string();
-        
+
         assert!(
             display_str
                 .starts_with("MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=100;is_complete=false")

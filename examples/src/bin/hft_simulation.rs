@@ -130,7 +130,7 @@ fn main() {
             let mut local_counter = 0;
             while thread_running.load(Ordering::Relaxed) {
                 // Generate a unique taker order ID
-                let taker_id = OrderId((thread_id as u64) * 1_000_000 + local_counter);
+                let taker_id = OrderId::from_u64((thread_id as u64) * 1_000_000 + local_counter);
 
                 // Match varying quantities
                 let quantity = (local_counter % 5) + 1; // Match 1-5 units
@@ -182,7 +182,7 @@ fn main() {
                 // Try to cancel random orders
                 // Use a combination of the thread ID, local counter, and time to generate "random" order IDs
                 let time_component = Instant::now().elapsed().as_nanos() as u64 % 1000;
-                let order_id = OrderId(time_component + local_counter);
+                let order_id = OrderId::from_u64(time_component + local_counter);
 
                 let result = thread_price_level.update_order(OrderUpdate::Cancel { order_id });
 

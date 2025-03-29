@@ -88,6 +88,12 @@ impl fmt::Display for OrderId {
     }
 }
 
+impl Default for OrderId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrderId {
     /// Create a new random OrderId
     pub fn new() -> Self {
@@ -116,7 +122,14 @@ impl OrderId {
             ((id >> 16) & 0xFF) as u8,
             ((id >> 8) & 0xFF) as u8,
             (id & 0xFF) as u8,
-            0, 0, 0, 0, 0, 0, 0, 0
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ];
         OrderId(Uuid::from_bytes(bytes))
     }
