@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_from_str_standard() {
-        let order_str = "Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::Standard {
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_from_str_iceberg() {
-        let order_str = "IcebergOrder:id=124;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC";
+        let order_str = "IcebergOrder:id=00000000-0000-007c-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::IcebergOrder {
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_from_str_trailing_stop() {
-        let order_str = "TrailingStop:id=126;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=GTC;trail_amount=100;last_reference_price=10100";
+        let order_str = "TrailingStop:id=00000000-0000-007e-0000-000000000000;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=GTC;trail_amount=100;last_reference_price=10100";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::TrailingStop {
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_from_str_pegged() {
-        let order_str = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=BestAsk";
+        let order_str = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=BestAsk";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::PeggedOrder {
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn test_from_str_different_time_in_force() {
         // Test IOC time-in-force
-        let order_str = "Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=IOC";
+        let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=IOC";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::Standard { time_in_force, .. } = order {
@@ -474,7 +474,7 @@ mod tests {
         }
 
         // Test GTD time-in-force
-        let order_str = "Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTD-1616909400000";
+        let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTD-1616909400000";
         let order = OrderType::from_str(order_str).unwrap();
 
         if let OrderType::Standard { time_in_force, .. } = order {
@@ -487,23 +487,23 @@ mod tests {
     #[test]
     fn test_from_str_errors() {
         // Test invalid format
-        let order_str = "Standard;id=123;price=10000";
+        let order_str = "Standard;id=00000000-0000-007b-0000-000000000000;price=10000";
         let result = OrderType::from_str(order_str);
         assert!(result.is_err());
 
         // Test unknown order type
-        let order_str = "Unknown:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let order_str = "Unknown:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let result = OrderType::from_str(order_str);
         assert!(result.is_err());
 
         // Test missing field
         let order_str =
-            "Standard:id=123;price=10000;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+            "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let result = OrderType::from_str(order_str);
         assert!(result.is_err());
 
         // Test invalid field value
-        let order_str = "Standard:id=123;price=invalid;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=invalid;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let result = OrderType::from_str(order_str);
         assert!(result.is_err());
     }
@@ -516,7 +516,7 @@ mod tests {
 
         info!("{}", display_str);
         assert!(display_str.starts_with("Standard:"));
-        assert!(display_str.contains("id=123"));
+        assert!(display_str.contains("id=00000000-0000-007b-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
         assert!(display_str.contains("quantity=5"));
         assert!(display_str.contains("side=BUY"));
@@ -530,7 +530,7 @@ mod tests {
         let display_str = format!("{}", order);
 
         assert!(display_str.starts_with("IcebergOrder:"));
-        assert!(display_str.contains("id=124"));
+        assert!(display_str.contains("id=00000000-0000-007c-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
         assert!(display_str.contains("visible_quantity=1"));
         assert!(display_str.contains("hidden_quantity=4"));
@@ -548,7 +548,7 @@ mod tests {
         assert!(
             display_str.contains("OrderType variant not fully implemented for Display")
                 || (display_str.starts_with("PostOnly:")
-                    && display_str.contains("id=125")
+                    && display_str.contains("id=00000000-0000-007d-0000-000000000000")
                     && display_str.contains("price=10000")
                     && display_str.contains("quantity=5")
                     && display_str.contains("side=BUY")
@@ -639,7 +639,7 @@ mod test_order_type_display {
         let display_str = order.to_string();
         assert_eq!(
             display_str,
-            "Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC"
+            "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC"
         );
 
         // Test that it can be parsed back (round-trip)
@@ -678,7 +678,7 @@ mod test_order_type_display {
         let display_str = order.to_string();
         assert_eq!(
             display_str,
-            "IcebergOrder:id=124;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC"
+            "IcebergOrder:id=00000000-0000-007c-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC"
         );
 
         // Test that it can be parsed back (round-trip)
@@ -721,7 +721,7 @@ mod test_order_type_display {
         // the fallback message or the proper format
         if !display_str.contains("not fully implemented") {
             assert!(display_str.starts_with("PostOnly:"));
-            assert!(display_str.contains("id=125"));
+            assert!(display_str.contains("id=00000000-0000-007d-0000-000000000000"));
             assert!(display_str.contains("price=10000"));
             assert!(display_str.contains("quantity=5"));
             assert!(display_str.contains("side=BUY"));
@@ -753,7 +753,7 @@ mod test_order_type_display {
 
         if !display_str.contains("not fully implemented") {
             assert!(display_str.starts_with("TrailingStop:"));
-            assert!(display_str.contains("id=126"));
+            assert!(display_str.contains("id=00000000-0000-007e-0000-000000000000"));
             assert!(display_str.contains("price=10000"));
             assert!(display_str.contains("quantity=5"));
             assert!(display_str.contains("side=SELL"));
@@ -784,7 +784,7 @@ mod test_order_type_display {
 
         if !display_str.contains("not fully implemented") {
             assert!(display_str.starts_with("PeggedOrder:"));
-            assert!(display_str.contains("id=127"));
+            assert!(display_str.contains("id=00000000-0000-007f-0000-000000000000"));
             assert!(display_str.contains("price=10000"));
             assert!(display_str.contains("quantity=5"));
             assert!(display_str.contains("side=BUY"));
@@ -813,7 +813,7 @@ mod test_order_type_display {
 
         if !display_str.contains("not fully implemented") {
             assert!(display_str.starts_with("MarketToLimit:"));
-            assert!(display_str.contains("id=128"));
+            assert!(display_str.contains("id=00000000-0000-0080-0000-000000000000"));
             assert!(display_str.contains("price=10000"));
             assert!(display_str.contains("quantity=5"));
             assert!(display_str.contains("side=BUY"));
@@ -844,7 +844,7 @@ mod test_order_type_display {
 
         if !display_str.contains("not fully implemented") {
             assert!(display_str.starts_with("ReserveOrder:"));
-            assert!(display_str.contains("id=129"));
+            assert!(display_str.contains("id=00000000-0000-0081-0000-000000000000"));
             assert!(display_str.contains("price=10000"));
             assert!(display_str.contains("visible_quantity=1"));
             assert!(display_str.contains("hidden_quantity=4"));
@@ -867,7 +867,7 @@ mod from_str_specific_tests {
     #[test]
     fn test_from_str_reserve_order() {
         // Test a complete reserve order string
-        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=false";
+        let input = "ReserveOrder:id=00000000-0000-0081-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=false";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -898,7 +898,7 @@ mod from_str_specific_tests {
         }
 
         // Test with None replenish_amount
-        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=10;replenish_amount=None;auto_replenish=true";
+        let input = "ReserveOrder:id=00000000-0000-0081-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=10;replenish_amount=None;auto_replenish=true";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -916,7 +916,7 @@ mod from_str_specific_tests {
         }
 
         // Test with different time_in_force
-        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTD-1617000000000;replenish_threshold=5;replenish_amount=2;auto_replenish=true";
+        let input = "ReserveOrder:id=00000000-0000-0081-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTD-1617000000000;replenish_threshold=5;replenish_amount=2;auto_replenish=true";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -939,7 +939,7 @@ mod from_str_specific_tests {
     #[test]
     fn test_from_str_market_to_limit_order() {
         // Test basic market-to-limit order
-        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
+        let input = "MarketToLimit:id=00000000-0000-0080-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -962,7 +962,7 @@ mod from_str_specific_tests {
         }
 
         // Test with IOC time-in-force
-        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=IOC";
+        let input = "MarketToLimit:id=00000000-0000-0080-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=IOC";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -973,7 +973,7 @@ mod from_str_specific_tests {
         }
 
         // Test with SELL side
-        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=GTC";
+        let input = "MarketToLimit:id=00000000-0000-0080-0000-000000000000;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=GTC";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -987,7 +987,7 @@ mod from_str_specific_tests {
     #[test]
     fn test_from_str_pegged_order() {
         // Test with BestAsk reference type
-        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=BestAsk";
+        let input = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=BestAsk";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -1014,7 +1014,7 @@ mod from_str_specific_tests {
         }
 
         // Test with BestBid reference type
-        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=IOC;reference_price_offset=50;reference_price_type=BestBid";
+        let input = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=SELL;timestamp=1616823000000;time_in_force=IOC;reference_price_offset=50;reference_price_type=BestBid";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -1034,7 +1034,7 @@ mod from_str_specific_tests {
         }
 
         // Test with MidPrice reference type
-        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=0;reference_price_type=MidPrice";
+        let input = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=0;reference_price_type=MidPrice";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -1050,7 +1050,7 @@ mod from_str_specific_tests {
         }
 
         // Test with LastTrade reference type
-        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-100;reference_price_type=LastTrade";
+        let input = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-100;reference_price_type=LastTrade";
         let order = OrderType::from_str(input).unwrap();
 
         match order {
@@ -1068,7 +1068,7 @@ mod from_str_specific_tests {
 
     #[test]
     fn test_from_str_invalid_pegged_reference_type() {
-        let input = "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=InvalidType";
+        let input = "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset=-50;reference_price_type=InvalidType";
         let result = OrderType::from_str(input);
 
         assert!(result.is_err());
@@ -1083,7 +1083,7 @@ mod from_str_specific_tests {
 
     #[test]
     fn test_from_str_invalid_reserve_order_auto_replenish() {
-        let input = "ReserveOrder:id=129;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=invalid";
+        let input = "ReserveOrder:id=00000000-0000-0081-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=1;auto_replenish=invalid";
         let result = OrderType::from_str(input);
 
         assert!(result.is_err());
@@ -1099,7 +1099,7 @@ mod from_str_specific_tests {
     #[test]
     fn test_edge_cases() {
         // Test case-insensitivity for side
-        let input = "MarketToLimit:id=128;price=10000;quantity=5;side=bUY;timestamp=1616823000000;time_in_force=GTC";
+        let input = "MarketToLimit:id=00000000-0000-0080-0000-000000000000;price=10000;quantity=5;side=bUY;timestamp=1616823000000;time_in_force=GTC";
         let order_result = OrderType::from_str(input);
         assert!(
             order_result.is_ok(),
@@ -1113,11 +1113,10 @@ mod from_str_specific_tests {
             }
             _ => panic!("Expected MarketToLimit"),
         }
-
+        
         // Test with maximum values
         let input = format!(
-            "PeggedOrder:id={};price={};quantity={};side=BUY;timestamp={};time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
-            u64::MAX,
+            "PeggedOrder:id=ffffffff-ffff-ffff-0000-000000000000;price={};quantity={};side=BUY;timestamp={};time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
             u64::MAX,
             u64::MAX,
             u64::MAX,
@@ -1145,7 +1144,7 @@ mod from_str_specific_tests {
 
         // Test with minimum values for reference_price_offset
         let input = format!(
-            "PeggedOrder:id=127;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
+            "PeggedOrder:id=00000000-0000-007f-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC;reference_price_offset={};reference_price_type=BestAsk",
             i64::MIN
         );
         let order = OrderType::from_str(&input).unwrap();
