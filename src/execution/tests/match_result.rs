@@ -130,9 +130,10 @@ mod tests {
 
         // Test display with empty transactions and filled_order_ids
         let display_str = result.to_string();
+        
         assert!(
             display_str
-                .starts_with("MatchResult:order_id=123;remaining_quantity=100;is_complete=false")
+                .starts_with("MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=100;is_complete=false")
         );
         assert!(display_str.contains("transactions=Transactions:[]"));
         assert!(display_str.contains("filled_order_ids=[]"));
@@ -144,15 +145,15 @@ mod tests {
         let display_str = result.to_string();
         assert!(
             display_str
-                .starts_with("MatchResult:order_id=123;remaining_quantity=70;is_complete=false")
+                .starts_with("MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false")
         );
         assert!(display_str.contains("Transaction:transaction_id=1"));
-        assert!(display_str.contains("filled_order_ids=[456]"));
+        assert!(display_str.contains("filled_order_ids=[00000000-0000-01c8-0000-000000000000]"));
     }
 
     #[test]
     fn test_from_str_valid() {
-        let input = "MatchResult:order_id=123;remaining_quantity=70;is_complete=false;transactions=Transactions:[];filled_order_ids=[]";
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[];filled_order_ids=[]";
         let result = match MatchResult::from_str(input) {
             Ok(r) => r,
             Err(e) => {
@@ -167,7 +168,7 @@ mod tests {
         assert!(result.filled_order_ids.is_empty());
 
         // Test parsing with transactions and filled order IDs
-        let input = "MatchResult:order_id=123;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=1;taker_order_id=123;maker_order_id=456;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[456]";
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=1;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-01c8-0000-000000000000;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[00000000-0000-01c8-0000-000000000000]";
         let result = MatchResult::from_str(input).unwrap();
 
         assert_eq!(result.order_id, OrderId::from_u64(123));
@@ -260,16 +261,17 @@ mod tests {
     #[test]
     fn test_with_multiple_filled_order_ids() {
         // Create a match result with multiple filled order IDs
-        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
-        result.add_filled_order_id(OrderId::from_u64(456));
-        result.add_filled_order_id(OrderId::from_u64(789));
-        result.add_filled_order_id(OrderId::from_u64(101));
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100); // 00000000-0000-007b-0000-000000000000
+        result.add_filled_order_id(OrderId::from_u64(456)); // 00000000-0000-01c8-0000-000000000000
+        result.add_filled_order_id(OrderId::from_u64(789)); // 00000000-0000-0315-0000-000000000000
+        result.add_filled_order_id(OrderId::from_u64(101)); // 00000000-0000-0065-0000-000000000000
+        println!("{:?}", result);
 
         // Convert to string
         let string_representation = result.to_string();
 
         // Verify filled_order_ids format
-        assert!(string_representation.contains("filled_order_ids=[456,789,101]"));
+        assert!(string_representation.contains("filled_order_ids=[00000000-0000-01c8-0000-000000000000,00000000-0000-0315-0000-000000000000,00000000-0000-0065-0000-000000000000]"));
 
         // Parse back
         let parsed = MatchResult::from_str(&string_representation).unwrap();
