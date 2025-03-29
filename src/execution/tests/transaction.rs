@@ -25,8 +25,8 @@ mod tests {
 
         assert!(display_str.starts_with("Transaction:"));
         assert!(display_str.contains("transaction_id=12345"));
-        assert!(display_str.contains("taker_order_id=1"));
-        assert!(display_str.contains("maker_order_id=2"));
+        assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
+        assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
         assert!(display_str.contains("quantity=5"));
         assert!(display_str.contains("taker_side=BUY"));
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn test_transaction_from_str_valid() {
-        let input = "Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Transaction::from_str(input).unwrap();
 
         assert_eq!(transaction.transaction_id, 12345);
@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn test_transaction_from_str_missing_field() {
         // Missing quantity field
-        let input = "Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;taker_side=BUY;timestamp=1616823000000";
         let result = Transaction::from_str(input);
 
         assert!(result.is_err());
@@ -196,11 +196,11 @@ mod transaction_serialization_tests {
         let transaction = create_test_transaction();
         let json = serde_json::to_string(&transaction).unwrap();
         assert!(json.contains("\"transaction_id\":12345"));
-        assert!(json.contains("\"taker_order_id\":1"));
-        assert!(json.contains("\"maker_order_id\":2"));
+        assert!(json.contains("\"taker_order_id\":\"00000000-0000-0001-0000-000000000000\""));
+        assert!(json.contains("\"maker_order_id\":\"00000000-0000-0002-0000-000000000000\""));
         assert!(json.contains("\"price\":10000"));
         assert!(json.contains("\"quantity\":5"));
-        assert!(json.contains("\"taker_side\":\"BUY\"")); // Asumiendo que Side serializa a "BUY"
+        assert!(json.contains("\"taker_side\":\"BUY\""));
         assert!(json.contains("\"timestamp\":1616823000000"));
     }
 
@@ -208,8 +208,8 @@ mod transaction_serialization_tests {
     fn test_serde_json_deserialization() {
         let json = r#"{
             "transaction_id": 12345,
-            "taker_order_id": 1,
-            "maker_order_id": 2,
+            "taker_order_id": "00000000-0000-0001-0000-000000000000",
+            "maker_order_id": "00000000-0000-0002-0000-000000000000",
             "price": 10000,
             "quantity": 5,
             "taker_side": "BUY",
@@ -251,8 +251,8 @@ mod transaction_serialization_tests {
 
         assert!(display_str.starts_with("Transaction:"));
         assert!(display_str.contains("transaction_id=12345"));
-        assert!(display_str.contains("taker_order_id=1"));
-        assert!(display_str.contains("maker_order_id=2"));
+        assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
+        assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
         assert!(display_str.contains("quantity=5"));
         assert!(display_str.contains("taker_side=BUY"));
@@ -261,7 +261,7 @@ mod transaction_serialization_tests {
 
     #[test]
     fn test_from_str_valid() {
-        let input = "Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Transaction::from_str(input).unwrap();
 
         assert_eq!(transaction.transaction_id, 12345);
