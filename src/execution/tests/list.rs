@@ -9,8 +9,8 @@ mod tests {
         vec![
             Transaction {
                 transaction_id: 12345,
-                taker_order_id: OrderId(1),
-                maker_order_id: OrderId(2),
+                taker_order_id: OrderId::from_u64(1),
+                maker_order_id: OrderId::from_u64(2),
                 price: 10000,
                 quantity: 5,
                 taker_side: Side::Buy,
@@ -18,8 +18,8 @@ mod tests {
             },
             Transaction {
                 transaction_id: 12346,
-                taker_order_id: OrderId(3),
-                maker_order_id: OrderId(4),
+                taker_order_id: OrderId::from_u64(3),
+                maker_order_id: OrderId::from_u64(4),
                 price: 10001,
                 quantity: 10,
                 taker_side: Side::Sell,
@@ -89,16 +89,16 @@ mod tests {
         assert_eq!(list.transactions.len(), 2);
 
         assert_eq!(list.transactions[0].transaction_id, 12345);
-        assert_eq!(list.transactions[0].taker_order_id, OrderId(1));
-        assert_eq!(list.transactions[0].maker_order_id, OrderId(2));
+        assert_eq!(list.transactions[0].taker_order_id, OrderId::from_u64(1));
+        assert_eq!(list.transactions[0].maker_order_id, OrderId::from_u64(2));
         assert_eq!(list.transactions[0].price, 10000);
         assert_eq!(list.transactions[0].quantity, 5);
         assert_eq!(list.transactions[0].taker_side, Side::Buy);
         assert_eq!(list.transactions[0].timestamp, 1616823000000);
 
         assert_eq!(list.transactions[1].transaction_id, 12346);
-        assert_eq!(list.transactions[1].taker_order_id, OrderId(3));
-        assert_eq!(list.transactions[1].maker_order_id, OrderId(4));
+        assert_eq!(list.transactions[1].taker_order_id, OrderId::from_u64(3));
+        assert_eq!(list.transactions[1].maker_order_id, OrderId::from_u64(4));
         assert_eq!(list.transactions[1].price, 10001);
         assert_eq!(list.transactions[1].quantity, 10);
         assert_eq!(list.transactions[1].taker_side, Side::Sell);
@@ -201,8 +201,8 @@ mod transaction_list_serialization_tests {
         vec![
             Transaction {
                 transaction_id: 12345,
-                taker_order_id: OrderId(1),
-                maker_order_id: OrderId(2),
+                taker_order_id: OrderId::from_u64(1),
+                maker_order_id: OrderId::from_u64(2),
                 price: 10000,
                 quantity: 5,
                 taker_side: Side::Buy,
@@ -210,8 +210,8 @@ mod transaction_list_serialization_tests {
             },
             Transaction {
                 transaction_id: 12346,
-                taker_order_id: OrderId(3),
-                maker_order_id: OrderId(4),
+                taker_order_id: OrderId::from_u64(3),
+                maker_order_id: OrderId::from_u64(4),
                 price: 10001,
                 quantity: 10,
                 taker_side: Side::Sell,
@@ -257,8 +257,8 @@ mod transaction_list_serialization_tests {
 
         let tx1 = &list.transactions[0];
         assert_eq!(tx1.transaction_id, 12345);
-        assert_eq!(tx1.taker_order_id, OrderId(1));
-        assert_eq!(tx1.maker_order_id, OrderId(2));
+        assert_eq!(tx1.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(tx1.maker_order_id, OrderId::from_u64(2));
         assert_eq!(tx1.price, 10000);
         assert_eq!(tx1.quantity, 5);
         assert_eq!(tx1.taker_side, Side::Buy);
@@ -266,8 +266,8 @@ mod transaction_list_serialization_tests {
 
         let tx2 = &list.transactions[1];
         assert_eq!(tx2.transaction_id, 12346);
-        assert_eq!(tx2.taker_order_id, OrderId(3));
-        assert_eq!(tx2.maker_order_id, OrderId(4));
+        assert_eq!(tx2.taker_order_id, OrderId::from_u64(3));
+        assert_eq!(tx2.maker_order_id, OrderId::from_u64(4));
         assert_eq!(tx2.price, 10001);
         assert_eq!(tx2.quantity, 10);
         assert_eq!(tx2.taker_side, Side::Sell);

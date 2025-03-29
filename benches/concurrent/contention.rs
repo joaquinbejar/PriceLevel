@@ -242,7 +242,7 @@ fn measure_hot_spot_contention(
 #[allow(dead_code)]
 fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
     OrderType::Standard {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,

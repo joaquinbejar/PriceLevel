@@ -92,7 +92,7 @@ mod tests_order_book_entry {
 
         // Add some orders and check again
         let order_type = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId(1),
+            id: crate::orders::OrderId::from_u64(1),
             price: 1000,
             quantity: 10,
             side: crate::orders::Side::Buy,
@@ -105,7 +105,7 @@ mod tests_order_book_entry {
 
         // Add another order
         let order_type2 = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId(2),
+            id: crate::orders::OrderId::from_u64(2),
             price: 1000,
             quantity: 20,
             side: crate::orders::Side::Buy,
@@ -235,7 +235,7 @@ mod tests_order_book_entry {
 
         // Add an order with visible quantity
         let standard_order = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId(1),
+            id: crate::orders::OrderId::from_u64(1),
             price: 1000,
             quantity: 10,
             side: crate::orders::Side::Buy,
@@ -250,7 +250,7 @@ mod tests_order_book_entry {
 
         // Add an iceberg order with hidden quantity
         let iceberg_order = crate::orders::OrderType::IcebergOrder {
-            id: crate::orders::OrderId(2),
+            id: crate::orders::OrderId::from_u64(2),
             price: 1000,
             visible_quantity: 5,
             hidden_quantity: 15,

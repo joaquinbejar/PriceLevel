@@ -667,7 +667,10 @@ impl FromStr for OrderType {
 
         // Parse common fields
         let id_str = get_field("id")?;
-        let id = OrderId(parse_u64("id", id_str)?);
+        let id = OrderId::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+            field: "id".to_string(),
+            value: id_str.to_string(),
+        })?;
 
         let price_str = get_field("price")?;
         let price = parse_u64("price", price_str)?;

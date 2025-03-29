@@ -11,7 +11,7 @@ mod tests {
     // Helper functions to create different order types for testing
     fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::Standard {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -22,7 +22,7 @@ mod tests {
 
     fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
         OrderType::IcebergOrder {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             visible_quantity: visible,
             hidden_quantity: hidden,
@@ -34,7 +34,7 @@ mod tests {
 
     fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::PostOnly {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -45,7 +45,7 @@ mod tests {
 
     fn create_trailing_stop_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::TrailingStop {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Sell,
@@ -58,7 +58,7 @@ mod tests {
 
     fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::PeggedOrder {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -71,7 +71,7 @@ mod tests {
 
     fn create_market_to_limit_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::MarketToLimit {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -90,7 +90,7 @@ mod tests {
         replenish_amount: Option<u64>,
     ) -> OrderType {
         OrderType::ReserveOrder {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             visible_quantity: visible,
             hidden_quantity: hidden,
@@ -105,7 +105,7 @@ mod tests {
 
     fn create_fill_or_kill_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::Standard {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -116,7 +116,7 @@ mod tests {
 
     fn create_immediate_or_cancel_order(id: u64, price: u64, quantity: u64) -> OrderType {
         OrderType::Standard {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -127,7 +127,7 @@ mod tests {
 
     fn create_good_till_date_order(id: u64, price: u64, quantity: u64, expiry: u64) -> OrderType {
         OrderType::Standard {
-            id: OrderId(id),
+            id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(price_level.total_quantity(), 100);
 
         // Verify the returned Arc contains the expected order
-        assert_eq!(order_arc.id(), OrderId(1));
+        assert_eq!(order_arc.id(), OrderId::from_u64(1));
         assert_eq!(order_arc.price(), 10000);
         assert_eq!(order_arc.visible_quantity(), 100);
 
@@ -215,20 +215,20 @@ mod tests {
 
         // Cancel the standard order using OrderUpdate
         let result = price_level.update_order(OrderUpdate::Cancel {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
         });
 
         assert!(result.is_ok());
         let removed = result.unwrap();
         assert!(removed.is_some());
-        assert_eq!(removed.unwrap().id(), OrderId(1));
+        assert_eq!(removed.unwrap().id(), OrderId::from_u64(1));
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 200);
         assert_eq!(price_level.order_count(), 1);
 
         // Cancel the iceberg order
         let result = price_level.update_order(OrderUpdate::Cancel {
-            order_id: OrderId(2),
+            order_id: OrderId::from_u64(2),
         });
 
         assert!(result.is_ok());
@@ -240,7 +240,7 @@ mod tests {
 
         // Try to cancel a non-existent order
         let result = price_level.update_order(OrderUpdate::Cancel {
-            order_id: OrderId(3),
+            order_id: OrderId::from_u64(3),
         });
 
         assert!(result.is_ok());
@@ -261,8 +261,8 @@ mod tests {
         let orders = price_level.iter_orders();
 
         assert_eq!(orders.len(), 2);
-        assert_eq!(orders[0].id(), OrderId(1));
-        assert_eq!(orders[1].id(), OrderId(2));
+        assert_eq!(orders[0].id(), OrderId::from_u64(1));
+        assert_eq!(orders[1].id(), OrderId::from_u64(2));
 
         // Verify the orders are still in the queue after iteration
         assert_eq!(price_level.order_count(), 2);
@@ -276,7 +276,7 @@ mod tests {
         price_level.add_order(create_standard_order(1, 10000, 100));
 
         // Match the entire order
-        let taker_id = OrderId(999); // market order ID
+        let taker_id = OrderId::from_u64(999); // market order ID
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.order_id, taker_id);
@@ -288,13 +288,13 @@ mod tests {
         assert_eq!(match_result.transactions.len(), 1);
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 100);
         assert_eq!(transaction.taker_side, Side::Sell); // Taker is a market order, so it's a sell side opposite of maker
 
         assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], OrderId(1));
+        assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
 
         // Verify stats
         assert_eq!(price_level.stats().orders_executed(), 1);
@@ -310,7 +310,7 @@ mod tests {
         price_level.add_order(create_standard_order(1, 10000, 100));
 
         // Match part of the order
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
 
         // Verificar el resultado de matching
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(match_result.transactions.len(), 1);
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 60);
         assert_eq!(transaction.taker_side, Side::Sell);
@@ -345,7 +345,7 @@ mod tests {
         price_level.add_order(create_standard_order(1, 10000, 100));
 
         // Match with quantity exceeding available
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.order_id, taker_id);
@@ -357,12 +357,12 @@ mod tests {
         assert_eq!(match_result.transactions.len(), 1);
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 100);
 
         assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], OrderId(1));
+        assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
     }
 
     // ------------------------------------------- ICEBERG ORDERS -------------------------------------------
@@ -380,7 +380,7 @@ mod tests {
         price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
 
         // Match the visible portion of the iceberg order.
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         // Assertions to validate the match result.
@@ -395,14 +395,14 @@ mod tests {
         // Assertions about the generated transaction
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 50);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
-        let taker_id = OrderId(1000);
+        let taker_id = OrderId::from_u64(1000);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
         assert_eq!(match_result.remaining_quantity, 0);
         assert!(match_result.is_complete);
@@ -412,14 +412,14 @@ mod tests {
         let transaction = &match_result.transactions.as_vec()[0];
 
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 50);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match the remaining 50 units (50 visible + 0 hidden).
-        let taker_id = OrderId(1001);
+        let taker_id = OrderId::from_u64(1001);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
         assert_eq!(match_result.remaining_quantity, 0);
         assert!(match_result.is_complete);
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], OrderId(1));
+        assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
     }
 
     #[test]
@@ -439,7 +439,7 @@ mod tests {
         price_level.add_order(create_iceberg_order(1, 10000, 100, 100));
 
         // Match the visible portion of the iceberg order.
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         // Assertions to validate the match result.
@@ -454,14 +454,14 @@ mod tests {
         // Assertions about the generated transaction
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 50);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
-        let taker_id = OrderId(1000);
+        let taker_id = OrderId::from_u64(1000);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
         assert_eq!(match_result.remaining_quantity, 0);
         assert!(match_result.is_complete);
@@ -471,14 +471,14 @@ mod tests {
         let transaction = &match_result.transactions.as_vec()[0];
 
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 50);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match the remaining 50 units (50 visible + 0 hidden).
-        let taker_id = OrderId(1001);
+        let taker_id = OrderId::from_u64(1001);
 
         // This should match the remaining visible quantity and deplete the hidden quantity.
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], OrderId(1));
+        assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
     }
 
     #[test]
@@ -499,7 +499,7 @@ mod tests {
         price_level.add_order(create_iceberg_order(1, 10000, 50, 150));
 
         // Match part of the visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(30, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -523,7 +523,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
 
         // Match the entire visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -546,7 +546,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, true, None));
 
         // Match the entire visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -575,7 +575,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
 
         // Match partially, but still above threshold
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 150); // No change to hidden quantity
 
         // Match more to go below threshold
-        let taker_id = OrderId(1000);
+        let taker_id = OrderId::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -615,7 +615,7 @@ mod tests {
         ));
 
         // Match the entire visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -638,7 +638,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, true, None));
 
         // Match partially
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(49, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -660,7 +660,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, false, None));
 
         // Match the entire visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -682,7 +682,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 1, false, None));
 
         // Match the entire visible portion
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -704,7 +704,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
 
         // Match part of the visible portion, but still above threshold
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -713,7 +713,7 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 150); // No replenishment yet
 
         // Match more to go below threshold
-        let taker_id = OrderId(1000);
+        let taker_id = OrderId::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -738,7 +738,7 @@ mod tests {
         price_level.add_order(create_reserve_order(1, 10000, 100, 100, 20, true, None));
 
         // Match 80 units, which is above the replenish threshold
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(80, taker_id, &transaction_id_generator);
 
         // Validate the match result
@@ -753,14 +753,14 @@ mod tests {
         // Validate the transaction details
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 80);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match 10 more units, which will take us below the replenish threshold
-        let taker_id = OrderId(1000);
+        let taker_id = OrderId::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -771,14 +771,14 @@ mod tests {
 
         let transaction = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, OrderId(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 10);
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
         // Match with a larger amount than what's available
-        let taker_id = OrderId(1001);
+        let taker_id = OrderId::from_u64(1001);
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 40); // 150 - 90 - 20 = 40
@@ -787,21 +787,21 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], OrderId(1));
+        assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
 
         // Verify the correct number and sizes of transactions
         assert_eq!(match_result.transactions.len(), 2); // One for visible, one for hidden
 
         let transaction1 = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
-        assert_eq!(transaction1.maker_order_id, OrderId(1));
+        assert_eq!(transaction1.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction1.price, 10000);
         assert_eq!(transaction1.quantity, 90); // First consumes all visible
         assert_eq!(transaction1.taker_side, Side::Buy);
 
         let transaction2 = &match_result.transactions.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
-        assert_eq!(transaction2.maker_order_id, OrderId(1));
+        assert_eq!(transaction2.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction2.price, 10000);
         assert_eq!(transaction2.quantity, 20); // Then consumes all hidden
         assert_eq!(transaction2.taker_side, Side::Buy);
@@ -817,7 +817,7 @@ mod tests {
         price_level.add_order(create_post_only_order(1, 10000, 100));
 
         // Post-only orders behave like standard orders for matching
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -834,7 +834,7 @@ mod tests {
         price_level.add_order(create_trailing_stop_order(1, 10000, 100));
 
         // Trailing stop orders behave like standard orders for matching
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -851,7 +851,7 @@ mod tests {
         price_level.add_order(create_pegged_order(1, 10000, 100));
 
         // Pegged orders behave like standard orders for matching
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -868,7 +868,7 @@ mod tests {
         price_level.add_order(create_market_to_limit_order(1, 10000, 100));
 
         // Market-to-limit orders behave like standard orders for matching
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -885,7 +885,7 @@ mod tests {
         price_level.add_order(create_fill_or_kill_order(1, 10000, 100));
 
         // For the price level, FOK behaves like standard orders
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -902,7 +902,7 @@ mod tests {
         price_level.add_order(create_immediate_or_cancel_order(1, 10000, 100));
 
         // For the price level, IOC behaves like standard orders
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -919,7 +919,7 @@ mod tests {
         price_level.add_order(create_good_till_date_order(1, 10000, 100, 1617000000000));
 
         // GTD orders behave like standard orders for matching
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
         assert_eq!(match_result.remaining_quantity, 0);
@@ -938,7 +938,7 @@ mod tests {
         price_level.add_order(create_standard_order(3, 10000, 25));
 
         // Match first two orders completely and third partially
-        let taker_id = OrderId(999);
+        let taker_id = OrderId::from_u64(999);
         let match_result = price_level.match_order(140, taker_id, &transaction_id_generator);
 
         // Verificar el resultado de matching
@@ -952,26 +952,26 @@ mod tests {
 
         let transaction1 = &match_result.transactions.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
-        assert_eq!(transaction1.maker_order_id, OrderId(1));
+        assert_eq!(transaction1.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction1.quantity, 50);
 
         let transaction2 = &match_result.transactions.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
-        assert_eq!(transaction2.maker_order_id, OrderId(2));
+        assert_eq!(transaction2.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction2.quantity, 75);
 
         let transaction3 = &match_result.transactions.as_vec()[2];
         assert_eq!(transaction3.taker_order_id, taker_id);
-        assert_eq!(transaction3.maker_order_id, OrderId(3));
+        assert_eq!(transaction3.maker_order_id, OrderId::from_u64(3));
         assert_eq!(transaction3.quantity, 15);
 
         assert_eq!(match_result.filled_order_ids.len(), 2);
-        assert!(match_result.filled_order_ids.contains(&OrderId(1)));
-        assert!(match_result.filled_order_ids.contains(&OrderId(2)));
+        assert!(match_result.filled_order_ids.contains(&OrderId::from_u64(1)));
+        assert!(match_result.filled_order_ids.contains(&OrderId::from_u64(2)));
 
         let orders = price_level.iter_orders();
         assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].id(), OrderId(3));
+        assert_eq!(orders[0].id(), OrderId::from_u64(3));
         assert_eq!(orders[0].visible_quantity(), 10);
         assert_eq!(orders[0].hidden_quantity(), 0);
     }
@@ -1015,7 +1015,7 @@ mod tests {
 
         // Update the price to a different value
         let update = OrderUpdate::UpdatePrice {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
             new_price: 11000,
         };
 
@@ -1025,7 +1025,7 @@ mod tests {
         assert!(result.is_ok());
         let removed_order = result.unwrap();
         assert!(removed_order.is_some());
-        assert_eq!(removed_order.unwrap().id(), OrderId(1));
+        assert_eq!(removed_order.unwrap().id(), OrderId::from_u64(1));
 
         // The price level should now be empty
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1036,7 +1036,7 @@ mod tests {
         price_level.add_order(order);
 
         let same_price_update = OrderUpdate::UpdatePrice {
-            order_id: OrderId(2),
+            order_id: OrderId::from_u64(2),
             new_price: 10000,
         };
 
@@ -1058,7 +1058,7 @@ mod tests {
 
         // Update to increase quantity
         let update = OrderUpdate::UpdateQuantity {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
             new_quantity: 150,
         };
 
@@ -1076,7 +1076,7 @@ mod tests {
 
         // Update to decrease quantity
         let update = OrderUpdate::UpdateQuantity {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
             new_quantity: 50,
         };
 
@@ -1094,7 +1094,7 @@ mod tests {
 
         // Test updating non-existent order
         let update = OrderUpdate::UpdateQuantity {
-            order_id: OrderId(999),
+            order_id: OrderId::from_u64(999),
             new_quantity: 50,
         };
 
@@ -1113,7 +1113,7 @@ mod tests {
 
         // Update both price and quantity with different price
         let update = OrderUpdate::UpdatePriceAndQuantity {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
             new_price: 11000,
             new_quantity: 150,
         };
@@ -1124,7 +1124,7 @@ mod tests {
         assert!(result.is_ok());
         let removed_order = result.unwrap();
         assert!(removed_order.is_some());
-        assert_eq!(removed_order.unwrap().id(), OrderId(1));
+        assert_eq!(removed_order.unwrap().id(), OrderId::from_u64(1));
 
         // The price level should now be empty
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1135,7 +1135,7 @@ mod tests {
         price_level.add_order(order);
 
         let update = OrderUpdate::UpdatePriceAndQuantity {
-            order_id: OrderId(2),
+            order_id: OrderId::from_u64(2),
             new_price: 10000,
             new_quantity: 150,
         };
@@ -1163,7 +1163,7 @@ mod tests {
 
         // Replace with different price
         let update = OrderUpdate::Replace {
-            order_id: OrderId(1),
+            order_id: OrderId::from_u64(1),
             price: 11000,
             quantity: 150,
             side: Side::Buy,
@@ -1175,7 +1175,7 @@ mod tests {
         assert!(result.is_ok());
         let removed_order = result.unwrap();
         assert!(removed_order.is_some());
-        assert_eq!(removed_order.unwrap().id(), OrderId(1));
+        assert_eq!(removed_order.unwrap().id(), OrderId::from_u64(1));
 
         // The price level should now be empty
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1186,7 +1186,7 @@ mod tests {
         price_level.add_order(order);
 
         let update = OrderUpdate::Replace {
-            order_id: OrderId(2),
+            order_id: OrderId::from_u64(2),
             price: 10000,
             quantity: 150,
             side: Side::Buy,
@@ -1225,9 +1225,9 @@ mod tests {
         assert_eq!(data.orders.len(), 2);
 
         // Verify order IDs
-        let order_ids: Vec<u64> = data.orders.iter().map(|o| o.id().0).collect();
-        assert!(order_ids.contains(&1));
-        assert!(order_ids.contains(&2));
+        let order_ids: Vec<OrderId> = data.orders.iter().map(|o| o.id()).collect();
+        assert!(order_ids.contains(&OrderId::from_u64(1)));
+        assert!(order_ids.contains(&OrderId::from_u64(2)));
     }
 
     // Test the TryFrom<PriceLevelData> implementation for PriceLevel
@@ -1261,9 +1261,9 @@ mod tests {
         let orders = price_level.iter_orders();
         assert_eq!(orders.len(), 2);
 
-        let order_ids: Vec<u64> = orders.iter().map(|o| o.id().0).collect();
-        assert!(order_ids.contains(&1));
-        assert!(order_ids.contains(&2));
+        let order_ids: Vec<OrderId> = orders.iter().map(|o| o.id()).collect();
+        assert!(order_ids.contains(&OrderId::from_u64(1)));
+        assert!(order_ids.contains(&OrderId::from_u64(2)));
     }
 
     // Test Display implementation for PriceLevel
@@ -1313,7 +1313,7 @@ mod tests {
         // Verify the order
         let orders = price_level.iter_orders();
         assert_eq!(orders.len(), 5);
-        assert_eq!(orders[0].id(), OrderId(1));
+        assert_eq!(orders[0].id(), OrderId::from_u64(1));
         assert_eq!(orders[0].price(), 10000);
         assert_eq!(orders[0].visible_quantity(), 50);
     }
@@ -1346,7 +1346,7 @@ mod tests {
         // Verify the order in the deserialized price level
         let orders = deserialized.iter_orders();
         assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].id(), OrderId(1));
+        assert_eq!(orders[0].id(), OrderId::from_u64(1));
         assert_eq!(orders[0].price(), 10000);
         assert_eq!(orders[0].visible_quantity(), 100);
     }

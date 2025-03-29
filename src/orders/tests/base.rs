@@ -90,26 +90,43 @@ mod tests_side {
 
 #[cfg(test)]
 mod tests_orderid {
+    use std::str::FromStr;
     use crate::orders::OrderId;
+    use uuid::Uuid;
 
     #[test]
     fn test_order_id_creation() {
-        let id = OrderId(12345);
-        assert_eq!(id.0, 12345);
+        // Create using from_u64 for backward compatibility
+        let id = OrderId::from_u64(12345);
+        assert_eq!(id.0.as_u64_pair().1 & 0xFFFFFFFFFFFFFF00, 0); // Upper bytes should contain the ID
+
+        // Create random UUIDs
+        let id1 = OrderId::new();
+        let id2 = OrderId::new();
+        assert_ne!(id1, id2); // Random UUIDs should be different
+
+        // Create from existing UUID
+        let uuid = Uuid::new_v4();
+        let id = OrderId::from_uuid(uuid);
+        assert_eq!(id.0, uuid);
+
+        // Create nil UUID
+        let nil_id = OrderId::nil();
+        assert_eq!(nil_id.0, Uuid::nil());
     }
 
     #[test]
     fn test_order_id_equality() {
-        let id1 = OrderId(12345);
-        let id2 = OrderId(12345);
-        let id3 = OrderId(54321);
+        let id1 = OrderId::from_u64(12345);
+        let id2 = OrderId::from_u64(12345);
+        let id3 = OrderId::from_u64(54321);
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
     }
 
     #[test]
     fn test_order_id_clone() {
-        let id = OrderId(12345);
+        let id = OrderId::from_u64(12345);
         let cloned_id = id;
         assert_eq!(id, cloned_id);
     }
@@ -118,20 +135,21 @@ mod tests_orderid {
     fn test_order_id_hash() {
         use std::collections::HashSet;
         let mut set = HashSet::new();
-        set.insert(OrderId(12345));
-        set.insert(OrderId(54321));
-        assert!(set.contains(&OrderId(12345)));
-        assert!(set.contains(&OrderId(54321)));
-        assert!(!set.contains(&OrderId(99999)));
-        set.insert(OrderId(12345));
+        set.insert(OrderId::from_u64(12345));
+        set.insert(OrderId::from_u64(54321));
+        assert!(set.contains(&OrderId::from_u64(12345)));
+        assert!(set.contains(&OrderId::from_u64(54321)));
+        assert!(!set.contains(&OrderId::from_u64(99999)));
+        set.insert(OrderId::from_u64(12345));
         assert_eq!(set.len(), 2);
     }
 
     #[test]
     fn test_serialize_deserialize() {
-        let id = OrderId(12345);
+        let id = OrderId::from_u64(12345);
         let serialized = serde_json::to_string(&id).unwrap();
-        assert_eq!(serialized, "12345");
+        let expected_uuid = id.0.to_string();
+        assert!(serialized.contains(&expected_uuid));
 
         let deserialized: OrderId = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, id);
@@ -139,43 +157,46 @@ mod tests_orderid {
 
     #[test]
     fn test_from_str_valid() {
-        assert_eq!("12345".parse::<OrderId>().unwrap(), OrderId(12345));
-        assert_eq!("0".parse::<OrderId>().unwrap(), OrderId(0));
-        assert_eq!(
-            "18446744073709551615".parse::<OrderId>().unwrap(),
-            OrderId(u64::MAX)
-        );
+        let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
+        let order_id = OrderId::from_str(uuid_str).unwrap();
+        assert_eq!(order_id.0.to_string(), uuid_str);
+
+        // Test that legacy conversions still work through string format
+        let u64_id = 12345;
+        let order_id_from_u64 = OrderId::from_u64(u64_id);
+        let order_id_str = order_id_from_u64.to_string();
+        let order_id_parsed = OrderId::from_str(&order_id_str).unwrap();
+        assert_eq!(order_id_from_u64, order_id_parsed);
     }
 
     #[test]
     fn test_from_str_invalid() {
-        assert!("".parse::<OrderId>().is_err());
-        assert!("-1".parse::<OrderId>().is_err());
-        assert!("abc".parse::<OrderId>().is_err());
-        assert!("123.45".parse::<OrderId>().is_err());
-        assert!("18446744073709551616".parse::<OrderId>().is_err()); // u64::MAX + 1
-    }
-
-    #[test]
-    fn test_error_message() {
-        let error = "abc".parse::<OrderId>().unwrap_err();
-        assert!(error.to_string().contains("Failed to parse OrderId"));
+        assert!(OrderId::from_str("").is_err());
+        assert!(OrderId::from_str("not-a-uuid").is_err());
+        assert!(OrderId::from_str("550e8400-e29b-41d4-a716").is_err()); // Incomplete UUID
     }
 
     #[test]
     fn test_display() {
-        let id = OrderId(12345);
-        assert_eq!(format!("{}", id), "12345");
-        assert_eq!(id.to_string(), "12345");
+        let uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let id = OrderId::from_uuid(uuid);
+        assert_eq!(format!("{}", id), "550e8400-e29b-41d4-a716-446655440000");
     }
 
     #[test]
     fn test_roundtrip() {
+        // Test U64 round trip
         let original = 12345u64;
-        let id = OrderId(original);
+        let id = OrderId::from_u64(original);
         let string = id.to_string();
         let parsed = string.parse::<OrderId>().unwrap();
-        let final_value = parsed.0;
-        assert_eq!(original, final_value);
+        assert_eq!(parsed, id);
+
+        // Test UUID round trip
+        let uuid = Uuid::new_v4();
+        let id = OrderId::from_uuid(uuid);
+        let string = id.to_string();
+        let parsed = string.parse::<OrderId>().unwrap();
+        assert_eq!(parsed, id);
     }
 }

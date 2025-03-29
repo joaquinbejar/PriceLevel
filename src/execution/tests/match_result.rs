@@ -18,8 +18,8 @@ mod tests {
     ) -> Transaction {
         Transaction {
             transaction_id: id,
-            taker_order_id: OrderId(taker_id),
-            maker_order_id: OrderId(maker_id),
+            taker_order_id: OrderId::from_u64(taker_id),
+            maker_order_id: OrderId::from_u64(maker_id),
             price,
             quantity,
             taker_side: Side::Buy,
@@ -29,9 +29,9 @@ mod tests {
 
     #[test]
     fn test_match_result_new() {
-        let result = MatchResult::new(OrderId(123), 100);
+        let result = MatchResult::new(OrderId::from_u64(123), 100);
 
-        assert_eq!(result.order_id, OrderId(123));
+        assert_eq!(result.order_id, OrderId::from_u64(123));
         assert_eq!(result.remaining_quantity, 100);
         assert!(!result.is_complete);
         assert!(result.transactions.is_empty());
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn test_add_transaction() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // Add a transaction for 30 quantity
         let transaction1 = create_test_transaction(1, 123, 456, 1000, 30);
@@ -71,19 +71,19 @@ mod tests {
 
     #[test]
     fn test_add_filled_order_id() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
-        result.add_filled_order_id(OrderId(456));
-        result.add_filled_order_id(OrderId(789));
+        result.add_filled_order_id(OrderId::from_u64(456));
+        result.add_filled_order_id(OrderId::from_u64(789));
 
         assert_eq!(result.filled_order_ids.len(), 2);
-        assert_eq!(result.filled_order_ids[0], OrderId(456));
-        assert_eq!(result.filled_order_ids[1], OrderId(789));
+        assert_eq!(result.filled_order_ids[0], OrderId::from_u64(456));
+        assert_eq!(result.filled_order_ids[1], OrderId::from_u64(789));
     }
 
     #[test]
     fn test_executed_quantity() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // No transactions yet
         assert_eq!(result.executed_quantity(), 0);
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_executed_value() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // No transactions yet
         assert_eq!(result.executed_value(), 0);
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_average_price() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // No transactions yet
         assert_eq!(result.average_price(), None);
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_display() {
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // Test display with empty transactions and filled_order_ids
         let display_str = result.to_string();
@@ -139,7 +139,7 @@ mod tests {
 
         // Add some transactions and filled order IDs
         result.add_transaction(create_test_transaction(1, 123, 456, 1000, 30));
-        result.add_filled_order_id(OrderId(456));
+        result.add_filled_order_id(OrderId::from_u64(456));
 
         let display_str = result.to_string();
         assert!(
@@ -160,7 +160,7 @@ mod tests {
             }
         };
 
-        assert_eq!(result.order_id, OrderId(123));
+        assert_eq!(result.order_id, OrderId::from_u64(123));
         assert_eq!(result.remaining_quantity, 70);
         assert!(!result.is_complete);
         assert!(result.transactions.is_empty());
@@ -170,12 +170,12 @@ mod tests {
         let input = "MatchResult:order_id=123;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=1;taker_order_id=123;maker_order_id=456;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[456]";
         let result = MatchResult::from_str(input).unwrap();
 
-        assert_eq!(result.order_id, OrderId(123));
+        assert_eq!(result.order_id, OrderId::from_u64(123));
         assert_eq!(result.remaining_quantity, 70);
         assert!(!result.is_complete);
         assert_eq!(result.transactions.len(), 1);
         assert_eq!(result.filled_order_ids.len(), 1);
-        assert_eq!(result.filled_order_ids[0], OrderId(456));
+        assert_eq!(result.filled_order_ids[0], OrderId::from_u64(456));
     }
 
     #[test]
@@ -210,11 +210,11 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         // Create a match result with some data
-        let mut original = MatchResult::new(OrderId(123), 100);
+        let mut original = MatchResult::new(OrderId::from_u64(123), 100);
         original.add_transaction(create_test_transaction(1, 123, 456, 1000, 30));
         original.add_transaction(create_test_transaction(2, 123, 789, 1200, 20));
-        original.add_filled_order_id(OrderId(456));
-        original.add_filled_order_id(OrderId(789));
+        original.add_filled_order_id(OrderId::from_u64(456));
+        original.add_filled_order_id(OrderId::from_u64(789));
 
         // Convert to string
         let string_representation = original.to_string();
@@ -260,10 +260,10 @@ mod tests {
     #[test]
     fn test_with_multiple_filled_order_ids() {
         // Create a match result with multiple filled order IDs
-        let mut result = MatchResult::new(OrderId(123), 100);
-        result.add_filled_order_id(OrderId(456));
-        result.add_filled_order_id(OrderId(789));
-        result.add_filled_order_id(OrderId(101));
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
+        result.add_filled_order_id(OrderId::from_u64(456));
+        result.add_filled_order_id(OrderId::from_u64(789));
+        result.add_filled_order_id(OrderId::from_u64(101));
 
         // Convert to string
         let string_representation = result.to_string();
@@ -276,15 +276,15 @@ mod tests {
 
         // Verify filled_order_ids were parsed correctly
         assert_eq!(parsed.filled_order_ids.len(), 3);
-        assert_eq!(parsed.filled_order_ids[0], OrderId(456));
-        assert_eq!(parsed.filled_order_ids[1], OrderId(789));
-        assert_eq!(parsed.filled_order_ids[2], OrderId(101));
+        assert_eq!(parsed.filled_order_ids[0], OrderId::from_u64(456));
+        assert_eq!(parsed.filled_order_ids[1], OrderId::from_u64(789));
+        assert_eq!(parsed.filled_order_ids[2], OrderId::from_u64(101));
     }
 
     #[test]
     fn test_with_empty_transactions_and_filled_ids() {
         // Test with explicitly empty collections
-        let mut result = MatchResult::new(OrderId(123), 100);
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
         result.transactions = TransactionList::new(); // Explicitly empty
         result.filled_order_ids = Vec::new(); // Explicitly empty
 

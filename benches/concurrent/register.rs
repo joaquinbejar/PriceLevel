@@ -346,7 +346,7 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
 /// Create a standard limit order for testing
 fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
     OrderType::Standard {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -358,7 +358,7 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
 /// Create an iceberg order for testing
 fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
     OrderType::IcebergOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -371,7 +371,7 @@ fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> Order
 /// Create a post-only order for testing
 fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
     OrderType::PostOnly {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -391,7 +391,7 @@ fn create_reserve_order(
     replenish_amount: Option<u64>,
 ) -> OrderType {
     OrderType::ReserveOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -407,7 +407,7 @@ fn create_reserve_order(
 /// Create a pegged order for testing
 fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
     OrderType::PeggedOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,

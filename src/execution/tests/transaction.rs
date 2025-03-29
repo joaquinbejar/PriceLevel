@@ -9,8 +9,8 @@ mod tests {
     fn create_test_transaction() -> Transaction {
         Transaction {
             transaction_id: 12345,
-            taker_order_id: OrderId(1),
-            maker_order_id: OrderId(2),
+            taker_order_id: OrderId::from_u64(1),
+            maker_order_id: OrderId::from_u64(2),
             price: 10000,
             quantity: 5,
             taker_side: Side::Buy,
@@ -39,8 +39,8 @@ mod tests {
         let transaction = Transaction::from_str(input).unwrap();
 
         assert_eq!(transaction.transaction_id, 12345);
-        assert_eq!(transaction.taker_order_id, OrderId(1));
-        assert_eq!(transaction.maker_order_id, OrderId(2));
+        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -147,11 +147,11 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
-        let transaction = Transaction::new(12345, OrderId(1), OrderId(2), 10000, 5, Side::Buy);
+        let transaction = Transaction::new(12345, OrderId::from_u64(1), OrderId::from_u64(2), 10000, 5, Side::Buy);
 
         assert_eq!(transaction.transaction_id, 12345);
-        assert_eq!(transaction.taker_order_id, OrderId(1));
-        assert_eq!(transaction.maker_order_id, OrderId(2));
+        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -182,8 +182,8 @@ mod transaction_serialization_tests {
     fn create_test_transaction() -> Transaction {
         Transaction {
             transaction_id: 12345,
-            taker_order_id: OrderId(1),
-            maker_order_id: OrderId(2),
+            taker_order_id: OrderId::from_u64(1),
+            maker_order_id: OrderId::from_u64(2),
             price: 10000,
             quantity: 5,
             taker_side: Side::Buy,
@@ -219,8 +219,8 @@ mod transaction_serialization_tests {
         let transaction: Transaction = serde_json::from_str(json).unwrap();
 
         assert_eq!(transaction.transaction_id, 12345);
-        assert_eq!(transaction.taker_order_id, OrderId(1));
-        assert_eq!(transaction.maker_order_id, OrderId(2));
+        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -265,8 +265,8 @@ mod transaction_serialization_tests {
         let transaction = Transaction::from_str(input).unwrap();
 
         assert_eq!(transaction.transaction_id, 12345);
-        assert_eq!(transaction.taker_order_id, OrderId(1));
-        assert_eq!(transaction.maker_order_id, OrderId(2));
+        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);

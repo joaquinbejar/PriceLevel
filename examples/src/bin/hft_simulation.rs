@@ -312,7 +312,7 @@ fn setup_initial_orders(price_level: &PriceLevel, count: u64) {
 // Helper function to create a standard order
 fn create_standard_order(id: u64) -> OrderType {
     OrderType::Standard {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price: PRICE,
         quantity: 10,
         side: Side::Buy,
@@ -324,7 +324,7 @@ fn create_standard_order(id: u64) -> OrderType {
 // Helper function to create an iceberg order
 fn create_iceberg_order(id: u64) -> OrderType {
     OrderType::IcebergOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price: PRICE,
         visible_quantity: 5,
         hidden_quantity: 15,
@@ -337,7 +337,7 @@ fn create_iceberg_order(id: u64) -> OrderType {
 // Helper function to create a post-only order
 fn create_post_only_order(id: u64) -> OrderType {
     OrderType::PostOnly {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price: PRICE,
         quantity: 8,
         side: Side::Buy,
@@ -349,7 +349,7 @@ fn create_post_only_order(id: u64) -> OrderType {
 // Helper function to create a reserve order
 fn create_reserve_order(id: u64) -> OrderType {
     OrderType::ReserveOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price: PRICE,
         visible_quantity: 5,
         hidden_quantity: 15,
@@ -365,7 +365,7 @@ fn create_reserve_order(id: u64) -> OrderType {
 // Helper function to create a pegged order
 fn create_pegged_order(id: u64) -> OrderType {
     OrderType::PeggedOrder {
-        id: OrderId(id),
+        id: OrderId::from_u64(id),
         price: PRICE,
         quantity: 10,
         side: Side::Buy,
