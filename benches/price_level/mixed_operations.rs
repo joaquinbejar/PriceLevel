@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box};
-use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce};
-use std::sync::atomic::AtomicU64;
+use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator};
+use uuid::Uuid;
 
 /// Register benchmarks for mixed/realistic price level operations
 pub fn register_benchmarks(c: &mut Criterion) {
@@ -10,7 +10,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("realistic_trading_scenario", |b| {
         b.iter(|| {
             let price_level = PriceLevel::new(10000);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
 
             // Phase 1: Add initial orders (70% standard, 20% iceberg, 10% reserve)
             for i in 0..100 {
@@ -70,7 +71,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("high_frequency_scenario", |b| {
         b.iter(|| {
             let price_level = PriceLevel::new(10000);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
 
             // Add initial orders
             for i in 0..200 {
@@ -105,7 +107,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("large_order_throughput", |b| {
         b.iter(|| {
             let price_level = PriceLevel::new(10000);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
 
             // Add a large number of small orders
             for i in 0..500 {

@@ -1,13 +1,15 @@
 // examples/src/bin/hft_simulation.rs
 
 use pricelevel::{
-    OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce, setup_logger,
+    OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
+    UuidGenerator, setup_logger,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
+use uuid::Uuid;
 
 // Simulation parameters
 const PRICE: u64 = 10000;
@@ -32,7 +34,8 @@ fn main() {
     let price_level = Arc::new(PriceLevel::new(PRICE));
 
     // Transaction ID generator shared across threads
-    let tx_id_generator = Arc::new(AtomicU64::new(1));
+    let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+    let tx_id_generator = Arc::new(UuidGenerator::new(namespace));
 
     // Counter for orders added
     let orders_added_counter = Arc::new(AtomicU64::new(0));
@@ -71,7 +74,6 @@ fn main() {
         let thread_barrier = Arc::clone(&barrier);
         let thread_running = Arc::clone(&running);
         let thread_counter = Arc::clone(&orders_added_counter);
-
         let handle = thread::spawn(move || {
             // Wait for all threads to be ready
             thread_barrier.wait();
@@ -121,6 +123,7 @@ fn main() {
         let thread_barrier = Arc::clone(&barrier);
         let thread_running = Arc::clone(&running);
         let thread_tx_id_gen = Arc::clone(&tx_id_generator);
+
         let thread_counter = Arc::clone(&matches_executed_counter);
 
         let handle = thread::spawn(move || {

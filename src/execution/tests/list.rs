@@ -1,14 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use crate::UuidGenerator;
     use crate::execution::list::TransactionList;
     use crate::execution::transaction::Transaction;
     use crate::orders::{OrderId, Side};
     use std::str::FromStr;
+    use uuid::Uuid;
 
     fn create_test_transactions() -> Vec<Transaction> {
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
         vec![
             Transaction {
-                transaction_id: 12345,
+                transaction_id: transaction_id_generator.next(),
                 taker_order_id: OrderId::from_u64(1),
                 maker_order_id: OrderId::from_u64(2),
                 price: 10000,
@@ -17,7 +21,7 @@ mod tests {
                 timestamp: 1616823000000,
             },
             Transaction {
-                transaction_id: 12346,
+                transaction_id: transaction_id_generator.next(),
                 taker_order_id: OrderId::from_u64(3),
                 maker_order_id: OrderId::from_u64(4),
                 price: 10001,
@@ -48,7 +52,9 @@ mod tests {
         list.add(transaction);
 
         assert_eq!(list.transactions.len(), 1);
-        assert_eq!(list.transactions[0].transaction_id, 12345);
+
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
+        assert_eq!(list.transactions[0].transaction_id, uuid);
     }
 
     #[test]
@@ -77,18 +83,19 @@ mod tests {
 
         assert!(display_str.starts_with("Transactions:["));
         assert!(display_str.ends_with("]"));
-        assert!(display_str.contains("transaction_id=12345"));
-        assert!(display_str.contains("transaction_id=12346"));
+        assert!(display_str.contains("transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af"));
+        assert!(display_str.contains("transaction_id=b04965e6-a9bb-591f-8f8a-1adcb2c8dc39"));
     }
 
     #[test]
     fn test_transaction_list_from_str_valid() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
+        let input = "Transactions:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3b0;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
         let list = TransactionList::from_str(input).unwrap();
 
         assert_eq!(list.transactions.len(), 2);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
 
-        assert_eq!(list.transactions[0].transaction_id, 12345);
+        assert_eq!(list.transactions[0].transaction_id, uuid);
         assert_eq!(list.transactions[0].taker_order_id, OrderId::from_u64(1));
         assert_eq!(list.transactions[0].maker_order_id, OrderId::from_u64(2));
         assert_eq!(list.transactions[0].price, 10000);
@@ -96,7 +103,9 @@ mod tests {
         assert_eq!(list.transactions[0].taker_side, Side::Buy);
         assert_eq!(list.transactions[0].timestamp, 1616823000000);
 
-        assert_eq!(list.transactions[1].transaction_id, 12346);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3b0").unwrap();
+
+        assert_eq!(list.transactions[1].transaction_id, uuid);
         assert_eq!(list.transactions[1].taker_order_id, OrderId::from_u64(3));
         assert_eq!(list.transactions[1].maker_order_id, OrderId::from_u64(4));
         assert_eq!(list.transactions[1].price, 10001);
@@ -123,14 +132,14 @@ mod tests {
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
 
-        let input = "[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
+        let input = "[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_transaction_list_from_str_invalid_transaction() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=invalid;taker_order_id=3;maker_order_id=4;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
+        let input = "Transactions:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=invalid;taker_order_id=3;maker_order_id=4;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
     }
@@ -191,16 +200,19 @@ mod tests {
 #[cfg(test)]
 mod transaction_list_serialization_tests {
 
-    use crate::orders::{OrderId, Side};
-    use std::str::FromStr;
-
+    use crate::UuidGenerator;
     use crate::execution::list::TransactionList;
     use crate::execution::transaction::Transaction;
+    use crate::orders::{OrderId, Side};
+    use std::str::FromStr;
+    use uuid::Uuid;
 
     fn create_test_transactions() -> Vec<Transaction> {
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
         vec![
             Transaction {
-                transaction_id: 12345,
+                transaction_id: transaction_id_generator.next(),
                 taker_order_id: OrderId::from_u64(1),
                 maker_order_id: OrderId::from_u64(2),
                 price: 10000,
@@ -209,7 +221,7 @@ mod transaction_list_serialization_tests {
                 timestamp: 1616823000000,
             },
             Transaction {
-                transaction_id: 12346,
+                transaction_id: transaction_id_generator.next(),
                 taker_order_id: OrderId::from_u64(3),
                 maker_order_id: OrderId::from_u64(4),
                 price: 10001,
@@ -232,10 +244,10 @@ mod transaction_list_serialization_tests {
         assert!(display_str.starts_with("Transactions:["));
         assert!(display_str.ends_with("]"));
 
-        assert!(display_str.contains("transaction_id=12345"));
+        assert!(display_str.contains("transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af"));
         assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
         assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
-        assert!(display_str.contains("transaction_id=12346"));
+        assert!(display_str.contains("transaction_id=b04965e6-a9bb-591f-8f8a-1adcb2c8dc39"));
         assert!(display_str.contains("taker_order_id=00000000-0000-0003-0000-000000000000"));
         assert!(display_str.contains("maker_order_id=00000000-0000-0004-0000-000000000000"));
     }
@@ -250,13 +262,14 @@ mod transaction_list_serialization_tests {
 
     #[test]
     fn test_from_str_valid() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
+        let input = "Transactions:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=b04965e6-a9bb-591f-8f8a-1adcb2c8dc39;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001]";
         let list = TransactionList::from_str(input).unwrap();
 
         assert_eq!(list.len(), 2);
 
         let tx1 = &list.transactions[0];
-        assert_eq!(tx1.transaction_id, 12345);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
+        assert_eq!(tx1.transaction_id, uuid);
         assert_eq!(tx1.taker_order_id, OrderId::from_u64(1));
         assert_eq!(tx1.maker_order_id, OrderId::from_u64(2));
         assert_eq!(tx1.price, 10000);
@@ -265,7 +278,8 @@ mod transaction_list_serialization_tests {
         assert_eq!(tx1.timestamp, 1616823000000);
 
         let tx2 = &list.transactions[1];
-        assert_eq!(tx2.transaction_id, 12346);
+        let uuid = Uuid::parse_str("b04965e6-a9bb-591f-8f8a-1adcb2c8dc39").unwrap();
+        assert_eq!(tx2.transaction_id, uuid);
         assert_eq!(tx2.taker_order_id, OrderId::from_u64(3));
         assert_eq!(tx2.maker_order_id, OrderId::from_u64(4));
         assert_eq!(tx2.price, 10001);
@@ -289,7 +303,7 @@ mod transaction_list_serialization_tests {
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
 
-        let input = "TransactionsList:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
+        let input = "TransactionsList:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
 
@@ -297,7 +311,7 @@ mod transaction_list_serialization_tests {
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
 
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transactions:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=1;maker_order_id=2;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let result = TransactionList::from_str(input);
         assert!(result.is_err());
     }
@@ -388,12 +402,14 @@ mod transaction_list_serialization_tests {
         let tx1 = create_test_transactions()[0];
         list.add(tx1);
         assert_eq!(list.len(), 1);
-        assert_eq!(list.transactions[0].transaction_id, 12345);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
+        assert_eq!(list.transactions[0].transaction_id, uuid);
 
         let tx2 = create_test_transactions()[1];
         list.add(tx2);
         assert_eq!(list.len(), 2);
-        assert_eq!(list.transactions[1].transaction_id, 12346);
+        let uuid = Uuid::parse_str("b04965e6-a9bb-591f-8f8a-1adcb2c8dc39").unwrap();
+        assert_eq!(list.transactions[1].transaction_id, uuid);
     }
 
     #[test]
@@ -402,8 +418,10 @@ mod transaction_list_serialization_tests {
         let vec_ref = list.as_vec();
 
         assert_eq!(vec_ref.len(), 2);
-        assert_eq!(vec_ref[0].transaction_id, 12345);
-        assert_eq!(vec_ref[1].transaction_id, 12346);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
+        assert_eq!(vec_ref[0].transaction_id, uuid);
+        let uuid = Uuid::parse_str("b04965e6-a9bb-591f-8f8a-1adcb2c8dc39").unwrap();
+        assert_eq!(vec_ref[1].transaction_id, uuid);
     }
 
     #[test]
@@ -424,13 +442,16 @@ mod transaction_list_serialization_tests {
 
     #[test]
     fn test_complex_transaction_list_parsing() {
-        let input = "Transactions:[Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=12346;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001,Transaction:transaction_id=12347;taker_order_id=00000000-0000-0005-0000-000000000000;maker_order_id=00000000-0000-0006-0000-000000000000;price=10002;quantity=15;taker_side=BUY;timestamp=1616823000002]";
+        let input = "Transactions:[Transaction:transaction_id=6af613b6-569c-5c22-9c37-2ed93f31d3af;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=b04965e6-a9bb-591f-8f8a-1adcb2c8dc39;taker_order_id=00000000-0000-0003-0000-000000000000;maker_order_id=00000000-0000-0004-0000-000000000000;price=10001;quantity=10;taker_side=SELL;timestamp=1616823000001,Transaction:transaction_id=b04965e6-a9bb-591f-8f8a-1adcb2c8dc40;taker_order_id=00000000-0000-0005-0000-000000000000;maker_order_id=00000000-0000-0006-0000-000000000000;price=10002;quantity=15;taker_side=BUY;timestamp=1616823000002]";
 
         let list = TransactionList::from_str(input).unwrap();
 
         assert_eq!(list.len(), 3);
-        assert_eq!(list.transactions[0].transaction_id, 12345);
-        assert_eq!(list.transactions[1].transaction_id, 12346);
-        assert_eq!(list.transactions[2].transaction_id, 12347);
+        let uuid = Uuid::parse_str("6af613b6-569c-5c22-9c37-2ed93f31d3af").unwrap();
+        assert_eq!(list.transactions[0].transaction_id, uuid);
+        let uuid = Uuid::parse_str("b04965e6-a9bb-591f-8f8a-1adcb2c8dc39").unwrap();
+        assert_eq!(list.transactions[1].transaction_id, uuid);
+        let uuid = Uuid::parse_str("b04965e6-a9bb-591f-8f8a-1adcb2c8dc40").unwrap();
+        assert_eq!(list.transactions[2].transaction_id, uuid);
     }
 }

@@ -1,5 +1,6 @@
 //! Core price level implementation
 
+use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, Transaction};
 use crate::orders::{OrderId, OrderType, OrderUpdate};
@@ -127,7 +128,7 @@ impl PriceLevel {
         &self,
         incoming_quantity: u64,
         taker_order_id: OrderId,
-        transaction_id_generator: &AtomicU64,
+        transaction_id_generator: &UuidGenerator,
     ) -> MatchResult {
         let mut result = MatchResult::new(taker_order_id, incoming_quantity);
         let mut remaining = incoming_quantity;
@@ -141,7 +142,9 @@ impl PriceLevel {
                     // Update visible quantity counter
                     self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
 
-                    let transaction_id = transaction_id_generator.fetch_add(1, Ordering::SeqCst);
+                    // Use UUID generator directly
+                    let transaction_id = transaction_id_generator.next();
+
                     let transaction = Transaction::new(
                         transaction_id,
                         taker_order_id,

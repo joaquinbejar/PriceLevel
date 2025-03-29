@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box};
-use pricelevel::{OrderId, OrderType, PriceLevel, Side, TimeInForce};
-use std::sync::atomic::AtomicU64;
+use pricelevel::{OrderId, OrderType, PriceLevel, Side, TimeInForce, UuidGenerator};
+use uuid::Uuid;
 
 /// Register all benchmarks for matching orders at a price level
 pub fn register_benchmarks(c: &mut Criterion) {
@@ -11,7 +11,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_standard_orders", |b| {
         b.iter(|| {
             let price_level = setup_standard_orders(100);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
             black_box(price_level.match_order(
                 50,
                 OrderId::from_u64(999),
@@ -24,7 +25,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_iceberg_orders", |b| {
         b.iter(|| {
             let price_level = setup_iceberg_orders(100);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
             black_box(price_level.match_order(
                 75,
                 OrderId::from_u64(999),
@@ -37,7 +39,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_reserve_orders", |b| {
         b.iter(|| {
             let price_level = setup_reserve_orders(100);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
             black_box(price_level.match_order(
                 60,
                 OrderId::from_u64(999),
@@ -50,7 +53,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_mixed_orders", |b| {
         b.iter(|| {
             let price_level = setup_mixed_orders(100);
-            let transaction_id_generator = AtomicU64::new(1);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
             black_box(price_level.match_order(
                 100,
                 OrderId::from_u64(999),
@@ -67,7 +71,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             |b, &match_quantity| {
                 b.iter(|| {
                     let price_level = setup_standard_orders(50);
-                    let transaction_id_generator = AtomicU64::new(1);
+                    let namespace =
+                        Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+                    let transaction_id_generator = UuidGenerator::new(namespace);
                     black_box(price_level.match_order(
                         match_quantity,
                         OrderId::from_u64(999),
@@ -86,7 +92,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             |b, &match_quantity| {
                 b.iter(|| {
                     let price_level = setup_iceberg_orders(25);
-                    let transaction_id_generator = AtomicU64::new(1);
+                    let namespace =
+                        Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+                    let transaction_id_generator = UuidGenerator::new(namespace);
                     black_box(price_level.match_order(
                         match_quantity,
                         OrderId::from_u64(999),

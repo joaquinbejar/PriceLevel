@@ -1,12 +1,15 @@
 // examples/src/bin/contention_test.rs
 
-use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, setup_logger};
+use pricelevel::{
+    OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
+};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::info;
+use uuid::Uuid;
 
 // Test parameters
 const THREAD_COUNT: usize = 16;
@@ -39,7 +42,8 @@ fn test_read_write_ratio() {
         let price_level = Arc::new(PriceLevel::new(10000));
 
         // Transaction ID generator for match operations
-        let tx_id_generator = Arc::new(AtomicU64::new(1));
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let tx_id_generator = Arc::new(UuidGenerator::new(namespace));
 
         // Pre-populate with orders
         setup_orders_for_read_write_test(&price_level);

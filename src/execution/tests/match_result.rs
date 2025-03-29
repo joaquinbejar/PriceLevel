@@ -7,10 +7,11 @@ mod tests {
     use crate::orders::Side;
     use std::str::FromStr;
     use tracing::info;
+    use uuid::Uuid;
 
     // Helper function to create a test transaction
     fn create_test_transaction(
-        id: u64,
+        id: Uuid,
         taker_id: u64,
         maker_id: u64,
         price: u64,
@@ -23,7 +24,7 @@ mod tests {
             price,
             quantity,
             taker_side: Side::Buy,
-            timestamp: 1616823000000 + id, // Create unique timestamps
+            timestamp: 1616823000000, // + id, // Create unique timestamps
         }
     }
 
@@ -43,7 +44,8 @@ mod tests {
         let mut result = MatchResult::new(OrderId::from_u64(123), 100);
 
         // Add a transaction for 30 quantity
-        let transaction1 = create_test_transaction(1, 123, 456, 1000, 30);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction1 = create_test_transaction(uuid, 123, 456, 1000, 30);
         result.add_transaction(transaction1);
 
         assert_eq!(result.remaining_quantity, 70); // 100 - 30
@@ -51,7 +53,8 @@ mod tests {
         assert_eq!(result.transactions.len(), 1);
 
         // Add another transaction that will complete the match
-        let transaction2 = create_test_transaction(2, 123, 789, 1000, 70);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction2 = create_test_transaction(uuid, 123, 789, 1000, 70);
         result.add_transaction(transaction2);
 
         assert_eq!(result.remaining_quantity, 0);
@@ -60,7 +63,8 @@ mod tests {
 
         // Add a transaction that would exceed the remaining quantity
         // This is normally prevented by validation logic elsewhere, but testing the method
-        let transaction3 = create_test_transaction(3, 123, 101, 1000, 20);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction3 = create_test_transaction(uuid, 123, 101, 1000, 20);
         result.add_transaction(transaction3);
 
         // Should remain at 0 due to saturating_sub
@@ -89,8 +93,10 @@ mod tests {
         assert_eq!(result.executed_quantity(), 0);
 
         // Add some transactions
-        result.add_transaction(create_test_transaction(1, 123, 456, 1000, 30));
-        result.add_transaction(create_test_transaction(2, 123, 789, 1000, 20));
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 456, 1000, 30));
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 789, 1000, 20));
 
         assert_eq!(result.executed_quantity(), 50); // 30 + 20
     }
@@ -103,8 +109,10 @@ mod tests {
         assert_eq!(result.executed_value(), 0);
 
         // Add transactions with different prices
-        result.add_transaction(create_test_transaction(1, 123, 456, 1000, 30)); // Value: 30,000
-        result.add_transaction(create_test_transaction(2, 123, 789, 1200, 20)); // Value: 24,000
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 456, 1000, 30)); // Value: 30,000
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 789, 1200, 20)); // Value: 24,000
 
         assert_eq!(result.executed_value(), 54000); // 30,000 + 24,000
     }
@@ -117,8 +125,10 @@ mod tests {
         assert_eq!(result.average_price(), None);
 
         // Add transactions with different prices
-        result.add_transaction(create_test_transaction(1, 123, 456, 1000, 30)); // Value: 30,000
-        result.add_transaction(create_test_transaction(2, 123, 789, 1200, 20)); // Value: 24,000
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 456, 1000, 30)); // Value: 30,000
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 789, 1200, 20)); // Value: 24,000
 
         // Average price: 54,000 / 50 = 1,080
         assert_eq!(result.average_price(), Some(1080.0));
@@ -139,7 +149,8 @@ mod tests {
         assert!(display_str.contains("filled_order_ids=[]"));
 
         // Add some transactions and filled order IDs
-        result.add_transaction(create_test_transaction(1, 123, 456, 1000, 30));
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        result.add_transaction(create_test_transaction(uuid, 123, 456, 1000, 30));
         result.add_filled_order_id(OrderId::from_u64(456));
 
         let display_str = result.to_string();
@@ -147,7 +158,9 @@ mod tests {
             display_str
                 .starts_with("MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false")
         );
-        assert!(display_str.contains("Transaction:transaction_id=1"));
+        assert!(
+            display_str.contains("Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+        );
         assert!(display_str.contains("filled_order_ids=[00000000-0000-01c8-0000-000000000000]"));
     }
 
@@ -168,7 +181,7 @@ mod tests {
         assert!(result.filled_order_ids.is_empty());
 
         // Test parsing with transactions and filled order IDs
-        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=1;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-01c8-0000-000000000000;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[00000000-0000-01c8-0000-000000000000]";
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-01c8-0000-000000000000;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[00000000-0000-01c8-0000-000000000000]";
         let result = MatchResult::from_str(input).unwrap();
 
         assert_eq!(result.order_id, OrderId::from_u64(123));
@@ -212,8 +225,10 @@ mod tests {
     fn test_roundtrip() {
         // Create a match result with some data
         let mut original = MatchResult::new(OrderId::from_u64(123), 100);
-        original.add_transaction(create_test_transaction(1, 123, 456, 1000, 30));
-        original.add_transaction(create_test_transaction(2, 123, 789, 1200, 20));
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        original.add_transaction(create_test_transaction(uuid, 123, 456, 1000, 30));
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        original.add_transaction(create_test_transaction(uuid, 123, 789, 1200, 20));
         original.add_filled_order_id(OrderId::from_u64(456));
         original.add_filled_order_id(OrderId::from_u64(789));
 

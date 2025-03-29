@@ -1,9 +1,9 @@
 use criterion::{BenchmarkId, Criterion};
-use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce};
-use std::sync::atomic::AtomicU64;
+use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 /// Register benchmarks that test different contention patterns
 #[allow(dead_code)]
@@ -54,7 +54,8 @@ fn measure_read_write_contention(
     read_ratio: usize,
 ) -> Duration {
     let price_level = Arc::new(PriceLevel::new(10000));
-    let transaction_id_gen = Arc::new(AtomicU64::new(1));
+    let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+    let transaction_id_gen = Arc::new(UuidGenerator::new(namespace));
     let barrier = Arc::new(Barrier::new(thread_count + 1)); // +1 for main thread
 
     // Pre-populate with orders to read/match against
@@ -145,7 +146,8 @@ fn measure_hot_spot_contention(
     hot_spot_percentage: usize,
 ) -> Duration {
     let price_level = Arc::new(PriceLevel::new(10000));
-    let transaction_id_gen = Arc::new(AtomicU64::new(1));
+    let namespace = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"example.com");
+    let transaction_id_gen = Arc::new(UuidGenerator::new(namespace));
     let barrier = Arc::new(Barrier::new(thread_count + 1)); // +1 for main thread
 
     // Pre-populate with orders

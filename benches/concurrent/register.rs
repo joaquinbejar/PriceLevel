@@ -1,11 +1,11 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use pricelevel::{
-    OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
+    OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce, UuidGenerator,
 };
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 pub fn register_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("PriceLevel - Concurrent Operations");
@@ -66,7 +66,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                         iters,
                         setup_standard_orders(500), // Pre-populate with orders
                         |price_level, thread_id, iteration| {
-                            let transaction_id_generator = AtomicU64::new(1);
+                            let namespace =
+                                Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+                            let transaction_id_generator = UuidGenerator::new(namespace);
                             // Use different taker order IDs for each thread/iteration
                             let taker_id =
                                 OrderId::from_u64(thread_id as u64 * 1_000_000 + iteration);
@@ -272,7 +274,8 @@ where
 /// Measures time for mixed concurrent operations (add, match, cancel) on a price level
 fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> Duration {
     let price_level = Arc::new(PriceLevel::new(10000));
-    let transaction_id_gen = Arc::new(AtomicU64::new(1));
+    let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+    let transaction_id_gen = Arc::new(UuidGenerator::new(namespace));
     let barrier = Arc::new(Barrier::new(thread_count + 1)); // +1 for main thread
 
     // Pre-populate with some orders

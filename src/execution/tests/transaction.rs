@@ -5,10 +5,13 @@ mod tests {
     use crate::orders::{OrderId, Side};
     use std::str::FromStr;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use uuid::Uuid;
 
     fn create_test_transaction() -> Transaction {
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+
         Transaction {
-            transaction_id: 12345,
+            transaction_id: uuid,
             taker_order_id: OrderId::from_u64(1),
             maker_order_id: OrderId::from_u64(2),
             price: 10000,
@@ -24,7 +27,7 @@ mod tests {
         let display_str = transaction.to_string();
 
         assert!(display_str.starts_with("Transaction:"));
-        assert!(display_str.contains("transaction_id=12345"));
+        assert!(display_str.contains("transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8"));
         assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
         assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
@@ -35,10 +38,10 @@ mod tests {
 
     #[test]
     fn test_transaction_from_str_valid() {
-        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Transaction::from_str(input).unwrap();
-
-        assert_eq!(transaction.transaction_id, 12345);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        assert_eq!(transaction.transaction_id, uuid);
         assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
@@ -61,7 +64,7 @@ mod tests {
     #[test]
     fn test_transaction_from_str_missing_field() {
         // Missing quantity field
-        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;taker_side=BUY;timestamp=1616823000000";
         let result = Transaction::from_str(input);
 
         assert!(result.is_err());
@@ -147,8 +150,9 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction = Transaction::new(
-            12345,
+            uuid,
             OrderId::from_u64(1),
             OrderId::from_u64(2),
             10000,
@@ -156,7 +160,7 @@ mod tests {
             Side::Buy,
         );
 
-        assert_eq!(transaction.transaction_id, 12345);
+        assert_eq!(transaction.transaction_id, uuid);
         assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
@@ -181,14 +185,15 @@ mod tests {
 
 #[cfg(test)]
 mod transaction_serialization_tests {
+    use crate::execution::transaction::Transaction;
     use crate::orders::{OrderId, Side};
     use std::str::FromStr;
-
-    use crate::execution::transaction::Transaction;
+    use uuid::Uuid;
 
     fn create_test_transaction() -> Transaction {
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         Transaction {
-            transaction_id: 12345,
+            transaction_id: uuid,
             taker_order_id: OrderId::from_u64(1),
             maker_order_id: OrderId::from_u64(2),
             price: 10000,
@@ -202,7 +207,7 @@ mod transaction_serialization_tests {
     fn test_serde_json_serialization() {
         let transaction = create_test_transaction();
         let json = serde_json::to_string(&transaction).unwrap();
-        assert!(json.contains("\"transaction_id\":12345"));
+        assert!(json.contains("\"transaction_id\":\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\""));
         assert!(json.contains("\"taker_order_id\":\"00000000-0000-0001-0000-000000000000\""));
         assert!(json.contains("\"maker_order_id\":\"00000000-0000-0002-0000-000000000000\""));
         assert!(json.contains("\"price\":10000"));
@@ -214,7 +219,7 @@ mod transaction_serialization_tests {
     #[test]
     fn test_serde_json_deserialization() {
         let json = r#"{
-            "transaction_id": 12345,
+            "transaction_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
             "taker_order_id": "00000000-0000-0001-0000-000000000000",
             "maker_order_id": "00000000-0000-0002-0000-000000000000",
             "price": 10000,
@@ -224,8 +229,8 @@ mod transaction_serialization_tests {
         }"#;
 
         let transaction: Transaction = serde_json::from_str(json).unwrap();
-
-        assert_eq!(transaction.transaction_id, 12345);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        assert_eq!(transaction.transaction_id, uuid);
         assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);
@@ -257,7 +262,7 @@ mod transaction_serialization_tests {
         let display_str = transaction.to_string();
 
         assert!(display_str.starts_with("Transaction:"));
-        assert!(display_str.contains("transaction_id=12345"));
+        assert!(display_str.contains("transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8"));
         assert!(display_str.contains("taker_order_id=00000000-0000-0001-0000-000000000000"));
         assert!(display_str.contains("maker_order_id=00000000-0000-0002-0000-000000000000"));
         assert!(display_str.contains("price=10000"));
@@ -268,10 +273,10 @@ mod transaction_serialization_tests {
 
     #[test]
     fn test_from_str_valid() {
-        let input = "Transaction:transaction_id=12345;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+        let input = "Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Transaction::from_str(input).unwrap();
-
-        assert_eq!(transaction.transaction_id, 12345);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        assert_eq!(transaction.transaction_id, uuid);
         assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction.price, 10000);

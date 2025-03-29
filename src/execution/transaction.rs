@@ -4,12 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 /// Represents a completed transaction between two orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
     /// Unique transaction ID
-    pub transaction_id: u64,
+    pub transaction_id: Uuid,
 
     /// ID of the aggressive order that caused the match
     pub taker_order_id: OrderId,
@@ -33,7 +34,7 @@ pub struct Transaction {
 impl Transaction {
     /// Create a new transaction
     pub fn new(
-        transaction_id: u64,
+        transaction_id: Uuid,
         taker_order_id: OrderId,
         maker_order_id: OrderId,
         price: u64,
@@ -123,7 +124,15 @@ impl FromStr for Transaction {
 
         // Parse transaction_id
         let transaction_id_str = get_field("transaction_id")?;
-        let transaction_id = parse_u64("transaction_id", transaction_id_str)?;
+        let transaction_id = match Uuid::from_str(transaction_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                return Err(PriceLevelError::InvalidFieldValue {
+                    field: "transaction_id".to_string(),
+                    value: transaction_id_str.to_string(),
+                });
+            }
+        };
 
         // Parse taker_order_id
         let taker_order_id_str = get_field("taker_order_id")?;

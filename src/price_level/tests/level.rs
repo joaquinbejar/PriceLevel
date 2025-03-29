@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::DEFAULT_RESERVE_REPLENISH_AMOUNT;
     use crate::errors::PriceLevelError;
     use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::{PriceLevel, PriceLevelData};
+    use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
     use std::str::FromStr;
-    use std::sync::atomic::AtomicU64;
     use tracing::error;
+    use uuid::Uuid;
 
     // Helper functions to create different order types for testing
     fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
@@ -271,7 +271,8 @@ mod tests {
     #[test]
     fn test_match_standard_order_full() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_standard_order(1, 10000, 100));
 
@@ -305,7 +306,8 @@ mod tests {
     #[test]
     fn test_match_standard_order_partial() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_standard_order(1, 10000, 100));
 
@@ -340,7 +342,8 @@ mod tests {
     #[test]
     fn test_match_standard_order_excess() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_standard_order(1, 10000, 100));
 
@@ -374,7 +377,8 @@ mod tests {
     /// after each match, including visible/hidden quantities and the number of orders.
     fn test_match_iceberg_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Add a new iceberg order with a visible quantity of 50 and a hidden quantity of 100.
         price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
@@ -433,7 +437,8 @@ mod tests {
     #[test]
     fn test_match_iceberg_order_overlapping() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Add a new iceberg order with a visible quantity of 50 and a hidden quantity of 100.
         price_level.add_order(create_iceberg_order(1, 10000, 100, 100));
@@ -494,7 +499,8 @@ mod tests {
     #[test]
     fn test_match_iceberg_order_partial_visible() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_iceberg_order(1, 10000, 50, 150));
 
@@ -517,7 +523,8 @@ mod tests {
     /// from the price level even if there is remaining hidden quantity.
     fn test_match_reserve_order_no_auto_replenish() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish disabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
@@ -540,7 +547,8 @@ mod tests {
     /// replenish from the hidden quantity.
     fn test_match_reserve_order_with_auto_replenish() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish enabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, true, None));
@@ -569,7 +577,8 @@ mod tests {
     /// replenishment even when falling below the threshold.
     fn test_match_reserve_order_partial_no_replenish() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish disabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
@@ -600,7 +609,8 @@ mod tests {
     /// using the specified custom amount rather than the default.
     fn test_match_reserve_order_with_custom_replenish_amount() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish enabled and a custom replenishment amount
         let custom_amount = 50;
@@ -632,7 +642,8 @@ mod tests {
     /// when visible quantity equals the threshold.
     fn test_match_reserve_order_with_zero_threshold() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 0 and auto-replenish enabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, true, None));
@@ -654,7 +665,8 @@ mod tests {
     /// The order should be removed from the book when visible quantity reaches 0.
     fn test_match_reserve_order_threshold_zero() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 0 and auto-replenish disabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, false, None));
@@ -676,7 +688,8 @@ mod tests {
     /// The order should be removed from the book when visible quantity reaches 0.
     fn test_match_reserve_order_threshold_one() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 1 and auto-replenish disabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 1, false, None));
@@ -698,7 +711,8 @@ mod tests {
     /// Verifies behavior when matching above and below the threshold.
     fn test_match_reserve_order_with_threshold() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 20 and auto-replenish disabled
         price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
@@ -731,7 +745,8 @@ mod tests {
     ///    This test verifies correct transaction generation and order state throughout.
     fn test_match_reserve_order_overlapping() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 20, auto-replenish enabled
         // and default replenish amount (80)
@@ -812,7 +827,8 @@ mod tests {
     #[test]
     fn test_match_post_only_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_post_only_order(1, 10000, 100));
 
@@ -829,7 +845,8 @@ mod tests {
     #[test]
     fn test_match_trailing_stop_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_trailing_stop_order(1, 10000, 100));
 
@@ -846,7 +863,8 @@ mod tests {
     #[test]
     fn test_match_pegged_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_pegged_order(1, 10000, 100));
 
@@ -863,7 +881,8 @@ mod tests {
     #[test]
     fn test_match_market_to_limit_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_market_to_limit_order(1, 10000, 100));
 
@@ -880,7 +899,8 @@ mod tests {
     #[test]
     fn test_match_fill_or_kill_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_fill_or_kill_order(1, 10000, 100));
 
@@ -897,7 +917,8 @@ mod tests {
     #[test]
     fn test_match_immediate_or_cancel_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_immediate_or_cancel_order(1, 10000, 100));
 
@@ -914,7 +935,8 @@ mod tests {
     #[test]
     fn test_match_good_till_date_order() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_good_till_date_order(1, 10000, 100, 1617000000000));
 
@@ -931,7 +953,8 @@ mod tests {
     #[test]
     fn test_match_multiple_orders() {
         let price_level = PriceLevel::new(10000);
-        let transaction_id_generator = AtomicU64::new(1);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
 
         price_level.add_order(create_standard_order(1, 10000, 50));
         price_level.add_order(create_standard_order(2, 10000, 75));

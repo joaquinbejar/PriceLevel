@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 pricelevel = { path = ".." }
 tracing = "0.1.41"
+uuid = { version = "1.16.0", features = ["v4"] }
