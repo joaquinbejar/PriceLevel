@@ -7,7 +7,7 @@ mod tests_order_update {
 
     #[test]
     fn test_update_price_from_str() {
-        let input = "UpdatePrice:order_id=123;new_price=1000";
+        let input = "UpdatePrice:order_id=00000000-0000-007b-0000-000000000000;new_price=1000";
         let result = OrderUpdate::from_str(input).unwrap();
 
         match result {
@@ -24,9 +24,8 @@ mod tests_order_update {
 
     #[test]
     fn test_update_quantity_from_str() {
-        let input = "UpdateQuantity:order_id=456;new_quantity=50";
+        let input = "UpdateQuantity:order_id=00000000-0000-01c8-0000-000000000000;new_quantity=50";
         let result = OrderUpdate::from_str(input).unwrap();
-
         match result {
             OrderUpdate::UpdateQuantity {
                 order_id,
@@ -41,9 +40,8 @@ mod tests_order_update {
 
     #[test]
     fn test_update_price_and_quantity_from_str() {
-        let input = "UpdatePriceAndQuantity:order_id=789;new_price=2000;new_quantity=30";
+        let input = "UpdatePriceAndQuantity:order_id=00000000-0000-0315-0000-000000000000;new_price=2000;new_quantity=30";
         let result = OrderUpdate::from_str(input).unwrap();
-
         match result {
             OrderUpdate::UpdatePriceAndQuantity {
                 order_id,
@@ -60,7 +58,7 @@ mod tests_order_update {
 
     #[test]
     fn test_cancel_from_str() {
-        let input = "Cancel:order_id=101";
+        let input = "Cancel:order_id=00000000-0000-0065-0000-000000000000";
         let result = OrderUpdate::from_str(input).unwrap();
 
         match result {
@@ -73,7 +71,8 @@ mod tests_order_update {
 
     #[test]
     fn test_replace_from_str() {
-        let input = "Replace:order_id=202;price=3000;quantity=40;side=BUY";
+        let input =
+            "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=3000;quantity=40;side=BUY";
         let result = OrderUpdate::from_str(input).unwrap();
 
         match result {
@@ -94,7 +93,7 @@ mod tests_order_update {
 
     #[test]
     fn test_replace_with_sell_side_from_str() {
-        let input = "Replace:order_id=303;price=4000;quantity=60;side=SELL";
+        let input = "Replace:order_id=00000000-0000-012f-0000-000000000000;price=4000;quantity=60;side=SELL";
         let result = OrderUpdate::from_str(input).unwrap();
 
         match result {
@@ -127,7 +126,7 @@ mod tests_order_update {
 
     #[test]
     fn test_unknown_order_type() {
-        let input = "Unknown:order_id=123;new_price=1000";
+        let input = "Unknown:order_id=00000000-0000-007b-0000-000000000000;new_price=1000";
         let result = OrderUpdate::from_str(input);
 
         assert!(result.is_err());
@@ -141,7 +140,7 @@ mod tests_order_update {
 
     #[test]
     fn test_missing_field() {
-        let input = "UpdatePrice:order_id=123"; // missing new_price
+        let input = "UpdatePrice:order_id=00000000-0000-007b-0000-000000000000"; // missing new_price
         let result = OrderUpdate::from_str(input);
 
         assert!(result.is_err());
@@ -177,7 +176,7 @@ mod tests_order_update {
 
         assert_eq!(
             update.to_string(),
-            "UpdatePrice:order_id=123;new_price=1000"
+            "UpdatePrice:order_id=00000000-0000-007b-0000-000000000000;new_price=1000"
         );
     }
 
@@ -190,7 +189,7 @@ mod tests_order_update {
 
         assert_eq!(
             update.to_string(),
-            "UpdateQuantity:order_id=456;new_quantity=50"
+            "UpdateQuantity:order_id=00000000-0000-01c8-0000-000000000000;new_quantity=50"
         );
     }
 
@@ -204,7 +203,7 @@ mod tests_order_update {
 
         assert_eq!(
             update.to_string(),
-            "UpdatePriceAndQuantity:order_id=789;new_price=2000;new_quantity=30"
+            "UpdatePriceAndQuantity:order_id=00000000-0000-0315-0000-000000000000;new_price=2000;new_quantity=30"
         );
     }
 
@@ -214,7 +213,10 @@ mod tests_order_update {
             order_id: OrderId::from_u64(101),
         };
 
-        assert_eq!(update.to_string(), "Cancel:order_id=101");
+        assert_eq!(
+            update.to_string(),
+            "Cancel:order_id=00000000-0000-0065-0000-000000000000"
+        );
     }
 
     #[test]
@@ -228,7 +230,7 @@ mod tests_order_update {
 
         assert_eq!(
             update.to_string(),
-            "Replace:order_id=202;price=3000;quantity=40;side=BUY"
+            "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=3000;quantity=40;side=BUY"
         );
     }
 
