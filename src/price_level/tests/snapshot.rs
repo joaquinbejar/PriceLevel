@@ -229,7 +229,7 @@ mod pricelevel_snapshot_serialization_tests {
 
         // Check for order details
         assert!(json.contains("\"Standard\":{"));
-        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"id\":\"00000000-0000-0001-0000-000000000000\""));
         assert!(json.contains("\"IcebergOrder\":{"));
         assert!(json.contains("\"visible_quantity\":5"));
         assert!(json.contains("\"hidden_quantity\":15"));

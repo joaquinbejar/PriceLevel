@@ -27,8 +27,8 @@ mod tests {
         info!("Display: {}", display_string);
 
         assert!(display_string.starts_with("OrderQueue:orders=["));
-        assert!(display_string.contains("id=1"));
-        assert!(display_string.contains("id=2"));
+        assert!(display_string.contains("id=00000000-0000-0001-0000-000000000000"));
+        assert!(display_string.contains("id=00000000-0000-0002-0000-000000000000"));
         assert!(display_string.contains("price=1000"));
         assert!(display_string.contains("price=1100"));
     }
@@ -45,13 +45,13 @@ mod tests {
 
         // Verify display string format
         assert!(display_string.starts_with("OrderQueue:orders=["));
-        assert!(display_string.contains("id=1"));
-        assert!(display_string.contains("id=2"));
+        assert!(display_string.contains("id=00000000-0000-0001-0000-000000000000"));
+        assert!(display_string.contains("id=00000000-0000-0002-0000-000000000000"));
         assert!(display_string.contains("price=1000"));
         assert!(display_string.contains("price=1100"));
 
         // Example input string format (manually constructed to match expected format)
-        let input = "OrderQueue:orders=[Standard:id=1;price=1000;quantity=10;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=2;price=1100;quantity=20;side=BUY;timestamp=1616823000000;time_in_force=GTC]";
+        let input = "OrderQueue:orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=1000;quantity=10;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=1100;quantity=20;side=BUY;timestamp=1616823000000;time_in_force=GTC]";
 
         // Try parsing
         let parsed_queue = match OrderQueue::from_str(input) {
