@@ -242,3 +242,5 @@ pub use orders::PegReferenceType;
 pub use orders::{OrderId, OrderType, OrderUpdate, Side, TimeInForce};
 pub use price_level::{OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot};
 pub use utils::{UuidGenerator, setup_logger};
+pub use errors::PriceLevelError;
+pub use execution::{Transaction, MatchResult};
