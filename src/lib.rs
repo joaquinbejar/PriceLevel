@@ -240,5 +240,5 @@ mod execution;
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
 pub use orders::{OrderId, OrderType, OrderUpdate, Side, TimeInForce};
-pub use price_level::{PriceLevel, PriceLevelData, PriceLevelSnapshot};
+pub use price_level::{OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot};
 pub use utils::{UuidGenerator, setup_logger};

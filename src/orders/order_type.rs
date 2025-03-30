@@ -1,10 +1,12 @@
 //! Limit order type definitions
 
+use crate::OrderQueue;
 use crate::errors::PriceLevelError;
 use crate::orders::{OrderId, PegReferenceType, Side, TimeInForce};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Default amount to replenish the reserve with.
 pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
@@ -998,5 +1000,11 @@ impl fmt::Display for OrderType {
                 )
             }
         }
+    }
+}
+
+impl From<OrderQueue> for Vec<Arc<OrderType>> {
+    fn from(queue: OrderQueue) -> Self {
+        queue.to_vec()
     }
 }

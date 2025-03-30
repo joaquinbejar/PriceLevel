@@ -271,6 +271,16 @@ impl Serialize for OrderQueue {
     }
 }
 
+impl From<Vec<Arc<OrderType>>> for OrderQueue {
+    fn from(orders: Vec<Arc<OrderType>>) -> Self {
+        let queue = OrderQueue::new();
+        for order in orders {
+            queue.push(order);
+        }
+        queue
+    }
+}
+
 // Custom visitor for deserializing OrderQueue
 struct OrderQueueVisitor {
     marker: PhantomData<fn() -> OrderQueue>,

@@ -296,48 +296,48 @@ mod tests {
         assert!(!queue.is_empty());
     }
 
-    // #[test]
-    // fn test_order_queue_from_vec() {
-    //     // Test lines 170, 178
-    //     // Create a vector of orders
-    //     let order1 = Arc::new(OrderType::Standard {
-    //         id: OrderId::from_u64(1),
-    //         price: 1000,
-    //         quantity: 10,
-    //         side: Side::Buy,
-    //         timestamp: 1616823000000,
-    //         time_in_force: TimeInForce::Gtc,
-    //     });
-    //
-    //     let order2 = Arc::new(OrderType::Standard {
-    //         id: OrderId::from_u64(2),
-    //         price: 1000,
-    //         quantity: 20,
-    //         side: Side::Buy,
-    //         timestamp: 1616823000001,
-    //         time_in_force: TimeInForce::Gtc,
-    //     });
-    //
-    //     let orders = vec![order1.clone(), order2.clone()];
-    //
-    //     // Create a queue from the vector
-    //     let queue = OrderQueue::from_vec(orders.clone());
-    //
-    //     // Verify the queue contains the orders
-    //     assert_eq!(queue.to_vec().len(), 2);
-    //     assert!(queue.to_vec().contains(&order1));
-    //     assert!(queue.to_vec().contains(&order2));
-    //
-    //     // Test the From implementation
-    //     let queue_from_trait: OrderQueue = orders.clone().into();
-    //     assert_eq!(queue_from_trait.to_vec().len(), 2);
-    //
-    //     // Test the Into implementation
-    //     let orders_from_queue: Vec<Arc<OrderType>> = queue.into();
-    //     assert_eq!(orders_from_queue.len(), 2);
-    //     assert!(orders_from_queue.contains(&order1));
-    //     assert!(orders_from_queue.contains(&order2));
-    // }
+    #[test]
+    fn test_order_queue_from_vec() {
+        // Test lines 170, 178
+        // Create a vector of orders
+        let order1 = Arc::new(OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        });
+
+        let order2 = Arc::new(OrderType::Standard {
+            id: OrderId::from_u64(2),
+            price: 1000,
+            quantity: 20,
+            side: Side::Buy,
+            timestamp: 1616823000001,
+            time_in_force: TimeInForce::Gtc,
+        });
+
+        let orders = vec![order1.clone(), order2.clone()];
+
+        // Create a queue from the vector
+        let queue = OrderQueue::from_vec(orders.clone());
+
+        // Verify the queue contains the orders
+        assert_eq!(queue.to_vec().len(), 2);
+        assert!(queue.to_vec().contains(&order1));
+        assert!(queue.to_vec().contains(&order2));
+
+        // Test the From implementation
+        let queue_from_trait: OrderQueue = orders.clone().into();
+        assert_eq!(queue_from_trait.to_vec().len(), 2);
+
+        // Test the Into implementation
+        let orders_from_queue: Vec<Arc<OrderType>> = queue.into();
+        assert_eq!(orders_from_queue.len(), 2);
+        assert!(orders_from_queue.contains(&order1));
+        assert!(orders_from_queue.contains(&order2));
+    }
 
     #[test]
     fn test_order_queue_from_str_parsing_with_complex_content() {
