@@ -45,7 +45,7 @@ jobs:
       - name: Generate code coverage report.
         run:
           cargo tarpaulin
-          --exclude-files benches/concurrent/*
+          --exclude-files 'benches/**'
           --all-features
           --workspace
           --timeout 180

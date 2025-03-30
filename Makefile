@@ -81,14 +81,14 @@ coverage:
 	export LOGLEVEL=WARN
 	cargo install cargo-tarpaulin
 	mkdir -p coverage
-	cargo tarpaulin --exclude-files benches/concurrent/* --all-features --workspace --timeout 120 --out Xml
+	cargo tarpaulin --exclude-files 'benches/**' --all-features --workspace --timeout 120 --out Xml
 
 .PHONY: coverage-html
 coverage-html:
 	export LOGLEVEL=WARN
 	cargo install cargo-tarpaulin
 	mkdir -p coverage
-	cargo tarpaulin --exclude-files benches/concurrent/* --all-features --workspace --timeout 120 --out Html
+	cargo tarpaulin --exclude-files 'benches/**' --all-features --workspace --timeout 120 --out Html
 
 .PHONY: open-coverage
 open-coverage:

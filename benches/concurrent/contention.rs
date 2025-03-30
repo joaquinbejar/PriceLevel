@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 /// Register benchmarks that test different contention patterns
 #[allow(dead_code)]
-#[cfg(not(tarpaulin_include))]
 pub fn register_contention_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("PriceLevel - Contention Patterns");
 
@@ -49,7 +48,6 @@ pub fn register_contention_benchmarks(c: &mut Criterion) {
 /// Measures time for operations with different read/write ratios
 /// read_ratio = percentage of read operations (0-100)
 #[allow(dead_code)]
-#[cfg(not(tarpaulin_include))]
 fn measure_read_write_contention(
     thread_count: usize,
     iterations: u64,
@@ -142,7 +140,6 @@ fn measure_read_write_contention(
 /// Measures time for operations with different hot spot patterns
 /// hot_spot_percentage = percentage of operations targeting the same hot spot orders (0-100)
 #[allow(dead_code)]
-#[cfg(not(tarpaulin_include))]
 fn measure_hot_spot_contention(
     thread_count: usize,
     iterations: u64,
@@ -245,7 +242,6 @@ fn measure_hot_spot_contention(
 
 /// Create a standard limit order for testing
 #[allow(dead_code)]
-#[cfg(not(tarpaulin_include))]
 fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
     OrderType::Standard {
         id: OrderId::from_u64(id),
