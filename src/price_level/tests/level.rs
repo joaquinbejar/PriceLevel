@@ -1741,3 +1741,91 @@ mod tests {
         assert_eq!(deserialized.order_count(), 2);
     }
 }
+
+#[cfg(test)]
+mod tests_eq {
+    use crate::PriceLevel;
+
+    #[test]
+    fn test_price_level_partial_eq() {
+        // Create two price levels with the same price
+        let price_level1 = PriceLevel::new(10000);
+        let price_level2 = PriceLevel::new(10000);
+
+        // Create a price level with a different price
+        let price_level3 = PriceLevel::new(10001);
+
+        // Test equality
+        assert_eq!(price_level1, price_level2);
+
+        // Test inequality
+        assert_ne!(price_level1, price_level3);
+        assert_ne!(price_level2, price_level3);
+    }
+
+    #[test]
+    fn test_price_level_eq() {
+        // Test Eq trait (reflexivity, symmetry, transitivity)
+        let price_level1 = PriceLevel::new(10000);
+        let price_level2 = PriceLevel::new(10000);
+        let price_level3 = PriceLevel::new(10000);
+
+        // Reflexivity: a == a
+        assert_eq!(price_level1, price_level1);
+
+        // Symmetry: if a == b then b == a
+        assert_eq!(price_level1, price_level2);
+        assert_eq!(price_level2, price_level1);
+
+        // Transitivity: if a == b and b == c then a == c
+        assert_eq!(price_level1, price_level2);
+        assert_eq!(price_level2, price_level3);
+        assert_eq!(price_level1, price_level3);
+    }
+
+    #[test]
+    fn test_price_level_partial_ord() {
+        let price_level1 = PriceLevel::new(10000);
+        let price_level2 = PriceLevel::new(10500);
+        let price_level3 = PriceLevel::new(9500);
+
+        // Test comparisons
+        assert!(price_level1 < price_level2);
+        assert!(price_level3 < price_level1);
+        assert!(price_level3 < price_level2);
+
+        assert!(price_level2 > price_level1);
+        assert!(price_level1 > price_level3);
+        assert!(price_level2 > price_level3);
+
+        assert!(price_level1 <= price_level2);
+        assert!(price_level1 <= price_level1); // Equality case
+
+        assert!(price_level2 >= price_level1);
+        assert!(price_level1 >= price_level1); // Equality case
+    }
+
+    #[test]
+    fn test_price_level_ord() {
+        // Create some price levels
+        let price_level1 = PriceLevel::new(9000);
+        let price_level2 = PriceLevel::new(10000);
+        let price_level3 = PriceLevel::new(11000);
+
+        // Create a vector of price level references
+        let mut price_level_refs = [&price_level3, &price_level1, &price_level2];
+
+        // Sort the vector - this uses the Ord implementation
+        price_level_refs.sort();
+
+        // Verify the sorting order (ascending by price)
+        assert_eq!(price_level_refs[0].price(), 9000);
+        assert_eq!(price_level_refs[1].price(), 10000);
+        assert_eq!(price_level_refs[2].price(), 11000);
+
+        // Test the comparison methods directly
+        assert_eq!(price_level1.cmp(&price_level2), std::cmp::Ordering::Less);
+        assert_eq!(price_level2.cmp(&price_level1), std::cmp::Ordering::Greater);
+        assert_eq!(price_level2.cmp(&price_level2), std::cmp::Ordering::Equal);
+    }
+}

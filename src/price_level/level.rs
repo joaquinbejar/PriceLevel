@@ -607,3 +607,23 @@ impl<'de> Deserialize<'de> for PriceLevel {
         PriceLevel::try_from(data).map_err(serde::de::Error::custom)
     }
 }
+
+impl PartialEq for PriceLevel {
+    fn eq(&self, other: &Self) -> bool {
+        self.price == other.price
+    }
+}
+
+impl Eq for PriceLevel {}
+
+impl PartialOrd for PriceLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PriceLevel {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.price.cmp(&other.price)
+    }
+}
