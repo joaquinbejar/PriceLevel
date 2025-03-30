@@ -72,6 +72,7 @@ doc-open:
 
 .PHONY: publish
 publish: readme
+	find . -name ".DS_Store" -type f -delete | true
 	cargo login ${CARGO_REGISTRY_TOKEN}
 	cargo package
 	cargo publish
