@@ -90,6 +90,7 @@ mod tests_side {
 
 #[cfg(test)]
 mod tests_orderid {
+    use crate::Side;
     use crate::orders::OrderId;
     use std::str::FromStr;
     use uuid::Uuid;
@@ -198,5 +199,43 @@ mod tests_orderid {
         let string = id.to_string();
         let parsed = string.parse::<OrderId>().unwrap();
         assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn test_side_opposite() {
+        // Test the opposite method on Side enum
+        assert_eq!(Side::Buy.opposite(), Side::Sell);
+        assert_eq!(Side::Sell.opposite(), Side::Buy);
+
+        // Double check opposite of opposite returns original
+        assert_eq!(Side::Buy.opposite().opposite(), Side::Buy);
+        assert_eq!(Side::Sell.opposite().opposite(), Side::Sell);
+    }
+
+    #[test]
+    fn test_order_id_nil() {
+        // Test the OrderId::nil() functionality
+        let nil_id = OrderId::nil();
+
+        // Verify it's equal to the Uuid nil value
+        assert_eq!(nil_id.0, Uuid::nil());
+
+        // Convert to string and verify
+        let str_representation = nil_id.to_string();
+        assert_eq!(str_representation, "00000000-0000-0000-0000-000000000000");
+
+        // Parse from string and verify roundtrip
+        let parsed = OrderId::from_str(&str_representation).unwrap();
+        assert_eq!(parsed, nil_id);
+    }
+
+    #[test]
+    fn test_order_id_default() {
+        let default_id = OrderId::default();
+        assert_ne!(default_id, OrderId::nil());
+
+        // The default implementation calls new(), which creates a random UUID
+        // So we just need to verify it's not nil
+        assert_ne!(default_id.0, Uuid::nil());
     }
 }

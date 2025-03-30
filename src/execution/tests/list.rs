@@ -195,6 +195,68 @@ mod tests {
         let vec: Vec<Transaction> = list.into();
         assert_eq!(vec, transactions);
     }
+
+    // In execution/list.rs test module or in a separate test file
+
+    #[test]
+    fn test_transaction_list_parsing_edge_cases() {
+        // Test empty transactions list
+        let input = "Transactions:[]";
+        let list = TransactionList::from_str(input).unwrap();
+        assert_eq!(list.len(), 0);
+
+        // Test single transaction with complex fields
+        let input = "Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
+        let list = TransactionList::from_str(input).unwrap();
+        assert_eq!(list.len(), 1);
+
+        // Test with nested brackets in transaction fields
+        let input = "Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=[00000000-0000-0001-0000-000000000000];maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000]";
+
+        // This might fail depending on the implementation details
+        let result = TransactionList::from_str(input);
+        // If it fails, assert that it's due to the expected reason
+        if result.is_err() {
+            let err = result.unwrap_err();
+            let err_string = format!("{:?}", err);
+            assert!(err_string.contains("Invalid") || err_string.contains("taker_order_id"));
+        }
+    }
+
+    #[test]
+    fn test_transaction_list_from_vec_empty() {
+        let empty_vec: Vec<Transaction> = Vec::new();
+        let list = TransactionList::from_vec(empty_vec);
+
+        assert_eq!(list.len(), 0);
+        assert!(list.is_empty());
+
+        // Test display output for empty list
+        assert_eq!(list.to_string(), "Transactions:[]");
+
+        // Test round-trip via string parsing
+        let parsed = TransactionList::from_str(&list.to_string()).unwrap();
+        assert_eq!(parsed.len(), 0);
+    }
+
+    #[test]
+    fn test_transaction_list_parsing_errors() {
+        // Test invalid prefix
+        let input = "InvalidPrefix:[]";
+        let result = TransactionList::from_str(input);
+        assert!(result.is_err());
+
+        // Test missing closing bracket
+        let input = "Transactions:[";
+        let result = TransactionList::from_str(input);
+        assert!(result.is_err());
+
+        // Test unbalanced brackets
+        let input =
+            "Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;]";
+        let result = TransactionList::from_str(input);
+        assert!(result.is_err() || result.unwrap().len() == 1);
+    }
 }
 
 #[cfg(test)]

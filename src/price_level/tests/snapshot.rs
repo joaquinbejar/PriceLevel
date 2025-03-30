@@ -159,6 +159,156 @@ mod tests {
         assert_eq!(parsed.hidden_quantity, original.hidden_quantity);
         assert_eq!(parsed.order_count, original.order_count);
     }
+
+    // In price_level/snapshot.rs test module or in a separate test file
+
+    #[test]
+    fn test_snapshot_serialization_fields() {
+        // Create a snapshot with specific field values
+        let mut snapshot = PriceLevelSnapshot::new(10000);
+        snapshot.visible_quantity = 200;
+        snapshot.hidden_quantity = 300;
+        snapshot.order_count = 5;
+
+        // Add some orders (empty for now, we'll test orders separately)
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+
+        // Check the serialized fields
+        assert!(serialized.contains("\"price\":10000"));
+        assert!(serialized.contains("\"visible_quantity\":200"));
+        assert!(serialized.contains("\"hidden_quantity\":300"));
+        assert!(serialized.contains("\"order_count\":5"));
+        assert!(serialized.contains("\"orders\":[]"));
+    }
+
+    #[test]
+    fn test_snapshot_deserializer_duplicate_fields() {
+        // Test with duplicate field
+        let json = r#"{
+        "price": 10000,
+        "visible_quantity": 200,
+        "hidden_quantity": 300,
+        "order_count": 5,
+        "price": 20000,
+        "orders": []
+    }"#;
+
+        // Should fail due to duplicate field
+        let result = serde_json::from_str::<PriceLevelSnapshot>(json);
+        assert!(result.is_err());
+
+        // Error should mention duplicate field
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("duplicate field"));
+    }
+
+    #[test]
+    fn test_snapshot_visitor_implementation() {
+        // Testing the visitor by providing various field values
+        let json = r#"{
+        "price": 10000,
+        "visible_quantity": 200,
+        "hidden_quantity": 300,
+        "order_count": 5,
+        "orders": []
+    }"#;
+
+        let snapshot: PriceLevelSnapshot = serde_json::from_str(json).unwrap();
+
+        assert_eq!(snapshot.price, 10000);
+        assert_eq!(snapshot.visible_quantity, 200);
+        assert_eq!(snapshot.hidden_quantity, 300);
+        assert_eq!(snapshot.order_count, 5);
+        assert!(snapshot.orders.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_with_actual_orders() {
+        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+            OrderType::Standard {
+                id: OrderId::from_u64(id),
+                price,
+                quantity,
+                side: Side::Buy,
+                timestamp: 1616823000000,
+                time_in_force: TimeInForce::Gtc,
+            }
+        }
+
+        fn create_iceberg_order(
+            id: u64,
+            price: u64,
+            visible_quantity: u64,
+            hidden_quantity: u64,
+        ) -> OrderType {
+            OrderType::IcebergOrder {
+                id: OrderId::from_u64(id),
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side: Side::Buy,
+                timestamp: 1616823000000,
+                time_in_force: TimeInForce::Gtc,
+            }
+        }
+        // Create a snapshot with orders
+        let mut snapshot = PriceLevelSnapshot::new(10000);
+        snapshot.visible_quantity = 150;
+        snapshot.hidden_quantity = 250;
+        snapshot.order_count = 2;
+
+        let orders = vec![
+            Arc::new(create_standard_order(1, 10000, 100)),
+            Arc::new(create_iceberg_order(2, 10000, 50, 250)),
+        ];
+
+        snapshot.orders = orders;
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+
+        // Check serialized fields and orders
+        assert!(serialized.contains("\"price\":10000"));
+        assert!(serialized.contains("\"visible_quantity\":150"));
+        assert!(serialized.contains("\"hidden_quantity\":250"));
+        assert!(serialized.contains("\"order_count\":2"));
+        assert!(serialized.contains("\"orders\":["));
+        assert!(serialized.contains("\"Standard\":{"));
+        assert!(serialized.contains("\"IcebergOrder\":{"));
+
+        // Deserialize back
+        let deserialized: PriceLevelSnapshot = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.price, 10000);
+        assert_eq!(deserialized.visible_quantity, 150);
+        assert_eq!(deserialized.hidden_quantity, 250);
+        assert_eq!(deserialized.order_count, 2);
+        assert_eq!(deserialized.orders.len(), 2);
+
+        // Verify order types
+        if let OrderType::Standard { id, quantity, .. } = &*deserialized.orders[0] {
+            assert_eq!(*id, OrderId::from_u64(1));
+            assert_eq!(*quantity, 100);
+        } else {
+            panic!("Expected Standard order");
+        }
+
+        if let OrderType::IcebergOrder {
+            id,
+            visible_quantity,
+            hidden_quantity,
+            ..
+        } = &*deserialized.orders[1]
+        {
+            assert_eq!(*id, OrderId::from_u64(2));
+            assert_eq!(*visible_quantity, 50);
+            assert_eq!(*hidden_quantity, 250);
+        } else {
+            panic!("Expected IcebergOrder");
+        }
+    }
 }
 
 #[cfg(test)]

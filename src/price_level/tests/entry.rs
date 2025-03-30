@@ -2,6 +2,7 @@
 mod tests {
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
+    use crate::{OrderId, OrderType, Side, TimeInForce};
     use std::str::FromStr;
     use std::sync::Arc;
     use tracing::info;
@@ -64,6 +65,125 @@ mod tests {
 
         assert_eq!(entry.price(), 1000);
         assert_eq!(entry.index, 5);
+    }
+
+    #[test]
+    fn test_order_book_entry_json_serialization() {
+        let level = Arc::new(PriceLevel::new(10000));
+        let entry = OrderBookEntry::new(level, 5);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&entry).unwrap();
+
+        // Check JSON structure
+        assert!(json.contains("\"price\":10000"));
+        assert!(json.contains("\"index\":5"));
+        assert!(json.contains("\"visible_quantity\":0"));
+        assert!(json.contains("\"total_quantity\":0"));
+    }
+
+    #[test]
+    fn test_order_book_entry_wrapper_struct() {
+        // Directly test the wrapper struct used for deserialization
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            price: u64,
+            index: usize,
+        }
+
+        let json = r#"{"price":10000,"index":5}"#;
+        let wrapper: Wrapper = serde_json::from_str(json).unwrap();
+
+        assert_eq!(wrapper.price, 10000);
+        assert_eq!(wrapper.index, 5);
+    }
+
+    #[test]
+    fn test_order_book_entry_equality_hash() {
+        // Test line 76 - Testing Eq trait implementation
+        let level1 = Arc::new(PriceLevel::new(1000));
+        let level2 = Arc::new(PriceLevel::new(1000));
+
+        let entry1 = OrderBookEntry::new(level1.clone(), 1);
+        let entry2 = OrderBookEntry::new(level2.clone(), 2);
+
+        // Test Eq trait implementation
+        assert_eq!(entry1, entry2); // They should be equal as they have the same price
+
+        // Create a hash set to test the Eq trait's blanket implementation
+        let mut set = std::collections::HashSet::new();
+        set.insert(entry1.price());
+        assert!(set.contains(&entry2.price()));
+    }
+
+    #[test]
+    fn test_order_book_entry_serialization() {
+        // Test lines 100, 102-104 - Serialize implementation
+        let level = Arc::new(PriceLevel::new(1000));
+        let entry = OrderBookEntry::new(level.clone(), 5);
+
+        // Add an order to make the test more meaningful
+        let order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        level.add_order(order);
+
+        // Serialize the entry
+        let json = serde_json::to_string(&entry).unwrap();
+
+        // Verify the serialized output contains expected fields
+        assert!(json.contains("\"price\":1000"));
+        assert!(json.contains("\"visible_quantity\":10"));
+        assert!(json.contains("\"total_quantity\":10"));
+        assert!(json.contains("\"index\":5"));
+    }
+
+    #[test]
+    fn test_order_book_entry_deserialization() {
+        // Test lines 130, 144, 152-153, 161-162 - Deserialize implementation
+        let json = r#"{"price":1500,"index":10,"visible_quantity":50,"total_quantity":150}"#;
+
+        // Deserialize into OrderBookEntry
+        let entry: OrderBookEntry = serde_json::from_str(json).unwrap();
+
+        // Verify deserialized values
+        assert_eq!(entry.price(), 1500);
+        assert_eq!(entry.index, 10);
+
+        // The visible quantity and total quantity cannot be verified directly
+        // as they come from the PriceLevel which is freshly created in deserialization
+        // and not populated with orders
+    }
+
+    #[test]
+    fn test_order_book_entry_from_str_with_invalid_input() {
+        // Create a string with invalid format
+        let invalid_input = "NotAnOrderBookEntry:price=1000;index=5";
+
+        // Attempt to parse the invalid input
+        let result = OrderBookEntry::from_str(invalid_input);
+
+        // Verify parsing fails as expected
+        assert!(result.is_err());
+
+        // Test missing fields
+        let missing_index = "OrderBookEntry:price=1000";
+        let result = OrderBookEntry::from_str(missing_index);
+        assert!(result.is_err());
+
+        // Test invalid field values
+        let invalid_price = "OrderBookEntry:price=invalid;index=5";
+        let result = OrderBookEntry::from_str(invalid_price);
+        assert!(result.is_err());
+
+        let invalid_index = "OrderBookEntry:price=1000;index=invalid";
+        let result = OrderBookEntry::from_str(invalid_index);
+        assert!(result.is_err());
     }
 }
 

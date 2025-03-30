@@ -277,4 +277,112 @@ mod tests_order_update {
             assert_eq!(format!("{:?}", update), format!("{:?}", parsed_update));
         }
     }
+
+    #[test]
+    fn test_order_update_display_detailed() {
+        // Test display of UpdatePrice
+        let update = OrderUpdate::UpdatePrice {
+            order_id: OrderId::from_u64(123),
+            new_price: 10500,
+        };
+        let display_string = update.to_string();
+        assert_eq!(
+            display_string,
+            "UpdatePrice:order_id=00000000-0000-007b-0000-000000000000;new_price=10500"
+        );
+
+        // Test display of UpdateQuantity
+        let update = OrderUpdate::UpdateQuantity {
+            order_id: OrderId::from_u64(456),
+            new_quantity: 75,
+        };
+        let display_string = update.to_string();
+        assert_eq!(
+            display_string,
+            "UpdateQuantity:order_id=00000000-0000-01c8-0000-000000000000;new_quantity=75"
+        );
+
+        // Test display of UpdatePriceAndQuantity
+        let update = OrderUpdate::UpdatePriceAndQuantity {
+            order_id: OrderId::from_u64(789),
+            new_price: 11000,
+            new_quantity: 50,
+        };
+        let display_string = update.to_string();
+        assert_eq!(
+            display_string,
+            "UpdatePriceAndQuantity:order_id=00000000-0000-0315-0000-000000000000;new_price=11000;new_quantity=50"
+        );
+
+        // Test display of Replace
+        let update = OrderUpdate::Replace {
+            order_id: OrderId::from_u64(202),
+            price: 12000,
+            quantity: 60,
+            side: Side::Sell,
+        };
+        let display_string = update.to_string();
+        assert_eq!(
+            display_string,
+            "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=12000;quantity=60;side=SELL"
+        );
+    }
+
+    #[test]
+    fn test_order_update_from_str_replace_side() {
+        // Test parsing of Replace with Buy side
+        let input = "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=12000;quantity=60;side=BUY";
+        let update = OrderUpdate::from_str(input).unwrap();
+
+        match update {
+            OrderUpdate::Replace {
+                order_id,
+                price,
+                quantity,
+                side,
+            } => {
+                assert_eq!(order_id, OrderId::from_u64(202));
+                assert_eq!(price, 12000);
+                assert_eq!(quantity, 60);
+                assert_eq!(side, Side::Buy);
+            }
+            _ => panic!("Expected Replace variant"),
+        }
+
+        // Test parsing of Replace with Sell side
+        let input = "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=12000;quantity=60;side=SELL";
+        let update = OrderUpdate::from_str(input).unwrap();
+
+        match update {
+            OrderUpdate::Replace {
+                order_id,
+                price,
+                quantity,
+                side,
+            } => {
+                assert_eq!(order_id, OrderId::from_u64(202));
+                assert_eq!(price, 12000);
+                assert_eq!(quantity, 60);
+                assert_eq!(side, Side::Sell);
+            }
+            _ => panic!("Expected Replace variant"),
+        }
+
+        // Test parsing with invalid side (should fail)
+        let input = "Replace:order_id=00000000-0000-00ca-0000-000000000000;price=12000;quantity=60;side=INVALID";
+        let result = OrderUpdate::from_str(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_display_cancel() {
+        let update = OrderUpdate::Cancel {
+            order_id: OrderId::from_u64(123),
+        };
+
+        assert_eq!(
+            update.to_string(),
+            "Cancel:order_id=00000000-0000-007b-0000-000000000000"
+        );
+    }
 }

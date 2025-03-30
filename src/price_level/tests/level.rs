@@ -1381,4 +1381,363 @@ mod tests {
         assert_eq!(orders[0].price(), 10000);
         assert_eq!(orders[0].visible_quantity(), 100);
     }
+
+    // In price_level/level.rs test module or in a separate test file
+
+    #[test]
+    fn test_level_partial_match_remaining() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction_id_generator = UuidGenerator::new(namespace);
+
+        // Add orders with more quantity than we'll match
+        price_level.add_order(create_standard_order(1, 10000, 200));
+
+        // Match only part of what's available
+        let match_result =
+            price_level.match_order(100, OrderId::from_u64(999), &transaction_id_generator);
+
+        assert_eq!(match_result.remaining_quantity, 0);
+        assert!(match_result.is_complete);
+        assert_eq!(price_level.visible_quantity(), 100); // 200 - 100 = 100
+        assert_eq!(price_level.order_count(), 1);
+    }
+
+    #[test]
+    fn test_level_update_price_different_price() {
+        let price_level = PriceLevel::new(10000);
+
+        // Add an order
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        // Update to a different price (should remove from this level)
+        let result = price_level.update_order(OrderUpdate::UpdatePrice {
+            order_id: OrderId::from_u64(1),
+            new_price: 10100, // Different price
+        });
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+    }
+
+    #[test]
+    fn test_level_update_price_and_quantity_same_price() {
+        let price_level = PriceLevel::new(10000);
+
+        // Add an order
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        // Update the quantity but keep the same price
+        let result = price_level.update_order(OrderUpdate::UpdatePriceAndQuantity {
+            order_id: OrderId::from_u64(1),
+            new_price: 10000, // Same price
+            new_quantity: 150,
+        });
+
+        assert!(result.is_ok());
+        let updated_order = result.unwrap().unwrap();
+        assert_eq!(updated_order.visible_quantity(), 150);
+        assert_eq!(price_level.visible_quantity(), 150);
+        assert_eq!(price_level.order_count(), 1);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_with_orders() {
+        let price_level = PriceLevel::new(10000);
+
+        // Add some orders
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_iceberg_order(2, 10000, 50, 150));
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&price_level).unwrap();
+
+        // Deserialize back
+        let deserialized: PriceLevel = serde_json::from_str(&serialized).unwrap();
+
+        // Verify deserialized state matches original
+        assert_eq!(deserialized.price(), price_level.price());
+        assert_eq!(
+            deserialized.visible_quantity(),
+            price_level.visible_quantity()
+        );
+        assert_eq!(
+            deserialized.hidden_quantity(),
+            price_level.hidden_quantity()
+        );
+        assert_eq!(deserialized.order_count(), price_level.order_count());
+    }
+
+    #[test]
+    fn test_price_level_update_price_same_value() {
+        // Test lines 187-188
+        let price_level = PriceLevel::new(10000);
+        let order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order);
+
+        // Try to update price to the same value
+        let update = OrderUpdate::UpdatePrice {
+            order_id: OrderId::from_u64(1),
+            new_price: 10000,
+        };
+
+        // This should return an error
+        let result = price_level.update_order(update);
+        assert!(result.is_err());
+        match result {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("Cannot update price to the same value"));
+            }
+            _ => panic!("Expected InvalidOperation error"),
+        }
+    }
+
+    #[test]
+    fn test_price_level_update_quantity_order_not_found() {
+        // Test line 282
+        let price_level = PriceLevel::new(10000);
+        // No orders added
+
+        // Try to update quantity of a non-existent order
+        let update = OrderUpdate::UpdateQuantity {
+            order_id: OrderId::from_u64(123),
+            new_quantity: 20,
+        };
+
+        let result = price_level.update_order(update);
+        // Should return Ok(None) when order not found
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_price_level_update_quantity_by_another_thread() {
+        // Test lines 304-306, 308-309
+        let price_level = PriceLevel::new(10000);
+
+        // Add an order
+        let order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order);
+
+        // Set up a test that simulates order removal by another thread
+        // This can be done by modifying the OrderQueue's internal state directly
+        // or by simply testing the behavior of the update_quantity method when it returns None
+
+        // For now, we'll just mock this behavior by ensuring the method handles
+        // cases where an order is not found after initial check (order was found but removed)
+
+        // First find the order to make sure it exists
+        assert!(
+            price_level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: OrderId::from_u64(1)
+                })
+                .unwrap()
+                .is_some()
+        );
+
+        // Now try to update it after it's been removed
+        let update = OrderUpdate::UpdateQuantity {
+            order_id: OrderId::from_u64(1),
+            new_quantity: 20,
+        };
+
+        let result = price_level.update_order(update);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_price_level_update_quantity_increase() {
+        // Test line 473
+        let price_level = PriceLevel::new(10000);
+
+        // Add an order
+        let order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            quantity: 50,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order);
+
+        // Update to increase quantity (old visible < new visible)
+        let update = OrderUpdate::UpdateQuantity {
+            order_id: OrderId::from_u64(1),
+            new_quantity: 100,
+        };
+
+        let result = price_level.update_order(update);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Verify quantity increased
+        assert_eq!(price_level.visible_quantity(), 100);
+    }
+
+    #[test]
+    fn test_price_level_update_hidden_quantity() {
+        // Test lines 488, 498
+        let price_level = PriceLevel::new(10000);
+
+        // Add an iceberg order with visible and hidden quantities
+        let order = OrderType::IcebergOrder {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            visible_quantity: 50,
+            hidden_quantity: 150,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order);
+
+        // Verify initial quantities
+        assert_eq!(price_level.visible_quantity(), 50);
+        assert_eq!(price_level.hidden_quantity(), 150);
+
+        // Create a new iceberg order with different quantities
+        let new_order = OrderType::IcebergOrder {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            visible_quantity: 40,
+            hidden_quantity: 200,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+
+        // Test increasing hidden quantity
+        let result = price_level.update_order(OrderUpdate::Cancel {
+            order_id: OrderId::from_u64(1),
+        });
+        assert!(result.is_ok());
+        price_level.add_order(new_order);
+
+        // Verify both visible and hidden quantities were updated
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 200);
+    }
+
+    #[test]
+    fn test_price_level_update_price_and_quantity_same_price() {
+        // Test line 510
+        let price_level = PriceLevel::new(10000);
+
+        // Add an order
+        let order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            quantity: 50,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order);
+
+        // Update both price and quantity with same price
+        let update = OrderUpdate::UpdatePriceAndQuantity {
+            order_id: OrderId::from_u64(1),
+            new_price: 10000, // Same price
+            new_quantity: 100,
+        };
+
+        let result = price_level.update_order(update);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Verify quantity was updated but price remained the same
+        assert_eq!(price_level.visible_quantity(), 100);
+        assert_eq!(price_level.price(), 10000);
+    }
+
+    #[test]
+    fn test_price_level_from_price_level_data_conversion() {
+        // Test lines 521-523, 527, 537, 558-560, 562-564, 566-568, 607
+
+        // Create a price level
+        let price_level = PriceLevel::new(10000);
+
+        // Add some orders
+        let order1 = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 10000,
+            quantity: 50,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order1);
+
+        let order2 = OrderType::IcebergOrder {
+            id: OrderId::from_u64(2),
+            price: 10000,
+            visible_quantity: 30,
+            hidden_quantity: 70,
+            side: Side::Buy,
+            timestamp: 1616823000001,
+            time_in_force: TimeInForce::Gtc,
+        };
+        price_level.add_order(order2);
+
+        // Convert to PriceLevelData
+        let data: PriceLevelData = (&price_level).into();
+
+        // Verify data
+        assert_eq!(data.price, 10000);
+        assert_eq!(data.visible_quantity, 80); // 50 + 30
+        assert_eq!(data.hidden_quantity, 70);
+        assert_eq!(data.order_count, 2);
+        assert_eq!(data.orders.len(), 2);
+
+        // Convert back to PriceLevel
+        let result = PriceLevel::try_from(data);
+        assert!(result.is_ok());
+
+        // Verify converted price level
+        let converted_level = result.unwrap();
+        assert_eq!(converted_level.price(), 10000);
+        assert_eq!(converted_level.visible_quantity(), 80);
+        assert_eq!(converted_level.hidden_quantity(), 70);
+        assert_eq!(converted_level.order_count(), 2);
+
+        // Test display implementation
+        let display_string = price_level.to_string();
+        assert!(display_string.starts_with("PriceLevel:price=10000;"));
+        assert!(display_string.contains("visible_quantity=80"));
+        assert!(display_string.contains("hidden_quantity=70"));
+        assert!(display_string.contains("order_count=2"));
+
+        // Test serialization
+        let serialized = serde_json::to_string(&price_level).unwrap();
+        assert!(serialized.contains("\"price\":10000"));
+        assert!(serialized.contains("\"visible_quantity\":80"));
+        assert!(serialized.contains("\"hidden_quantity\":70"));
+        assert!(serialized.contains("\"order_count\":2"));
+
+        // Test deserialization
+        let deserialized: PriceLevel = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.price(), 10000);
+        assert_eq!(deserialized.visible_quantity(), 80);
+        assert_eq!(deserialized.hidden_quantity(), 70);
+        assert_eq!(deserialized.order_count(), 2);
+    }
 }

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::errors::PriceLevelError;
     use crate::orders::time_in_force::TimeInForce;
     use std::str::FromStr;
 
@@ -295,5 +296,38 @@ mod tests {
             let parsed = TimeInForce::from_str(&string_representation).unwrap();
             assert_eq!(original, parsed);
         }
+    }
+
+    #[test]
+    fn test_time_in_force_from_str_invalid_format() {
+        // Test invalid GTD format (missing expiry)
+        let result = TimeInForce::from_str("GTD-");
+        assert!(result.is_err());
+
+        // Verify error message
+        match result {
+            Err(PriceLevelError::ParseError { message }) => {
+                assert!(message.contains("Invalid expiry timestamp in GTD"));
+            }
+            _ => panic!("Expected ParseError"),
+        }
+
+        // Test with completely invalid format
+        let result = TimeInForce::from_str("INVALID");
+        assert!(result.is_err());
+
+        // Verify error message
+        match result {
+            Err(PriceLevelError::ParseError { message }) => {
+                assert!(message.contains("Invalid TimeInForce"));
+            }
+            _ => panic!("Expected ParseError"),
+        }
+    }
+
+    #[test]
+    fn test_time_in_force_display_day() {
+        let time_in_force = TimeInForce::Day;
+        assert_eq!(time_in_force.to_string(), "DAY");
     }
 }

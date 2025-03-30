@@ -616,6 +616,139 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_with_reduced_quantity_market_to_limit() {
+        // Lines 663-664
+        let order = OrderType::MarketToLimit {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+
+        let reduced = order.with_reduced_quantity(5);
+
+        // Verify the quantity is not changed (market to limit orders don't support
+        // reduced quantity in the current implementation)
+        if let OrderType::MarketToLimit { quantity, .. } = reduced {
+            assert_eq!(quantity, 10); // Original quantity, not reduced
+        } else {
+            panic!("Expected MarketToLimit order");
+        }
+    }
+
+    #[test]
+    fn test_with_reduced_quantity_pegged_order() {
+        // Lines 720-721
+        let order = OrderType::PeggedOrder {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+            reference_price_offset: -50,
+            reference_price_type: PegReferenceType::BestAsk,
+        };
+
+        let reduced = order.with_reduced_quantity(5);
+
+        // Verify the quantity is not changed (pegged orders don't support
+        // reduced quantity in the current implementation)
+        if let OrderType::PeggedOrder { quantity, .. } = reduced {
+            assert_eq!(quantity, 10); // Original quantity, not reduced
+        } else {
+            panic!("Expected PeggedOrder order");
+        }
+    }
+
+    #[test]
+    fn test_with_reduced_quantity_trailing_stop() {
+        // Line 741
+        let order = OrderType::TrailingStop {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+            trail_amount: 100,
+            last_reference_price: 1100,
+        };
+
+        let reduced = order.with_reduced_quantity(5);
+
+        // Verify the quantity is not changed (trailing stop orders don't support
+        // reduced quantity in the current implementation)
+        if let OrderType::TrailingStop { quantity, .. } = reduced {
+            assert_eq!(quantity, 10); // Original quantity, not reduced
+        } else {
+            panic!("Expected TrailingStop order");
+        }
+    }
+
+    #[test]
+    fn test_refresh_iceberg_non_iceberg_orders() {
+        // Line 760
+        let standard_order = OrderType::Standard {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+        };
+
+        let (refreshed, used) = standard_order.refresh_iceberg(5);
+
+        // Non-iceberg orders should remain unchanged and return 0 used
+        assert_eq!(used, 0);
+
+        match refreshed {
+            OrderType::Standard { quantity, .. } => assert_eq!(quantity, 10), // Unchanged
+            _ => panic!("Expected StandardOrder"),
+        }
+    }
+
+    #[test]
+    fn test_match_against_trailing_stop_order() {
+        // Line 809 (or nearby)
+        let order = OrderType::TrailingStop {
+            id: OrderId::from_u64(1),
+            price: 1000,
+            quantity: 10,
+            side: Side::Buy,
+            timestamp: 1616823000000,
+            time_in_force: TimeInForce::Gtc,
+            trail_amount: 100,
+            last_reference_price: 1100,
+        };
+
+        let (consumed, updated, hidden_reduced, remaining) = order.match_against(5);
+
+        // Verify partial match
+        assert_eq!(consumed, 5);
+        assert!(updated.is_some());
+        assert_eq!(hidden_reduced, 0);
+        assert_eq!(remaining, 0);
+
+        // Verify complete match
+        let (consumed, updated, hidden_reduced, remaining) = order.match_against(10);
+        assert_eq!(consumed, 10);
+        assert!(updated.is_none()); // Fully consumed
+        assert_eq!(hidden_reduced, 0);
+        assert_eq!(remaining, 0);
+
+        // Verify match with excess
+        let (consumed, updated, hidden_reduced, remaining) = order.match_against(15);
+        assert_eq!(consumed, 10);
+        assert!(updated.is_none());
+        assert_eq!(hidden_reduced, 0);
+        assert_eq!(remaining, 5); // 15 - 10 = 5 remaining
+    }
 }
 
 #[cfg(test)]

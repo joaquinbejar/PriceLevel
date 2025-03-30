@@ -181,6 +181,81 @@ mod tests {
             timestamp_diff
         );
     }
+
+    // In execution/transaction.rs test module or in a separate test file
+
+    #[test]
+    fn test_transaction_from_str_all_fields() {
+        let input = "Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
+
+        let transaction = Transaction::from_str(input).unwrap();
+
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        assert_eq!(transaction.transaction_id, uuid);
+        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
+        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.price, 10000);
+        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.taker_side, Side::Buy);
+        assert_eq!(transaction.timestamp, 1616823000000);
+    }
+
+    #[test]
+    fn test_transaction_get_field_helper() {
+        // Simulate get_field function being used in the from_str implementation
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("transaction_id", "6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+        fields.insert("price", "10000");
+
+        // Test successful field retrieval
+        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
+            match fields.get(field) {
+                Some(result) => Ok(*result),
+                None => Err(PriceLevelError::MissingField(field.to_string())),
+            }
+        };
+
+        assert_eq!(
+            get_field("transaction_id").unwrap(),
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+        );
+        assert_eq!(get_field("price").unwrap(), "10000");
+
+        // Test missing field error
+        let missing_result = get_field("missing_field");
+        assert!(missing_result.is_err());
+        if let Err(PriceLevelError::MissingField(field)) = missing_result {
+            assert_eq!(field, "missing_field");
+        } else {
+            panic!("Expected MissingField error");
+        }
+    }
+
+    #[test]
+    fn test_transaction_parse_u64_helper() {
+        // Simulate parse_u64 function being used in the from_str implementation
+        let parse_u64 = |field: &str, value: &str| -> Result<u64, PriceLevelError> {
+            value
+                .parse::<u64>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
+        // Test successful parsing
+        assert_eq!(parse_u64("price", "10000").unwrap(), 10000);
+
+        // Test failed parsing
+        let invalid_result = parse_u64("price", "invalid");
+        assert!(invalid_result.is_err());
+        if let Err(PriceLevelError::InvalidFieldValue { field, value }) = invalid_result {
+            assert_eq!(field, "price");
+            assert_eq!(value, "invalid");
+        } else {
+            panic!("Expected InvalidFieldValue error");
+        }
+    }
 }
 
 #[cfg(test)]

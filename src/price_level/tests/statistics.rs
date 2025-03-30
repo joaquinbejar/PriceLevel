@@ -329,4 +329,93 @@ mod tests {
         assert_eq!(stats_arc.quantity_executed(), 1000);
         assert_eq!(stats_arc.value_executed(), 100000); // 1000 * 100
     }
+
+    #[test]
+    fn test_statistics_reset_and_verify() {
+        let stats = PriceLevelStatistics::new();
+
+        // Add some data
+        stats.record_order_added();
+        stats.record_order_added();
+        stats.record_order_removed();
+        stats.record_execution(10, 100, 0);
+
+        // Verify stats were recorded
+        assert_eq!(stats.orders_added(), 2);
+        assert_eq!(stats.orders_removed(), 1);
+        assert_eq!(stats.orders_executed(), 1);
+
+        // Reset stats
+        stats.reset();
+
+        // Verify all statistics are reset
+        assert_eq!(stats.orders_added(), 0);
+        assert_eq!(stats.orders_removed(), 0);
+        assert_eq!(stats.orders_executed(), 0);
+        assert_eq!(stats.quantity_executed(), 0);
+        assert_eq!(stats.value_executed(), 0);
+        assert_eq!(stats.last_execution_time.load(Ordering::Relaxed), 0);
+        assert!(stats.first_arrival_time.load(Ordering::Relaxed) > 0);
+        assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_statistics_serialize_deserialize_fields() {
+        let stats = PriceLevelStatistics::new();
+
+        // Set and verify each field
+        stats.orders_added.store(1, Ordering::Relaxed);
+        stats.orders_removed.store(2, Ordering::Relaxed);
+        stats.orders_executed.store(3, Ordering::Relaxed);
+        stats.quantity_executed.store(4, Ordering::Relaxed);
+        stats.value_executed.store(5, Ordering::Relaxed);
+        stats.last_execution_time.store(6, Ordering::Relaxed);
+        stats.first_arrival_time.store(7, Ordering::Relaxed);
+        stats.sum_waiting_time.store(8, Ordering::Relaxed);
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&stats).unwrap();
+
+        // Should contain all the field values
+        assert!(serialized.contains("\"orders_added\":1"));
+        assert!(serialized.contains("\"orders_removed\":2"));
+        assert!(serialized.contains("\"orders_executed\":3"));
+        assert!(serialized.contains("\"quantity_executed\":4"));
+        assert!(serialized.contains("\"value_executed\":5"));
+        assert!(serialized.contains("\"last_execution_time\":6"));
+        assert!(serialized.contains("\"first_arrival_time\":7"));
+        assert!(serialized.contains("\"sum_waiting_time\":8"));
+
+        // Deserialize back
+        let deserialized: PriceLevelStatistics = serde_json::from_str(&serialized).unwrap();
+
+        // Verify all fields are deserialized correctly
+        assert_eq!(deserialized.orders_added(), 1);
+        assert_eq!(deserialized.orders_removed(), 2);
+        assert_eq!(deserialized.orders_executed(), 3);
+        assert_eq!(deserialized.quantity_executed(), 4);
+        assert_eq!(deserialized.value_executed(), 5);
+        assert_eq!(deserialized.last_execution_time.load(Ordering::Relaxed), 6);
+        assert_eq!(deserialized.first_arrival_time.load(Ordering::Relaxed), 7);
+        assert_eq!(deserialized.sum_waiting_time.load(Ordering::Relaxed), 8);
+    }
+
+    #[test]
+    fn test_statistics_visitor_missing_fields() {
+        // Test with a partial JSON
+        let json = r#"{
+        "orders_added": 1,
+        "orders_removed": 2,
+        "orders_executed": 3
+    }"#;
+
+        // Should still deserialize correctly with default values for missing fields
+        let deserialized: PriceLevelStatistics = serde_json::from_str(json).unwrap();
+
+        assert_eq!(deserialized.orders_added(), 1);
+        assert_eq!(deserialized.orders_removed(), 2);
+        assert_eq!(deserialized.orders_executed(), 3);
+        assert_eq!(deserialized.quantity_executed(), 0);
+        assert_eq!(deserialized.value_executed(), 0);
+    }
 }

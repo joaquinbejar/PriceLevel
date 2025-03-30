@@ -11,10 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
-    orders_added: AtomicUsize,
+    pub orders_added: AtomicUsize,
 
     /// Number of orders removed
-    orders_removed: AtomicUsize,
+    pub orders_removed: AtomicUsize,
 
     /// Number of orders executed
     pub orders_executed: AtomicUsize,

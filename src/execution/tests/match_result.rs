@@ -280,7 +280,6 @@ mod tests {
         result.add_filled_order_id(OrderId::from_u64(456)); // 00000000-0000-01c8-0000-000000000000
         result.add_filled_order_id(OrderId::from_u64(789)); // 00000000-0000-0315-0000-000000000000
         result.add_filled_order_id(OrderId::from_u64(101)); // 00000000-0000-0065-0000-000000000000
-        println!("{:?}", result);
 
         // Convert to string
         let string_representation = result.to_string();
@@ -314,5 +313,89 @@ mod tests {
         // Verify
         assert!(parsed.transactions.is_empty());
         assert!(parsed.filled_order_ids.is_empty());
+    }
+
+    #[test]
+    fn test_match_result_from_str_parsing_edge_cases() {
+        // Test parsing a complete match result with all fields
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-01c8-0000-000000000000;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000000];filled_order_ids=[00000000-0000-01c8-0000-000000000000,00000000-0000-0315-0000-000000000000]";
+
+        let result = MatchResult::from_str(input).unwrap();
+
+        assert_eq!(result.order_id, OrderId::from_u64(123));
+        assert_eq!(result.remaining_quantity, 70);
+        assert!(!result.is_complete);
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.filled_order_ids.len(), 2);
+        assert_eq!(result.filled_order_ids[0], OrderId::from_u64(456));
+        assert_eq!(result.filled_order_ids[1], OrderId::from_u64(789));
+
+        // Test parsing with complex nested structures
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-01c8-0000-000000000000;price=1000;quantity=30;taker_side=BUY;timestamp=1616823000000,Transaction:transaction_id=7ca7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-007b-0000-000000000000;maker_order_id=00000000-0000-0315-0000-000000000000;price=1100;quantity=40;taker_side=BUY;timestamp=1616823000001];filled_order_ids=[00000000-0000-01c8-0000-000000000000,00000000-0000-0315-0000-000000000000]";
+
+        let result = MatchResult::from_str(input).unwrap();
+
+        assert_eq!(result.transactions.len(), 2);
+        let transaction1 = &result.transactions.as_vec()[0];
+        let transaction2 = &result.transactions.as_vec()[1];
+
+        assert_eq!(transaction1.quantity, 30);
+        assert_eq!(transaction2.quantity, 40);
+    }
+
+    #[test]
+    fn test_match_result_parsing_error_cases() {
+        // Test invalid field_name
+        let input = "MatchResult:invalid_field=value;remaining_quantity=70;is_complete=false;transactions=Transactions:[];filled_order_ids=[]";
+        let result = MatchResult::from_str(input);
+        assert!(result.is_err());
+
+        // Test bracket mismatch in transactions
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[Transaction:transaction_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-007b-0000-000000000000;filled_order_ids=[]";
+        let result = MatchResult::from_str(input);
+        assert!(result.is_err());
+
+        // Test invalid transactions format
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=NotTransactions:[];filled_order_ids=[]";
+        let result = MatchResult::from_str(input);
+        assert!(result.is_err());
+
+        // Test invalid filled_order_ids format
+        let input = "MatchResult:order_id=00000000-0000-007b-0000-000000000000;remaining_quantity=70;is_complete=false;transactions=Transactions:[];filled_order_ids=NotAnArray";
+        let result = MatchResult::from_str(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_match_result_find_fields() {
+        // Create a match result with simple field structure
+        let mut result = MatchResult::new(OrderId::from_u64(123), 100);
+        result.remaining_quantity = 50;
+        result.is_complete = false;
+
+        // Convert to string
+        let string_representation = result.to_string();
+
+        // Manually parse some fields to test the find_next_field function
+        let order_id_pos = string_representation.find("order_id=").unwrap() + "order_id=".len();
+        let semicolon_pos = string_representation[order_id_pos..].find(';').unwrap() + order_id_pos;
+        let order_id_str = &string_representation[order_id_pos..semicolon_pos];
+
+        assert_eq!(order_id_str, "00000000-0000-007b-0000-000000000000");
+
+        let remaining_pos = string_representation.find("remaining_quantity=").unwrap()
+            + "remaining_quantity=".len();
+        let semicolon_pos =
+            string_representation[remaining_pos..].find(';').unwrap() + remaining_pos;
+        let remaining_str = &string_representation[remaining_pos..semicolon_pos];
+
+        assert_eq!(remaining_str, "50");
+
+        let complete_pos =
+            string_representation.find("is_complete=").unwrap() + "is_complete=".len();
+        let semicolon_pos = string_representation[complete_pos..].find(';').unwrap() + complete_pos;
+        let complete_str = &string_representation[complete_pos..semicolon_pos];
+
+        assert_eq!(complete_str, "false");
     }
 }

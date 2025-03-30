@@ -10,7 +10,7 @@ use std::str::FromStr;
 pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
 
 /// Represents different types of limit orders
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OrderType {
     /// Standard limit order
     Standard {

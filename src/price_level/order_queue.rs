@@ -95,6 +95,30 @@ impl OrderQueue {
         temp_storage
     }
 
+    /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
+    ///
+    /// This function takes ownership of a vector of order references (wrapped in `Arc`) and constructs
+    /// a new `OrderQueue` by iteratively pushing each order into the queue. The resulting queue
+    /// maintains the insertion order of the original vector.
+    ///
+    /// # Parameters
+    ///
+    /// * `orders` - A vector of atomic reference counted (`Arc`) order instances representing
+    ///   the orders to be added to the new queue.
+    ///
+    /// # Returns
+    ///
+    /// A new `OrderQueue` instance containing all the orders from the input vector.
+    ///
+    #[allow(dead_code)]
+    pub fn from_vec(orders: Vec<Arc<OrderType>>) -> Self {
+        let queue = OrderQueue::new();
+        for order in orders {
+            queue.push(order);
+        }
+        queue
+    }
+
     /// Check if the queue is empty
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
@@ -105,6 +129,17 @@ impl OrderQueue {
             is_empty = false;
         }
         is_empty
+    }
+
+    /// Returns the number of orders currently in the queue.
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The total count of orders in the queue.
+    ///
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize {
+        self.queue.len()
     }
 }
 
