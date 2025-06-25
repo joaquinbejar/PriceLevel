@@ -1,5 +1,6 @@
-use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{BenchmarkId, Criterion};
 use pricelevel::{OrderId, OrderType, PriceLevel, Side, TimeInForce, UuidGenerator};
+use std::hint::black_box;
 use uuid::Uuid;
 
 /// Register all benchmarks for matching orders at a price level

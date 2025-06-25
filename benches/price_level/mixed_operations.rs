@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box};
+use criterion::Criterion;
 use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator};
+use std::hint::black_box;
 use uuid::Uuid;
 
 /// Register benchmarks for mixed/realistic price level operations

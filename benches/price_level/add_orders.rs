@@ -1,5 +1,6 @@
-use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{BenchmarkId, Criterion};
 use pricelevel::{OrderId, OrderType, PriceLevel, Side, TimeInForce};
+use std::hint::black_box;
 
 /// Register all benchmarks for adding orders to a price level
 pub fn register_benchmarks(c: &mut Criterion) {
