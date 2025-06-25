@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 pricelevel = { path = ".." }
-tracing = "0.1.41"
-uuid = { version = "1.16.0", features = ["v4"] }
+tracing = "0.1"
+uuid = { version = "1.17", features = ["v4"] }
