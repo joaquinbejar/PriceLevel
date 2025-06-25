@@ -1,6 +1,3 @@
-# pricelevel
-
-
  [![Dual License](https://img.shields.io/badge/license-MIT%20and%20Apache%202.0-blue)](./LICENSE)
  [![Crates.io](https://img.shields.io/crates/v/pricelevel.svg)](https://crates.io/crates/pricelevel)
  [![Downloads](https://img.shields.io/crates/d/pricelevel.svg)](https://crates.io/crates/pricelevel)
@@ -119,6 +116,7 @@ The simulation demonstrates the library's capability to handle nearly **100,000 
 The lock-free architecture enables high throughput while maintaining data consistency. The minimal difference between orders added (329,558) and the final order count (326,040) indicates efficient order processing with minimal overhead.
 
 These performance characteristics make the `pricelevel` library suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
+
 
  ## Setup Instructions
 
