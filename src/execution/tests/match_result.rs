@@ -170,7 +170,7 @@ mod tests {
         let result = match MatchResult::from_str(input) {
             Ok(r) => r,
             Err(e) => {
-                panic!("Test failed: {:?}", e);
+                panic!("Test failed: {e:?}");
             }
         };
 
@@ -240,7 +240,7 @@ mod tests {
         let parsed = match MatchResult::from_str(&string_representation) {
             Ok(r) => r,
             Err(e) => {
-                panic!("Test failed: {:?}", e);
+                panic!("Test failed: {e:?}");
             }
         };
 

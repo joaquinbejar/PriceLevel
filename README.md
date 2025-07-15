@@ -69,10 +69,11 @@
 
 ### Performance Benchmark Results
 
-The `pricelevel` library has been thoroughly tested for performance in high-frequency trading scenarios. Below are the results from a recent simulation conducted on an M4 Max processor, demonstrating the library's capability to handle intensive concurrent trading operations.
+The `pricelevel` library has been thoroughly tested for performance in high-frequency trading scenarios. Below are the results from recent simulations conducted on an M4 Max processor, demonstrating the library's capability to handle intensive concurrent trading operations.
 
-#### Simulation Parameters
+#### High-Frequency Trading Simulation
 
+##### Simulation Parameters
 - **Price Level**: 10000
 - **Duration**: 5000 ms (5 seconds)
 - **Threads**: 30 total
@@ -81,41 +82,66 @@ The `pricelevel` library has been thoroughly tested for performance in high-freq
   - 10 canceller threads (cancelling orders)
 - **Initial Orders**: 1000 orders seeded before simulation
 
-#### Performance Metrics
+##### Performance Metrics
 
 | Metric | Total Operations | Rate (per second) |
 |--------|-----------------|-------------------|
-| Orders Added | 329,558 | 65,151.94 |
-| Matches Executed | 147,398 | 29,139.84 |
-| Cancellations | 27,119 | 5,361.29 |
-| **Total Operations** | **504,075** | **99,653.07** |
+| Orders Added | 717,873 | 143,427.02 |
+| Matches Executed | 376,746 | 75,271.75 |
+| Cancellations | 227,454 | 45,444.04 |
+| **Total Operations** | **1,322,073** | **264,142.82** |
 
-#### Final State After Simulation
-
+##### Final State After Simulation
 - **Price**: 10000
-- **Visible Quantity**: 2,172,773
-- **Hidden Quantity**: 1,880,104
-- **Total Quantity**: 4,052,877
-- **Order Count**: 326,040
+- **Visible Quantity**: 4,602,379
+- **Hidden Quantity**: 4,042,945
+- **Total Quantity**: 8,645,324
+- **Order Count**: 706,258
 
-#### Price Level Statistics
-
-- **Orders Added**: 330,558
-- **Orders Removed**: 159
-- **Orders Executed**: 156,597
-- **Quantity Executed**: 441,708
-- **Value Executed**: 4,417,080,000
+##### Price Level Statistics
+- **Orders Added**: 718,873
+- **Orders Removed**: 194
+- **Orders Executed**: 403,727
+- **Quantity Executed**: 1,130,216
+- **Value Executed**: 11,302,160,000
 - **Average Execution Price**: 10,000.00
-- **Average Waiting Time**: 1,236.15 ms
-- **Time Since Last Execution**: 58 ms
+- **Average Waiting Time**: 1,791.10 ms
+- **Time Since Last Execution**: 0 ms
+
+#### Contention Pattern Analysis
+
+##### Hot Spot Contention Test
+Performance under different levels of contention targeting specific price levels:
+
+| Hot Spot % | Operations/second |
+|------------|-------------------|
+| 0% | 7,548,438.05 |
+| 25% | 7,752,860.57 |
+| 50% | 7,584,981.59 |
+| 75% | 7,267,749.39 |
+| 100% | 6,970,720.77 |
+
+##### Read/Write Ratio Test
+Performance under different read/write operation ratios:
+
+| Read % | Operations/second |
+|--------|-------------------|
+| 0% | 6,353,202.47 |
+| 25% | 34,727.89 |
+| 50% | 28,783.28 |
+| 75% | 31,936.73 |
+| 95% | 54,316.57 |
 
 #### Analysis
 
-The simulation demonstrates the library's capability to handle nearly **100,000 operations per second** with multiple concurrent threads operating on the same price level. This includes a mix of order additions, executions, and cancellations - providing a realistic simulation of a high-frequency trading environment.
+The simulation demonstrates the library's exceptional performance capabilities:
 
-The lock-free architecture enables high throughput while maintaining data consistency. The minimal difference between orders added (329,558) and the final order count (326,040) indicates efficient order processing with minimal overhead.
+- **High-Frequency Trading**: Over **264,000 operations per second** in realistic mixed workloads
+- **Hot Spot Performance**: Up to **7.75 million operations per second** under optimal conditions
+- **Write-Heavy Workloads**: Over **6.3 million operations per second** for pure write operations
+- **Lock-Free Architecture**: Maintains high throughput with minimal contention overhead
 
-These performance characteristics make the `pricelevel` library suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
+The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 
 
  ## Setup Instructions

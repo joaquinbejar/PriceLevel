@@ -5,51 +5,60 @@ mod tests {
     use crate::price_level::level::{PriceLevel, PriceLevelData};
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
     use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tracing::error;
     use uuid::Uuid;
 
+    // Shared timestamp counter for all order creation functions to ensure proper ordering
+    static TIMESTAMP_COUNTER: AtomicU64 = AtomicU64::new(1616823000000);
+
     // Helper functions to create different order types for testing
-    fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    pub fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let order_id = OrderId::from_u64(id);
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
-            id: OrderId::from_u64(id),
+            id: order_id,
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
         }
     }
 
     fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::IcebergOrder {
             id: OrderId::from_u64(id),
             price,
             visible_quantity: visible,
             hidden_quantity: hidden,
             side: Side::Sell,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
         }
     }
 
     fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PostOnly {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
         }
     }
 
     fn create_trailing_stop_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::TrailingStop {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Sell,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
             last_reference_price: price + 100,
@@ -57,12 +66,13 @@ mod tests {
     }
 
     fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PeggedOrder {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
             reference_price_type: PegReferenceType::BestAsk,
@@ -70,12 +80,13 @@ mod tests {
     }
 
     fn create_market_to_limit_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::MarketToLimit {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
         }
     }
@@ -89,13 +100,14 @@ mod tests {
         auto_replenish: bool,
         replenish_amount: Option<u64>,
     ) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::ReserveOrder {
             id: OrderId::from_u64(id),
             price,
             visible_quantity: visible,
             hidden_quantity: hidden,
             side: Side::Sell,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: threshold,
             replenish_amount,
@@ -104,34 +116,37 @@ mod tests {
     }
 
     fn create_fill_or_kill_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Fok,
         }
     }
 
     fn create_immediate_or_cancel_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Ioc,
         }
     }
 
     fn create_good_till_date_order(id: u64, price: u64, quantity: u64, expiry: u64) -> OrderType {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtd(expiry),
         }
     }
@@ -1303,7 +1318,7 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         price_level.add_order(create_standard_order(1, 10000, 100));
 
-        let display_str = format!("{}", price_level);
+        let display_str = format!("{price_level}");
 
         // Verify the format
         assert!(display_str.starts_with("PriceLevel:price=10000;"));
@@ -1320,11 +1335,11 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         price_level.add_order(create_standard_order(1, 10000, 50));
         price_level.add_order(create_standard_order(2, 10000, 75));
-        price_level.add_order(create_good_till_date_order(1, 10000, 100, 1617000000000));
-        price_level.add_order(create_reserve_order(1, 10000, 100, 100, 20, true, None));
-        price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
+        price_level.add_order(create_good_till_date_order(3, 10000, 100, 1617000000000));
+        price_level.add_order(create_reserve_order(4, 10000, 100, 100, 20, true, None));
+        price_level.add_order(create_iceberg_order(5, 10000, 50, 100));
 
-        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000000;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0001-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0001-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000000;time_in_force=GTC]";
+        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000001;time_in_force=GTC,Standard:id=00000000-0000-0003-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000002;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0004-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000003;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0005-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000004;time_in_force=GTC]";
         let result = PriceLevel::from_str(input);
 
         if let Err(ref err) = result {

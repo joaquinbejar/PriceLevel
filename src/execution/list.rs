@@ -61,7 +61,7 @@ impl fmt::Display for TransactionList {
             if i > 0 {
                 write!(f, ",")?;
             }
-            write!(f, "{}", transaction)?;
+            write!(f, "{transaction}")?;
         }
 
         write!(f, "]")

@@ -862,7 +862,7 @@ impl fmt::Display for OrderType {
                     id.0,
                     price,
                     quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force
                 )
@@ -883,7 +883,7 @@ impl fmt::Display for OrderType {
                     price,
                     visible_quantity,
                     hidden_quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force
                 )
@@ -902,7 +902,7 @@ impl fmt::Display for OrderType {
                     id.0,
                     price,
                     quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force
                 )
@@ -923,7 +923,7 @@ impl fmt::Display for OrderType {
                     id.0,
                     price,
                     quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force,
                     trail_amount,
@@ -946,7 +946,7 @@ impl fmt::Display for OrderType {
                     id.0,
                     price,
                     quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force,
                     reference_price_offset,
@@ -967,7 +967,7 @@ impl fmt::Display for OrderType {
                     id.0,
                     price,
                     quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force
                 )
@@ -991,7 +991,7 @@ impl fmt::Display for OrderType {
                     price,
                     visible_quantity,
                     hidden_quantity,
-                    format!("{:?}", side).to_uppercase(),
+                    format!("{side:?}").to_uppercase(),
                     timestamp,
                     time_in_force,
                     replenish_threshold,

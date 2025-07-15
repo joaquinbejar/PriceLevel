@@ -120,7 +120,7 @@ mod tests_order_update {
         assert!(result.is_err());
         match result.unwrap_err() {
             PriceLevelError::InvalidFormat => {}
-            err => panic!("Expected InvalidFormat error, got {:?}", err),
+            err => panic!("Expected InvalidFormat error, got {err:?}"),
         }
     }
 
@@ -134,7 +134,7 @@ mod tests_order_update {
             PriceLevelError::UnknownOrderType(type_name) => {
                 assert_eq!(type_name, "Unknown");
             }
-            err => panic!("Expected UnknownOrderType error, got {:?}", err),
+            err => panic!("Expected UnknownOrderType error, got {err:?}"),
         }
     }
 
@@ -148,7 +148,7 @@ mod tests_order_update {
             PriceLevelError::MissingField(field) => {
                 assert_eq!(field, "new_price");
             }
-            err => panic!("Expected MissingField error, got {:?}", err),
+            err => panic!("Expected MissingField error, got {err:?}"),
         }
     }
 
@@ -163,7 +163,7 @@ mod tests_order_update {
                 assert_eq!(field, "order_id");
                 assert_eq!(value, "abc");
             }
-            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+            err => panic!("Expected InvalidFieldValue error, got {err:?}"),
         }
     }
 
@@ -274,7 +274,7 @@ mod tests_order_update {
             let parsed_update = OrderUpdate::from_str(&string_representation).unwrap();
 
             // Compare the debug representation since OrderUpdate doesn't implement PartialEq
-            assert_eq!(format!("{:?}", update), format!("{:?}", parsed_update));
+            assert_eq!(format!("{update:?}"), format!("{:?}", parsed_update));
         }
     }
 

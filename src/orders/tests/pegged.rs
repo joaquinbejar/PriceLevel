@@ -77,7 +77,7 @@ mod tests {
         {
             assert_eq!(actual_message, "InvalidType");
         } else {
-            panic!("Expected PriceLevelError::ParseError, got {:?}", error);
+            panic!("Expected PriceLevelError::ParseError, got {error:?}");
         }
 
         let error = PegReferenceType::from_str("").unwrap_err();
@@ -87,7 +87,7 @@ mod tests {
         {
             assert_eq!(actual_message, "");
         } else {
-            panic!("Expected PriceLevelError::ParseError, got {:?}", error);
+            panic!("Expected PriceLevelError::ParseError, got {error:?}");
         }
 
         let error = PegReferenceType::from_str("Best").unwrap_err();
@@ -97,7 +97,7 @@ mod tests {
         {
             assert_eq!(actual_message, "Best");
         } else {
-            panic!("Expected PriceLevelError::ParseError, got {:?}", error);
+            panic!("Expected PriceLevelError::ParseError, got {error:?}");
         }
     }
 

@@ -66,17 +66,17 @@ pub enum PriceLevelError {
 impl Display for PriceLevelError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            PriceLevelError::ParseError { message } => write!(f, "{}", message),
+            PriceLevelError::ParseError { message } => write!(f, "{message}"),
             PriceLevelError::InvalidFormat => write!(f, "Invalid format"),
             PriceLevelError::UnknownOrderType(order_type) => {
-                write!(f, "Unknown order type: {}", order_type)
+                write!(f, "Unknown order type: {order_type}")
             }
-            PriceLevelError::MissingField(field) => write!(f, "Missing field: {}", field),
+            PriceLevelError::MissingField(field) => write!(f, "Missing field: {field}"),
             PriceLevelError::InvalidFieldValue { field, value } => {
-                write!(f, "Invalid value for field {}: {}", field, value)
+                write!(f, "Invalid value for field {field}: {value}")
             }
             PriceLevelError::InvalidOperation { message } => {
-                write!(f, "Invalid operation: {}", message)
+                write!(f, "Invalid operation: {message}")
             }
         }
     }
@@ -85,17 +85,17 @@ impl Display for PriceLevelError {
 impl Debug for PriceLevelError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            PriceLevelError::ParseError { message } => write!(f, "{}", message),
+            PriceLevelError::ParseError { message } => write!(f, "{message}"),
             PriceLevelError::InvalidFormat => write!(f, "Invalid format"),
             PriceLevelError::UnknownOrderType(order_type) => {
-                write!(f, "Unknown order type: {}", order_type)
+                write!(f, "Unknown order type: {order_type}")
             }
-            PriceLevelError::MissingField(field) => write!(f, "Missing field: {}", field),
+            PriceLevelError::MissingField(field) => write!(f, "Missing field: {field}"),
             PriceLevelError::InvalidFieldValue { field, value } => {
-                write!(f, "Invalid value for field {}: {}", field, value)
+                write!(f, "Invalid value for field {field}: {value}")
             }
             PriceLevelError::InvalidOperation { message } => {
-                write!(f, "Invalid operation: {}", message)
+                write!(f, "Invalid operation: {message}")
             }
         }
     }

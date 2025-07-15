@@ -218,7 +218,7 @@ mod tests {
         // If it fails, assert that it's due to the expected reason
         if result.is_err() {
             let err = result.unwrap_err();
-            let err_string = format!("{:?}", err);
+            let err_string = format!("{err:?}");
             assert!(err_string.contains("Invalid") || err_string.contains("taker_order_id"));
         }
     }

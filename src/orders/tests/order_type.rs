@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn test_display_standard_order() {
         let order = create_standard_order();
-        let display_str = format!("{}", order);
+        let display_str = format!("{order}");
 
         info!("{}", display_str);
         assert!(display_str.starts_with("Standard:"));
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_display_iceberg_order() {
         let order = create_iceberg_order();
-        let display_str = format!("{}", order);
+        let display_str = format!("{order}");
 
         assert!(display_str.starts_with("IcebergOrder:"));
         assert!(display_str.contains("id=00000000-0000-007c-0000-000000000000"));
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn test_display_post_only_order() {
         let order = create_post_only_order();
-        let display_str = format!("{}", order);
+        let display_str = format!("{order}");
 
         // Assuming the Display implementation for PostOnly is completed
         assert!(
@@ -607,7 +607,7 @@ mod tests {
         ];
 
         for order in orders {
-            let display_str = format!("{}", order);
+            let display_str = format!("{order}");
 
             // Either properly implemented or properly indicates it's not implemented
             assert!(
@@ -1209,7 +1209,7 @@ mod from_str_specific_tests {
                 assert_eq!(field, "reference_price_type");
                 assert_eq!(value, "InvalidType");
             }
-            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+            err => panic!("Expected InvalidFieldValue error, got {err:?}"),
         }
     }
 
@@ -1224,7 +1224,7 @@ mod from_str_specific_tests {
                 assert_eq!(field, "auto_replenish");
                 assert_eq!(value, "invalid");
             }
-            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+            err => panic!("Expected InvalidFieldValue error, got {err:?}"),
         }
     }
 

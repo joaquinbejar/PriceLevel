@@ -58,7 +58,7 @@ impl FromStr for OrderStatus {
             "REJECTED" => Ok(OrderStatus::Rejected),
             "EXPIRED" => Ok(OrderStatus::Expired),
             _ => Err(PriceLevelError::ParseError {
-                message: format!("Invalid OrderStatus: {}", s),
+                message: format!("Invalid OrderStatus: {s}"),
             }),
         }
     }

@@ -72,7 +72,7 @@ mod tests {
             PriceLevelError::MissingField(field) => {
                 assert_eq!(field, "quantity");
             }
-            err => panic!("Expected MissingField error, got {:?}", err),
+            err => panic!("Expected MissingField error, got {err:?}"),
         }
     }
 
@@ -88,7 +88,7 @@ mod tests {
                 assert_eq!(field, "transaction_id");
                 assert_eq!(value, "abc");
             }
-            err => panic!("Expected InvalidFieldValue error, got {:?}", err),
+            err => panic!("Expected InvalidFieldValue error, got {err:?}"),
         }
 
         // Invalid taker_order_id
@@ -168,17 +168,12 @@ mod tests {
         assert_eq!(transaction.taker_side, Side::Buy);
 
         // The timestamp should be approximately now
-        let timestamp_diff = if transaction.timestamp > now {
-            transaction.timestamp - now
-        } else {
-            now - transaction.timestamp
-        };
+        let timestamp_diff = transaction.timestamp.abs_diff(now);
 
         // Timestamp should be within 100ms of current time
         assert!(
             timestamp_diff < 100,
-            "Timestamp difference is too large: {}",
-            timestamp_diff
+            "Timestamp difference is too large: {timestamp_diff}"
         );
     }
 

@@ -161,11 +161,7 @@ impl std::fmt::Display for OrderUpdate {
                 order_id,
                 new_price,
             } => {
-                write!(
-                    f,
-                    "UpdatePrice:order_id={};new_price={}",
-                    order_id, new_price
-                )
+                write!(f, "UpdatePrice:order_id={order_id};new_price={new_price}")
             }
             OrderUpdate::UpdateQuantity {
                 order_id,
@@ -173,8 +169,7 @@ impl std::fmt::Display for OrderUpdate {
             } => {
                 write!(
                     f,
-                    "UpdateQuantity:order_id={};new_quantity={}",
-                    order_id, new_quantity
+                    "UpdateQuantity:order_id={order_id};new_quantity={new_quantity}"
                 )
             }
             OrderUpdate::UpdatePriceAndQuantity {
@@ -184,12 +179,11 @@ impl std::fmt::Display for OrderUpdate {
             } => {
                 write!(
                     f,
-                    "UpdatePriceAndQuantity:order_id={};new_price={};new_quantity={}",
-                    order_id, new_price, new_quantity
+                    "UpdatePriceAndQuantity:order_id={order_id};new_price={new_price};new_quantity={new_quantity}"
                 )
             }
             OrderUpdate::Cancel { order_id } => {
-                write!(f, "Cancel:order_id={}", order_id)
+                write!(f, "Cancel:order_id={order_id}")
             }
             OrderUpdate::Replace {
                 order_id,
@@ -199,8 +193,7 @@ impl std::fmt::Display for OrderUpdate {
             } => {
                 write!(
                     f,
-                    "Replace:order_id={};price={};quantity={};side={}",
-                    order_id, price, quantity, side
+                    "Replace:order_id={order_id};price={price};quantity={quantity};side={side}"
                 )
             }
         }

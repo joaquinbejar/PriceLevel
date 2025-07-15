@@ -41,8 +41,7 @@ mod tests_order_status {
         ] {
             assert!(
                 !(status.is_active() && status.is_terminated()),
-                "{:?} should not be both active and terminated",
-                status
+                "{status:?} should not be both active and terminated"
             );
         }
     }
@@ -101,7 +100,7 @@ mod tests_order_status {
         if let crate::errors::PriceLevelError::ParseError { message } = error {
             assert!(message.contains("Invalid OrderStatus: INVALID"));
         } else {
-            panic!("Expected ParseError, got {:?}", error);
+            panic!("Expected ParseError, got {error:?}");
         }
     }
 

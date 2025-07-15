@@ -181,7 +181,7 @@ mod tests_orderid {
     fn test_display() {
         let uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
         let id = OrderId::from_uuid(uuid);
-        assert_eq!(format!("{}", id), "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(format!("{id}"), "550e8400-e29b-41d4-a716-446655440000");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "pricelevel"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 authors = ["Joaquin Bejar <jb@taunais.com>"]
 description = "A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns."
@@ -34,6 +34,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 crossbeam = "0.8"
 uuid = { version = "1.17", features = ["v4", "v5", "serde"] }
+dashmap = "6.1.0"
 
 
 [dev-dependencies]
