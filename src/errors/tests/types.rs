@@ -70,7 +70,7 @@ mod tests {
         ];
 
         for error in &errors {
-            assert_eq!(format!("{:?}", error), error.to_string());
+            assert_eq!(format!("{error:?}"), error.to_string());
         }
     }
 

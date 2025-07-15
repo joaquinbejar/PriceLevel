@@ -9,13 +9,18 @@ mod tests {
     use uuid::Uuid;
 
     // Helper functions to create different order types for testing
-    fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    pub fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TIMESTAMP_COUNTER: AtomicU64 = AtomicU64::new(1616823000000);
+
+        let order_id = OrderId::from_u64(id);
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
-            id: OrderId::from_u64(id),
+            id: order_id,
             price,
             quantity,
             side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp,
             time_in_force: TimeInForce::Gtc,
         }
     }

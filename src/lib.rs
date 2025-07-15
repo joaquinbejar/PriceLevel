@@ -76,35 +76,35 @@
 //!
 //! | Metric | Total Operations | Rate (per second) |
 //! |--------|-----------------|-------------------|
-//! | Orders Added | 329,558 | 65,151.94 |
-//! | Matches Executed | 147,398 | 29,139.84 |
-//! | Cancellations | 27,119 | 5,361.29 |
-//! | **Total Operations** | **504,075** | **99,653.07** |
+//! | Orders Added | 721,364 | 144,144.65 |
+//! | Matches Executed | 377,856 | 75,504.07 |
+//! | Cancellations | 316,237 | 63,191.22 |
+//! | **Total Operations** | **1,415,457** | **282,839.94** |
 //!
 //! ### Final State After Simulation
 //!
 //! - **Price**: 10000
-//! - **Visible Quantity**: 2,172,773
-//! - **Hidden Quantity**: 1,880,104
-//! - **Total Quantity**: 4,052,877
-//! - **Order Count**: 326,040
+//! - **Visible Quantity**: 4,625,720
+//! - **Hidden Quantity**: 4,063,179
+//! - **Total Quantity**: 8,688,899
+//! - **Order Count**: 709,776
 //!
 //! ### Price Level Statistics
 //!
-//! - **Orders Added**: 330,558
-//! - **Orders Removed**: 159
-//! - **Orders Executed**: 156,597
-//! - **Quantity Executed**: 441,708
-//! - **Value Executed**: 4,417,080,000
+//! - **Orders Added**: 722,364
+//! - **Orders Removed**: 237
+//! - **Orders Executed**: 404,826
+//! - **Quantity Executed**: 1,133,545
+//! - **Value Executed**: 11,335,450,000
 //! - **Average Execution Price**: 10,000.00
-//! - **Average Waiting Time**: 1,236.15 ms
-//! - **Time Since Last Execution**: 58 ms
+//! - **Average Waiting Time**: 1,808.30 ms
+//! - **Time Since Last Execution**: 1 ms
 //!
 //! ### Analysis
 //!
-//! The simulation demonstrates the library's capability to handle nearly **100,000 operations per second** with multiple concurrent threads operating on the same price level. This includes a mix of order additions, executions, and cancellations - providing a realistic simulation of a high-frequency trading environment.
+//! The simulation demonstrates the library's capability to handle over **280,000 operations per second** with multiple concurrent threads operating on the same price level. This includes a mix of order additions, executions, and cancellations - providing a realistic simulation of a high-frequency trading environment.
 //!
-//! The lock-free architecture enables high throughput while maintaining data consistency. The minimal difference between orders added (329,558) and the final order count (326,040) indicates efficient order processing with minimal overhead.
+//! The lock-free architecture enables high throughput while maintaining data consistency. The significant number of total operations processed demonstrates efficient order processing with minimal overhead.
 //!
 //! These performance characteristics make the `pricelevel` library suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 //!

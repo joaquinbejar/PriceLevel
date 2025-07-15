@@ -87,7 +87,7 @@ impl fmt::Display for MatchResult {
             if i > 0 {
                 write!(f, ",")?;
             }
-            write!(f, "{}", order_id)?;
+            write!(f, "{order_id}")?;
         }
         write!(f, "]")
     }

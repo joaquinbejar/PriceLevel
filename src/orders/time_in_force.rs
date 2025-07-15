@@ -67,7 +67,7 @@ impl fmt::Display for TimeInForce {
             TimeInForce::Gtc => write!(f, "GTC"),
             TimeInForce::Ioc => write!(f, "IOC"),
             TimeInForce::Fok => write!(f, "FOK"),
-            TimeInForce::Gtd(expiry) => write!(f, "GTD-{}", expiry),
+            TimeInForce::Gtd(expiry) => write!(f, "GTD-{expiry}"),
             TimeInForce::Day => write!(f, "DAY"),
         }
     }
@@ -86,7 +86,7 @@ impl FromStr for TimeInForce {
                 let parts: Vec<&str> = s.split('-').collect();
                 if parts.len() != 2 {
                     return Err(PriceLevelError::ParseError {
-                        message: format!("Invalid GTD format: {}", s),
+                        message: format!("Invalid GTD format: {s}"),
                     });
                 }
 
@@ -98,7 +98,7 @@ impl FromStr for TimeInForce {
                 }
             }
             _ => Err(PriceLevelError::ParseError {
-                message: format!("Invalid TimeInForce: {}", s),
+                message: format!("Invalid TimeInForce: {s}"),
             }),
         }
     }

@@ -1,10 +1,12 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{OrderId, OrderType};
 use crossbeam::queue::SegQueue;
+use dashmap::DashMap;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::fmt::Display;
 use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -12,87 +14,59 @@ use std::sync::Arc;
 /// A thread-safe queue of orders with specialized operations
 #[derive(Debug)]
 pub struct OrderQueue {
-    /// The underlying lock-free queue from crossbeam
-    queue: SegQueue<Arc<OrderType>>,
+    /// A map of order IDs to orders for quick lookups
+    orders: DashMap<OrderId, Arc<OrderType>>,
+    /// A queue of order IDs to maintain FIFO order
+    order_ids: SegQueue<OrderId>,
 }
 
 impl OrderQueue {
     /// Create a new empty order queue
     pub fn new() -> Self {
         Self {
-            queue: SegQueue::new(),
+            orders: DashMap::new(),
+            order_ids: SegQueue::new(),
         }
     }
 
     /// Add an order to the queue
     pub fn push(&self, order: Arc<OrderType>) {
-        self.queue.push(order);
+        let order_id = order.id();
+        self.orders.insert(order_id, order);
+        self.order_ids.push(order_id);
     }
 
     /// Attempt to pop an order from the queue
     pub fn pop(&self) -> Option<Arc<OrderType>> {
-        self.queue.pop()
+        loop {
+            if let Some(order_id) = self.order_ids.pop() {
+                // If the order was removed, pop will return None, but the ID was in the queue.
+                // In this case, we loop and try to get the next one.
+                if let Some((_, order)) = self.orders.remove(&order_id) {
+                    return Some(order);
+                }
+            } else {
+                return None; // Queue is empty
+            }
+        }
     }
 
-    /// Search for an order with the given ID
-    /// Note: This is an O(n) operation that will recreate the queue
+    /// Search for an order with the given ID. O(1) operation.
     pub fn find(&self, order_id: OrderId) -> Option<Arc<OrderType>> {
-        let mut temp_storage = Vec::new();
-        let mut found_order = None;
-
-        // Pop all items from the queue
-        while let Some(order) = self.queue.pop() {
-            if order.id() == order_id {
-                found_order = Some(order.clone());
-            }
-            temp_storage.push(order);
-        }
-
-        // Push back all orders
-        for order in temp_storage {
-            self.queue.push(order);
-        }
-
-        found_order
+        self.orders.get(&order_id).map(|o| o.value().clone())
     }
 
     /// Remove an order with the given ID
-    /// Returns the removed order if found
+    /// Returns the removed order if found. O(1) for the map, but the ID remains in the queue.
     pub fn remove(&self, order_id: OrderId) -> Option<Arc<OrderType>> {
-        let mut temp_storage = Vec::new();
-        let mut removed_order = None;
-
-        // Pop all items from the queue
-        while let Some(order) = self.queue.pop() {
-            if order.id() == order_id {
-                removed_order = Some(order);
-            } else {
-                temp_storage.push(order);
-            }
-        }
-
-        // Push back the orders we want to keep
-        for order in temp_storage {
-            self.queue.push(order);
-        }
-
-        removed_order
+        self.orders.remove(&order_id).map(|(_, order)| order)
     }
 
     /// Convert the queue to a vector (for snapshots)
-    /// Note: This is a destructive operation that will recreate the queue
     pub fn to_vec(&self) -> Vec<Arc<OrderType>> {
-        let mut temp_storage = Vec::new();
-
-        while let Some(order) = self.queue.pop() {
-            temp_storage.push(order);
-        }
-
-        for order in &temp_storage {
-            self.queue.push(order.clone());
-        }
-
-        temp_storage
+        let mut orders: Vec<Arc<OrderType>> = self.orders.iter().map(|o| o.value().clone()).collect();
+        orders.sort_by_key(|o| o.timestamp());
+        orders
     }
 
     /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
@@ -122,13 +96,7 @@ impl OrderQueue {
     /// Check if the queue is empty
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        // This is a heuristic and not guaranteed to be accurate in a concurrent environment
-        let mut is_empty = true;
-        if let Some(order) = self.queue.pop() {
-            self.queue.push(order);
-            is_empty = false;
-        }
-        is_empty
+        self.orders.is_empty()
     }
 
     /// Returns the number of orders currently in the queue.
@@ -137,9 +105,8 @@ impl OrderQueue {
     ///
     /// * `usize` - The total count of orders in the queue.
     ///
-    #[allow(dead_code)]
-    pub(crate) fn len(&self) -> usize {
-        self.queue.len()
+    pub fn len(&self) -> usize {
+        self.orders.len()
     }
 }
 
@@ -148,100 +115,39 @@ impl Default for OrderQueue {
         Self::new()
     }
 }
-
-/// Serializable representation of OrderQueue for easier serialization/deserialization
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OrderQueueData {
-    /// Orders in the queue
-    pub orders: Vec<OrderType>,
-}
-
-impl From<&OrderQueue> for OrderQueueData {
-    fn from(queue: &OrderQueue) -> Self {
-        Self {
-            orders: queue
-                .to_vec()
-                .into_iter()
-                .map(|order_arc| (*order_arc))
-                .collect(),
+// Implement serialization for OrderQueue
+impl Serialize for OrderQueue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.len()))?;
+        for order_entry in self.orders.iter() {
+            seq.serialize_element(order_entry.value().as_ref())?;
         }
-    }
-}
-
-impl fmt::Display for OrderQueue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let orders = self.to_vec();
-
-        write!(f, "OrderQueue:orders=[")?;
-
-        for (idx, order) in orders.iter().enumerate() {
-            if idx > 0 {
-                write!(f, ",")?;
-            }
-            write!(f, "{}", order)?;
-        }
-
-        write!(f, "]")
+        seq.end()
     }
 }
 
 impl FromStr for OrderQueue {
     type Err = PriceLevelError;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Check if the string starts with "OrderQueue:orders=["
-        if !s.starts_with("OrderQueue:orders=[") {
-            return Err(PriceLevelError::InvalidFormat);
+        if !s.starts_with("OrderQueue:orders=[") || !s.ends_with(']') {
+            return Err(PriceLevelError::ParseError {
+                message: "Invalid format".to_string(),
+            });
         }
 
-        // Extract the orders content between the brackets
-        let orders_start = s.find('[').ok_or(PriceLevelError::InvalidFormat)?;
-        let orders_end = s.rfind(']').ok_or(PriceLevelError::InvalidFormat)?;
-
-        if orders_start >= orders_end {
-            return Err(PriceLevelError::InvalidFormat);
-        }
-
-        let orders_content = &s[orders_start + 1..orders_end];
-
-        // Create a new queue
+        let content = &s["OrderQueue:orders=[".len()..s.len() - 1];
         let queue = OrderQueue::new();
 
-        // Split the orders content by commas and parse each order
-        if !orders_content.is_empty() {
-            // We need to be careful with splitting because order strings might contain commas inside
-            // For simplicity, we'll use a basic split but in a more complex scenario
-            // you might need a more sophisticated parser
-            let mut current_order = String::new();
-            let mut bracket_depth = 0;
-
-            for c in orders_content.chars() {
-                match c {
-                    '[' => {
-                        bracket_depth += 1;
-                        current_order.push(c);
+        if !content.is_empty() {
+            for order_str in content.split(',') {
+                let order = OrderType::from_str(order_str).map_err(|e| {
+                    PriceLevelError::ParseError {
+                        message: format!("Order parse error: {}", e),
                     }
-                    ']' => {
-                        bracket_depth -= 1;
-                        current_order.push(c);
-                    }
-                    ',' if bracket_depth == 0 => {
-                        // End of an order
-                        if !current_order.is_empty() {
-                            let order = OrderType::from_str(&current_order)
-                                .map_err(|_| PriceLevelError::InvalidFormat)?;
-                            queue.push(Arc::new(order));
-                            current_order.clear();
-                        }
-                    }
-                    _ => current_order.push(c),
-                }
-            }
-
-            // Don't forget to process the last order
-            if !current_order.is_empty() {
-                let order = OrderType::from_str(&current_order)
-                    .map_err(|_| PriceLevelError::InvalidFormat)?;
+                })?;
                 queue.push(Arc::new(order));
             }
         }
@@ -250,24 +156,10 @@ impl FromStr for OrderQueue {
     }
 }
 
-// Implement serialization for OrderQueue
-impl Serialize for OrderQueue {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Convert to a serializable representation
-        let data: OrderQueueData = self.into();
-
-        // Option 1: Serialize as a sequence of orders
-        let mut seq = serializer.serialize_seq(Some(data.orders.len()))?;
-        for order in data.orders {
-            seq.serialize_element(&order)?;
-        }
-        seq.end()
-
-        // Option 2: Serialize as a structure with an orders field
-        // data.serialize(serializer)
+impl Display for OrderQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let orders_str: Vec<String> = self.to_vec().iter().map(|o| o.to_string()).collect();
+        write!(f, "OrderQueue:orders=[{}]", orders_str.join(","))
     }
 }
 

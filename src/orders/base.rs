@@ -76,7 +76,7 @@ impl FromStr for OrderId {
         match Uuid::from_str(s) {
             Ok(id) => Ok(OrderId(id)),
             Err(e) => Err(PriceLevelError::ParseError {
-                message: format!("Failed to parse OrderId: {}", e),
+                message: format!("Failed to parse OrderId: {e}"),
             }),
         }
     }
