@@ -1,7 +1,5 @@
 //! Core price level implementation
 
-use std::fmt::Display;
-use std::str::FromStr;
 use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, Transaction};
@@ -9,6 +7,8 @@ use crate::orders::{OrderId, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
+use std::str::FromStr;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -487,9 +487,13 @@ impl FromStr for PriceLevel {
         let remaining_content: Cow<str>;
 
         if let Some(orders_start) = content.find("orders=[") {
-            let orders_end = content[orders_start..].find(']').ok_or_else(|| PriceLevelError::ParseError {
-                message: "Invalid format: unclosed orders bracket".to_string(),
-            })? + orders_start;
+            let orders_end =
+                content[orders_start..]
+                    .find(']')
+                    .ok_or_else(|| PriceLevelError::ParseError {
+                        message: "Invalid format: unclosed orders bracket".to_string(),
+                    })?
+                    + orders_start;
 
             let orders_str = &content[orders_start + "orders=[".len()..orders_end];
             parts.insert("orders", orders_str);
@@ -528,20 +532,24 @@ impl FromStr for PriceLevel {
                         ')' | ']' => bracket_level -= 1,
                         ',' if bracket_level == 0 => {
                             let order_str = &orders_part[last_split..i];
-                            let order = OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
-                                message: format!("Order parse error: {}", e),
+                            let order = OrderType::from_str(order_str).map_err(|e| {
+                                PriceLevelError::ParseError {
+                                    message: format!("Order parse error: {e}"),
+                                }
                             })?;
                             price_level.add_order(order);
                             last_split = i + 1;
                         }
-                        _ => {},
+                        _ => {}
                     }
                 }
 
                 let order_str = &orders_part[last_split..];
                 if !order_str.is_empty() {
-                    let order = OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
-                        message: format!("Order parse error: {}", e),
+                    let order = OrderType::from_str(order_str).map_err(|e| {
+                        PriceLevelError::ParseError {
+                            message: format!("Order parse error: {e}"),
+                        }
                     })?;
                     price_level.add_order(order);
                 }

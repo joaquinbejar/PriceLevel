@@ -151,7 +151,7 @@ mod tests {
             Ok(q) => q,
             Err(e) => {
                 info!("Parse error: {:?}", e);
-                panic!("Failed to parse: {}", string_rep);
+                panic!("Failed to parse: {string_rep}");
             }
         };
 
@@ -183,7 +183,7 @@ mod tests {
         // Test with a complex order string format
         let complex_order = "Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000000;time_in_force=GTD-1617000000000";
 
-        let input = format!("OrderQueue:orders=[{}]", complex_order);
+        let input = format!("OrderQueue:orders=[{complex_order}]");
         let queue = OrderQueue::from_str(&input).unwrap();
 
         assert_eq!(queue.len(), 1);

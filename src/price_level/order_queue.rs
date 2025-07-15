@@ -64,7 +64,8 @@ impl OrderQueue {
 
     /// Convert the queue to a vector (for snapshots)
     pub fn to_vec(&self) -> Vec<Arc<OrderType>> {
-        let mut orders: Vec<Arc<OrderType>> = self.orders.iter().map(|o| o.value().clone()).collect();
+        let mut orders: Vec<Arc<OrderType>> =
+            self.orders.iter().map(|o| o.value().clone()).collect();
         orders.sort_by_key(|o| o.timestamp());
         orders
     }
@@ -143,11 +144,10 @@ impl FromStr for OrderQueue {
 
         if !content.is_empty() {
             for order_str in content.split(',') {
-                let order = OrderType::from_str(order_str).map_err(|e| {
-                    PriceLevelError::ParseError {
-                        message: format!("Order parse error: {}", e),
-                    }
-                })?;
+                let order =
+                    OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
+                        message: format!("Order parse error: {e}"),
+                    })?;
                 queue.push(Arc::new(order));
             }
         }
