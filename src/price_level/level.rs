@@ -521,38 +521,37 @@ impl FromStr for PriceLevel {
 
         let price_level = PriceLevel::new(price);
 
-        if let Some(orders_part) = parts.get("orders") {
-            if !orders_part.is_empty() {
-                let mut bracket_level = 0;
-                let mut last_split = 0;
+        if let Some(orders_part) = parts.get("orders")
+            && !orders_part.is_empty()
+        {
+            let mut bracket_level = 0;
+            let mut last_split = 0;
 
-                for (i, c) in orders_part.char_indices() {
-                    match c {
-                        '(' | '[' => bracket_level += 1,
-                        ')' | ']' => bracket_level -= 1,
-                        ',' if bracket_level == 0 => {
-                            let order_str = &orders_part[last_split..i];
-                            let order = OrderType::from_str(order_str).map_err(|e| {
-                                PriceLevelError::ParseError {
-                                    message: format!("Order parse error: {e}"),
-                                }
-                            })?;
-                            price_level.add_order(order);
-                            last_split = i + 1;
-                        }
-                        _ => {}
+            for (i, c) in orders_part.char_indices() {
+                match c {
+                    '(' | '[' => bracket_level += 1,
+                    ')' | ']' => bracket_level -= 1,
+                    ',' if bracket_level == 0 => {
+                        let order_str = &orders_part[last_split..i];
+                        let order = OrderType::from_str(order_str).map_err(|e| {
+                            PriceLevelError::ParseError {
+                                message: format!("Order parse error: {e}"),
+                            }
+                        })?;
+                        price_level.add_order(order);
+                        last_split = i + 1;
                     }
+                    _ => {}
                 }
+            }
 
-                let order_str = &orders_part[last_split..];
-                if !order_str.is_empty() {
-                    let order = OrderType::from_str(order_str).map_err(|e| {
-                        PriceLevelError::ParseError {
-                            message: format!("Order parse error: {e}"),
-                        }
+            let order_str = &orders_part[last_split..];
+            if !order_str.is_empty() {
+                let order =
+                    OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
+                        message: format!("Order parse error: {e}"),
                     })?;
-                    price_level.add_order(order);
-                }
+                price_level.add_order(order);
             }
         }
 
