@@ -242,7 +242,7 @@ fn measure_hot_spot_contention(
 
 /// Create a standard limit order for testing
 #[allow(dead_code)]
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
@@ -250,5 +250,6 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
         side: Side::Buy,
         timestamp: 1616823000000,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }

@@ -313,7 +313,7 @@ fn setup_initial_orders(price_level: &PriceLevel, count: u64) {
 }
 
 // Helper function to create a standard order
-fn create_standard_order(id: u64) -> OrderType {
+fn create_standard_order(id: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price: PRICE,
@@ -321,11 +321,12 @@ fn create_standard_order(id: u64) -> OrderType {
         side: Side::Buy,
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 // Helper function to create an iceberg order
-fn create_iceberg_order(id: u64) -> OrderType {
+fn create_iceberg_order(id: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: OrderId::from_u64(id),
         price: PRICE,
@@ -334,11 +335,12 @@ fn create_iceberg_order(id: u64) -> OrderType {
         side: Side::Buy,
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 // Helper function to create a post-only order
-fn create_post_only_order(id: u64) -> OrderType {
+fn create_post_only_order(id: u64) -> OrderType<()> {
     OrderType::PostOnly {
         id: OrderId::from_u64(id),
         price: PRICE,
@@ -346,11 +348,12 @@ fn create_post_only_order(id: u64) -> OrderType {
         side: Side::Buy,
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 // Helper function to create a reserve order
-fn create_reserve_order(id: u64) -> OrderType {
+fn create_reserve_order(id: u64) -> OrderType<()> {
     OrderType::ReserveOrder {
         id: OrderId::from_u64(id),
         price: PRICE,
@@ -362,11 +365,12 @@ fn create_reserve_order(id: u64) -> OrderType {
         replenish_threshold: 2,
         replenish_amount: Some(5),
         auto_replenish: true,
+        extra_fields: (),
     }
 }
 
 // Helper function to create a pegged order
-fn create_pegged_order(id: u64) -> OrderType {
+fn create_pegged_order(id: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
         id: OrderId::from_u64(id),
         price: PRICE,
@@ -376,6 +380,7 @@ fn create_pegged_order(id: u64) -> OrderType {
         time_in_force: TimeInForce::Gtc,
         reference_price_offset: -50,
         reference_price_type: PegReferenceType::BestAsk,
+        extra_fields: (),
     }
 }
 

@@ -75,7 +75,7 @@ The `pricelevel` library has been thoroughly tested for performance in high-freq
 
 ##### Simulation Parameters
 - **Price Level**: 10000
-- **Duration**: 5000 ms (5 seconds)
+- **Duration**: 5002 ms (5.002 seconds)
 - **Threads**: 30 total
   - 10 maker threads (adding orders)
   - 10 taker threads (executing matches)
@@ -86,27 +86,27 @@ The `pricelevel` library has been thoroughly tested for performance in high-freq
 
 | Metric | Total Operations | Rate (per second) |
 |--------|-----------------|-------------------|
-| Orders Added | 717,873 | 143,427.02 |
-| Matches Executed | 376,746 | 75,271.75 |
-| Cancellations | 227,454 | 45,444.04 |
-| **Total Operations** | **1,322,073** | **264,142.82** |
+| Orders Added | 715,814 | 143,095.10 |
+| Matches Executed | 374,910 | 74,946.54 |
+| Cancellations | 96,575 | 19,305.87 |
+| **Total Operations** | **1,187,299** | **237,347.51** |
 
 ##### Final State After Simulation
 - **Price**: 10000
-- **Visible Quantity**: 4,602,379
-- **Hidden Quantity**: 4,042,945
-- **Total Quantity**: 8,645,324
-- **Order Count**: 706,258
+- **Visible Quantity**: 4,590,308
+- **Hidden Quantity**: 4,032,155
+- **Total Quantity**: 8,622,463
+- **Order Count**: 704,156
 
 ##### Price Level Statistics
-- **Orders Added**: 718,873
-- **Orders Removed**: 194
-- **Orders Executed**: 403,727
-- **Quantity Executed**: 1,130,216
-- **Value Executed**: 11,302,160,000
+- **Orders Added**: 716,814
+- **Orders Removed**: 215
+- **Orders Executed**: 401,864
+- **Quantity Executed**: 1,124,714
+- **Value Executed**: 11,247,140,000
 - **Average Execution Price**: 10,000.00
-- **Average Waiting Time**: 1,791.10 ms
-- **Time Since Last Execution**: 0 ms
+- **Average Waiting Time**: 1,788.31 ms
+- **Time Since Last Execution**: 1 ms
 
 #### Contention Pattern Analysis
 

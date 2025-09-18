@@ -206,6 +206,7 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -220,6 +221,7 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -237,13 +239,14 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             replenish_threshold: 2,
             replenish_amount: Some(5),
             auto_replenish: true,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
 }
 
 // Helper function to create different types of orders based on thread ID
-fn create_order(thread_id: usize, order_id: u64) -> OrderType {
+fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -258,6 +261,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType {
             side: Side::Buy,
             timestamp: current_time,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         },
         1 => OrderType::IcebergOrder {
             id: OrderId::from_u64(order_id),
@@ -267,6 +271,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType {
             side: Side::Buy,
             timestamp: current_time,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         },
         2 => OrderType::PostOnly {
             id: OrderId::from_u64(order_id),
@@ -275,6 +280,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType {
             side: Side::Buy,
             timestamp: current_time,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         },
         _ => OrderType::ReserveOrder {
             id: OrderId::from_u64(order_id),
@@ -287,6 +293,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType {
             replenish_threshold: 2,
             replenish_amount: Some(5),
             auto_replenish: true,
+            extra_fields: (),
         },
     }
 }

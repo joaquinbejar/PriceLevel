@@ -216,8 +216,7 @@ mod tests {
         // This might fail depending on the implementation details
         let result = TransactionList::from_str(input);
         // If it fails, assert that it's due to the expected reason
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             let err_string = format!("{err:?}");
             assert!(err_string.contains("Invalid") || err_string.contains("taker_order_id"));
         }

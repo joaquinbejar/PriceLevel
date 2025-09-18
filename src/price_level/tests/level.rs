@@ -13,7 +13,7 @@ mod tests {
     static TIMESTAMP_COUNTER: AtomicU64 = AtomicU64::new(1616823000000);
 
     // Helper functions to create different order types for testing
-    pub fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    pub fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let order_id = OrderId::from_u64(id);
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
@@ -23,10 +23,11 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         }
     }
 
-    fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
+    fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::IcebergOrder {
             id: OrderId::from_u64(id),
@@ -36,10 +37,11 @@ mod tests {
             side: Side::Sell,
             timestamp,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         }
     }
 
-    fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PostOnly {
             id: OrderId::from_u64(id),
@@ -48,10 +50,11 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         }
     }
 
-    fn create_trailing_stop_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_trailing_stop_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::TrailingStop {
             id: OrderId::from_u64(id),
@@ -62,10 +65,11 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
             last_reference_price: price + 100,
+            extra_fields: (),
         }
     }
 
-    fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PeggedOrder {
             id: OrderId::from_u64(id),
@@ -76,10 +80,11 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
             reference_price_type: PegReferenceType::BestAsk,
+            extra_fields: (),
         }
     }
 
-    fn create_market_to_limit_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_market_to_limit_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::MarketToLimit {
             id: OrderId::from_u64(id),
@@ -88,6 +93,7 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         }
     }
 
@@ -99,7 +105,7 @@ mod tests {
         threshold: u64,
         auto_replenish: bool,
         replenish_amount: Option<u64>,
-    ) -> OrderType {
+    ) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::ReserveOrder {
             id: OrderId::from_u64(id),
@@ -112,10 +118,11 @@ mod tests {
             replenish_threshold: threshold,
             replenish_amount,
             auto_replenish,
+            extra_fields: (),
         }
     }
 
-    fn create_fill_or_kill_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_fill_or_kill_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
@@ -124,10 +131,11 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Fok,
+            extra_fields: (),
         }
     }
 
-    fn create_immediate_or_cancel_order(id: u64, price: u64, quantity: u64) -> OrderType {
+    fn create_immediate_or_cancel_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
@@ -136,10 +144,16 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Ioc,
+            extra_fields: (),
         }
     }
 
-    fn create_good_till_date_order(id: u64, price: u64, quantity: u64, expiry: u64) -> OrderType {
+    fn create_good_till_date_order(
+        id: u64,
+        price: u64,
+        quantity: u64,
+        expiry: u64,
+    ) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
@@ -148,6 +162,7 @@ mod tests {
             side: Side::Buy,
             timestamp,
             time_in_force: TimeInForce::Gtd(expiry),
+            extra_fields: (),
         }
     }
 
@@ -1489,13 +1504,14 @@ mod tests {
     fn test_price_level_update_price_same_value() {
         // Test lines 187-188
         let price_level = PriceLevel::new(10000);
-        let order = OrderType::Standard {
+        let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
             price: 10000,
             quantity: 10,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
 
@@ -1540,13 +1556,14 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add an order
-        let order = OrderType::Standard {
+        let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
             price: 10000,
             quantity: 10,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
 
@@ -1584,13 +1601,14 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add an order
-        let order = OrderType::Standard {
+        let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
             price: 10000,
             quantity: 50,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
 
@@ -1622,6 +1640,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
 
@@ -1638,6 +1657,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
 
         // Test increasing hidden quantity
@@ -1658,13 +1678,14 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add an order
-        let order = OrderType::Standard {
+        let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
             price: 10000,
             quantity: 50,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
 
@@ -1692,17 +1713,18 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add some orders
-        let order1 = OrderType::Standard {
+        let order1 = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
             price: 10000,
             quantity: 50,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order1);
 
-        let order2 = OrderType::IcebergOrder {
+        let order2 = OrderType::<()>::IcebergOrder {
             id: OrderId::from_u64(2),
             price: 10000,
             visible_quantity: 30,
@@ -1710,6 +1732,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order2);
 

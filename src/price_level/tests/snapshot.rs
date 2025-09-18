@@ -5,7 +5,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
 
-    fn create_sample_orders() -> Vec<Arc<OrderType>> {
+    fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
             Arc::new(OrderType::Standard {
                 id: OrderId::from_u64(1),
@@ -14,6 +14,7 @@ mod tests {
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
                 id: OrderId::from_u64(2),
@@ -23,6 +24,7 @@ mod tests {
                 side: Side::Buy,
                 timestamp: 1616823000001,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
         ]
     }
@@ -226,14 +228,15 @@ mod tests {
 
     #[test]
     fn test_snapshot_with_actual_orders() {
-        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
-            OrderType::Standard {
+        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+            OrderType::<()>::Standard {
                 id: OrderId::from_u64(id),
                 price,
                 quantity,
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }
         }
 
@@ -242,8 +245,8 @@ mod tests {
             price: u64,
             visible_quantity: u64,
             hidden_quantity: u64,
-        ) -> OrderType {
-            OrderType::IcebergOrder {
+        ) -> OrderType<()> {
+            OrderType::<()>::IcebergOrder {
                 id: OrderId::from_u64(id),
                 price,
                 visible_quantity,
@@ -251,6 +254,7 @@ mod tests {
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }
         }
         // Create a snapshot with orders
@@ -320,7 +324,7 @@ mod pricelevel_snapshot_serialization_tests {
     use std::sync::Arc;
 
     // Helper function to create sample orders for testing
-    fn create_sample_orders() -> Vec<Arc<OrderType>> {
+    fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
             Arc::new(OrderType::Standard {
                 id: OrderId::from_u64(1),
@@ -329,6 +333,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
                 id: OrderId::from_u64(2),
@@ -338,6 +343,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Sell,
                 timestamp: 1616823000001,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
             Arc::new(OrderType::PostOnly {
                 id: OrderId::from_u64(3),
@@ -346,6 +352,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Buy,
                 timestamp: 1616823000002,
                 time_in_force: TimeInForce::Ioc,
+                extra_fields: (),
             }),
         ]
     }
@@ -444,7 +451,7 @@ mod pricelevel_snapshot_serialization_tests {
 
         let post_only_order = &deserialized.orders[2];
         match **post_only_order {
-            OrderType::PostOnly {
+            OrderType::<()>::PostOnly {
                 id, quantity, side, ..
             } => {
                 assert_eq!(id, OrderId::from_u64(3));
@@ -642,6 +649,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
             // Iceberg order
             Arc::new(OrderType::IcebergOrder {
@@ -652,6 +660,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Sell,
                 timestamp: 1616823000001,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }),
             // Post-only order
             Arc::new(OrderType::PostOnly {
@@ -661,6 +670,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Buy,
                 timestamp: 1616823000002,
                 time_in_force: TimeInForce::Ioc,
+                extra_fields: (),
             }),
             // Fill-or-kill order (as Standard with FOK time-in-force)
             Arc::new(OrderType::Standard {
@@ -670,6 +680,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Buy,
                 timestamp: 1616823000003,
                 time_in_force: TimeInForce::Fok,
+                extra_fields: (),
             }),
             // Good-till-date order (as Standard with GTD time-in-force)
             Arc::new(OrderType::Standard {
@@ -679,6 +690,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side: Side::Sell,
                 timestamp: 1616823000004,
                 time_in_force: TimeInForce::Gtd(1617000000000),
+                extra_fields: (),
             }),
             // Reserve order
             Arc::new(OrderType::ReserveOrder {
@@ -692,6 +704,7 @@ mod pricelevel_snapshot_serialization_tests {
                 replenish_threshold: 1,
                 replenish_amount: Some(2),
                 auto_replenish: true,
+                extra_fields: (),
             }),
         ];
 

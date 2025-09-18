@@ -349,7 +349,7 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
 // Helper functions to create different types of orders for benchmarking
 
 /// Create a standard limit order for testing
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
@@ -357,11 +357,12 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
         side: Side::Buy,
         timestamp: 1616823000000,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 /// Create an iceberg order for testing
-fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
+fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: OrderId::from_u64(id),
         price,
@@ -370,11 +371,12 @@ fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> Order
         side: Side::Buy,
         timestamp: 1616823000000,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 /// Create a post-only order for testing
-fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::PostOnly {
         id: OrderId::from_u64(id),
         price,
@@ -382,6 +384,7 @@ fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType {
         side: Side::Buy,
         timestamp: 1616823000000,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
@@ -394,7 +397,7 @@ fn create_reserve_order(
     threshold: u64,
     auto_replenish: bool,
     replenish_amount: Option<u64>,
-) -> OrderType {
+) -> OrderType<()> {
     OrderType::ReserveOrder {
         id: OrderId::from_u64(id),
         price,
@@ -406,11 +409,12 @@ fn create_reserve_order(
         replenish_threshold: threshold,
         replenish_amount,
         auto_replenish,
+        extra_fields: (),
     }
 }
 
 /// Create a pegged order for testing
-fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
         id: OrderId::from_u64(id),
         price,
@@ -420,6 +424,7 @@ fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType {
         time_in_force: TimeInForce::Gtc,
         reference_price_offset: -50,
         reference_price_type: PegReferenceType::BestAsk,
+        extra_fields: (),
     }
 }
 
@@ -435,6 +440,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }

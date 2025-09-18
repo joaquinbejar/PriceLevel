@@ -6,14 +6,15 @@ mod tests {
     use std::sync::Arc;
     use tracing::info;
 
-    fn create_test_order(id: u64, price: u64, quantity: u64) -> OrderType {
-        OrderType::Standard {
+    fn create_test_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+        OrderType::<()>::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         }
     }
 
@@ -191,7 +192,7 @@ mod tests {
         // Verify the order's details
         let order = &queue.to_vec()[0];
 
-        if let OrderType::Standard {
+        if let OrderType::<()>::Standard {
             id,
             price,
             quantity,
@@ -219,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_order_queue_serialization() {
-        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
             OrderType::Standard {
                 id: OrderId::from_u64(id),
                 price,
@@ -227,6 +228,7 @@ mod tests {
                 side: Side::Buy,
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             }
         }
         let queue = OrderQueue::new();
@@ -281,6 +283,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         queue.push(Arc::new(order));
 
@@ -307,6 +310,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         });
 
         let order2 = Arc::new(OrderType::Standard {
@@ -316,6 +320,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         });
 
         let orders = vec![order1.clone(), order2.clone()];
@@ -333,7 +338,7 @@ mod tests {
         assert_eq!(queue_from_trait.to_vec().len(), 2);
 
         // Test the Into implementation
-        let orders_from_queue: Vec<Arc<OrderType>> = queue.into();
+        let orders_from_queue: Vec<Arc<OrderType<()>>> = queue.into();
         assert_eq!(orders_from_queue.len(), 2);
         assert!(orders_from_queue.contains(&order1));
         assert!(orders_from_queue.contains(&order2));
@@ -393,6 +398,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
 
         let order2 = OrderType::IcebergOrder {
@@ -403,6 +409,7 @@ mod tests {
             side: Side::Sell,
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
 
         queue.push(Arc::new(order1));

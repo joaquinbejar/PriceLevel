@@ -130,6 +130,7 @@ mod tests {
             side: Side::Buy,
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         level.add_order(order);
 
@@ -218,6 +219,7 @@ mod tests_order_book_entry {
             side: crate::orders::Side::Buy,
             timestamp: 1616823000000,
             time_in_force: crate::orders::TimeInForce::Gtc,
+            extra_fields: (),
         };
 
         level1.add_order(order_type);
@@ -231,6 +233,7 @@ mod tests_order_book_entry {
             side: crate::orders::Side::Buy,
             timestamp: 1616823000001,
             time_in_force: crate::orders::TimeInForce::Gtc,
+            extra_fields: (),
         };
 
         level1.add_order(order_type2);
@@ -361,6 +364,7 @@ mod tests_order_book_entry {
             side: crate::orders::Side::Buy,
             timestamp: 1616823000000,
             time_in_force: crate::orders::TimeInForce::Gtc,
+            extra_fields: (),
         };
         level.add_order(standard_order);
 
@@ -377,6 +381,7 @@ mod tests_order_book_entry {
             side: crate::orders::Side::Buy,
             timestamp: 1616823000001,
             time_in_force: crate::orders::TimeInForce::Gtc,
+            extra_fields: (),
         };
         level.add_order(iceberg_order);
 

@@ -154,7 +154,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
 // Helper functions to create different types of orders for benchmarking
 
 /// Create a standard limit order for testing
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
@@ -162,11 +162,12 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
         side: Side::Buy,
         timestamp: 1616823000000 + id,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
 /// Create an iceberg order for testing
-fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType {
+fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: OrderId::from_u64(id),
         price,
@@ -175,6 +176,7 @@ fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> Order
         side: Side::Buy,
         timestamp: 1616823000000 + id,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 
@@ -187,7 +189,7 @@ fn create_reserve_order(
     threshold: u64,
     auto_replenish: bool,
     replenish_amount: Option<u64>,
-) -> OrderType {
+) -> OrderType<()> {
     OrderType::ReserveOrder {
         id: OrderId::from_u64(id),
         price,
@@ -199,6 +201,7 @@ fn create_reserve_order(
         replenish_threshold: threshold,
         replenish_amount,
         auto_replenish,
+        extra_fields: (),
     }
 }
 

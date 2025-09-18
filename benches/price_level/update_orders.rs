@@ -114,6 +114,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -134,6 +135,7 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }

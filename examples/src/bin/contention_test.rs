@@ -191,7 +191,7 @@ fn setup_orders_for_read_write_test(price_level: &PriceLevel) {
 }
 
 // Helper function to create a standard order
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
+fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
@@ -202,6 +202,7 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType {
             .unwrap_or_default()
             .as_millis() as u64,
         time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
     }
 }
 

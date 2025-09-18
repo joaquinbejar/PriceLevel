@@ -123,6 +123,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -143,6 +144,7 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
             side: Side::Buy,
             timestamp: 1616823000000 + i,
             time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -166,6 +168,7 @@ fn setup_reserve_orders(order_count: u64) -> PriceLevel {
             replenish_threshold: 2,
             replenish_amount: Some(5),
             auto_replenish: true,
+            extra_fields: (),
         };
         price_level.add_order(order);
     }
@@ -186,6 +189,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 side: Side::Buy,
                 timestamp: 1616823000000 + i,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             },
             1 => OrderType::IcebergOrder {
                 id: OrderId::from_u64(i),
@@ -195,6 +199,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 side: Side::Buy,
                 timestamp: 1616823000000 + i,
                 time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
             },
             _ => OrderType::ReserveOrder {
                 id: OrderId::from_u64(i),
@@ -207,6 +212,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 replenish_threshold: 2,
                 replenish_amount: Some(5),
                 auto_replenish: true,
+                extra_fields: (),
             },
         };
         price_level.add_order(order);
