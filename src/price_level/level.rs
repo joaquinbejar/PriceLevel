@@ -79,7 +79,7 @@ impl PriceLevel {
     }
 
     /// Add an order to this price level
-    pub fn add_order(&self, order: OrderType) -> Arc<OrderType> {
+    pub fn add_order(&self, order: OrderType<()>) -> Arc<OrderType<()>> {
         // Calculate quantities
         let visible_qty = order.visible_quantity();
         let hidden_qty = order.hidden_quantity();
@@ -101,7 +101,7 @@ impl PriceLevel {
     }
 
     /// Creates an iterator over the orders in the price level.
-    pub fn iter_orders(&self) -> Vec<Arc<OrderType>> {
+    pub fn iter_orders(&self) -> Vec<Arc<OrderType<()>>> {
         self.orders.to_vec()
     }
 
@@ -232,7 +232,7 @@ impl PriceLevel {
     pub fn update_order(
         &self,
         update: OrderUpdate,
-    ) -> Result<Option<Arc<OrderType>>, PriceLevelError> {
+    ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         match update {
             OrderUpdate::UpdatePrice {
                 order_id,
@@ -424,7 +424,7 @@ pub struct PriceLevelData {
     /// Number of orders at this price level
     pub order_count: usize,
     /// Orders at this price level
-    pub orders: Vec<OrderType>,
+    pub orders: Vec<OrderType<()>>,
 }
 
 impl From<&PriceLevel> for PriceLevelData {
@@ -533,7 +533,7 @@ impl FromStr for PriceLevel {
                     ')' | ']' => bracket_level -= 1,
                     ',' if bracket_level == 0 => {
                         let order_str = &orders_part[last_split..i];
-                        let order = OrderType::from_str(order_str).map_err(|e| {
+                        let order = OrderType::<()>::from_str(order_str).map_err(|e| {
                             PriceLevelError::ParseError {
                                 message: format!("Order parse error: {e}"),
                             }
@@ -547,10 +547,11 @@ impl FromStr for PriceLevel {
 
             let order_str = &orders_part[last_split..];
             if !order_str.is_empty() {
-                let order =
-                    OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
+                let order = OrderType::<()>::from_str(order_str).map_err(|e| {
+                    PriceLevelError::ParseError {
                         message: format!("Order parse error: {e}"),
-                    })?;
+                    }
+                })?;
                 price_level.add_order(order);
             }
         }
