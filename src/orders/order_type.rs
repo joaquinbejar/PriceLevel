@@ -1074,7 +1074,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "Standard:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
-                    id.0,
+                    id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
@@ -1095,7 +1095,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "IcebergOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={}",
-                    id.0,
+                    id,
                     price,
                     visible_quantity,
                     hidden_quantity,
@@ -1116,7 +1116,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "PostOnly:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
-                    id.0,
+                    id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
@@ -1138,7 +1138,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "TrailingStop:id={};price={};quantity={};side={};timestamp={};time_in_force={};trail_amount={};last_reference_price={}",
-                    id.0,
+                    id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
@@ -1162,7 +1162,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "PeggedOrder:id={};price={};quantity={};side={};timestamp={};time_in_force={};reference_price_offset={};reference_price_type={}",
-                    id.0,
+                    id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
@@ -1184,7 +1184,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "MarketToLimit:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
-                    id.0,
+                    id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
@@ -1208,7 +1208,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount={};auto_replenish={}",
-                    id.0,
+                    id,
                     price,
                     visible_quantity,
                     hidden_quantity,

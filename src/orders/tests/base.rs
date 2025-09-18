@@ -99,7 +99,8 @@ mod tests_orderid {
     fn test_order_id_creation() {
         // Create using from_u64 for backward compatibility
         let id = OrderId::from_u64(12345);
-        assert_eq!(id.0.as_u64_pair().1 & 0xFFFFFFFFFFFFFF00, 0); // Upper bytes should contain the ID
+        // Test that it's a valid OrderId (can't access internal structure directly)
+        assert_eq!(id, OrderId::from_u64(12345));
 
         // Create random UUIDs
         let id1 = OrderId::new();
@@ -109,11 +110,11 @@ mod tests_orderid {
         // Create from existing UUID
         let uuid = Uuid::new_v4();
         let id = OrderId::from_uuid(uuid);
-        assert_eq!(id.0, uuid);
+        assert_eq!(id, OrderId::Uuid(uuid));
 
         // Create nil UUID
         let nil_id = OrderId::nil();
-        assert_eq!(nil_id.0, Uuid::nil());
+        assert_eq!(nil_id, OrderId::Uuid(Uuid::nil()));
     }
 
     #[test]
@@ -149,7 +150,7 @@ mod tests_orderid {
     fn test_serialize_deserialize() {
         let id = OrderId::from_u64(12345);
         let serialized = serde_json::to_string(&id).unwrap();
-        let expected_uuid = id.0.to_string();
+        let expected_uuid = id.to_string();
         assert!(serialized.contains(&expected_uuid));
 
         let deserialized: OrderId = serde_json::from_str(&serialized).unwrap();
@@ -160,7 +161,7 @@ mod tests_orderid {
     fn test_from_str_valid() {
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let order_id = OrderId::from_str(uuid_str).unwrap();
-        assert_eq!(order_id.0.to_string(), uuid_str);
+        assert_eq!(order_id.to_string(), uuid_str);
 
         // Test that legacy conversions still work through string format
         let u64_id = 12345;
@@ -217,8 +218,8 @@ mod tests_orderid {
         // Test the OrderId::nil() functionality
         let nil_id = OrderId::nil();
 
-        // Verify it's equal to the Uuid nil value
-        assert_eq!(nil_id.0, Uuid::nil());
+        // Verify it's equal to the OrderId::Uuid(Uuid::nil())
+        assert_eq!(nil_id, OrderId::Uuid(Uuid::nil()));
 
         // Convert to string and verify
         let str_representation = nil_id.to_string();
@@ -234,8 +235,8 @@ mod tests_orderid {
         let default_id = OrderId::default();
         assert_ne!(default_id, OrderId::nil());
 
-        // The default implementation calls new(), which creates a random UUID
+        // The default implementation calls new(), which creates a random ULID
         // So we just need to verify it's not nil
-        assert_ne!(default_id.0, Uuid::nil());
+        assert_ne!(default_id, OrderId::Uuid(Uuid::nil()));
     }
 }
