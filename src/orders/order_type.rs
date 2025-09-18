@@ -13,7 +13,7 @@ pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
 
 /// Represents different types of limit orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum OrderType {
+pub enum OrderType<T> {
     /// Standard limit order
     Standard {
         /// The order ID
@@ -28,6 +28,8 @@ pub enum OrderType {
         timestamp: u64,
         /// Time-in-force policy
         time_in_force: TimeInForce,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Iceberg order with visible and hidden quantities
@@ -46,6 +48,8 @@ pub enum OrderType {
         timestamp: u64,
         /// Time-in-force policy
         time_in_force: TimeInForce,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Post-only order that won't match immediately
@@ -62,6 +66,8 @@ pub enum OrderType {
         timestamp: u64,
         /// Time-in-force policy
         time_in_force: TimeInForce,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Trailing stop order that adjusts with market movement
@@ -82,6 +88,8 @@ pub enum OrderType {
         trail_amount: u64,
         /// Last reference price
         last_reference_price: u64,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Pegged order that adjusts based on reference price
@@ -102,6 +110,8 @@ pub enum OrderType {
         reference_price_offset: i64,
         /// Type of reference price to track
         reference_price_type: PegReferenceType,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Market-to-limit order that converts to limit after initial execution
@@ -118,6 +128,8 @@ pub enum OrderType {
         timestamp: u64,
         /// Time-in-force policy
         time_in_force: TimeInForce,
+        /// Additional custom fields
+        extra_fields: T,
     },
 
     /// Reserve order with custom replenishment
@@ -146,10 +158,12 @@ pub enum OrderType {
         replenish_amount: Option<u64>,
         /// Whether to replenish automatically when below threshold. If false, only replenish on next match
         auto_replenish: bool,
+        /// Additional custom fields
+        extra_fields: T,
     },
 }
 
-impl OrderType {
+impl<T: Clone> OrderType<T> {
     /// Get the order ID
     pub fn id(&self) -> OrderId {
         match self {
@@ -269,6 +283,7 @@ impl OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields,
                 ..
             } => Self::Standard {
                 id: *id,
@@ -277,6 +292,7 @@ impl OrderType {
                 side: *side,
                 timestamp: *timestamp,
                 time_in_force: *time_in_force,
+                extra_fields: extra_fields.clone(),
             },
             Self::IcebergOrder {
                 id,
@@ -285,6 +301,7 @@ impl OrderType {
                 timestamp,
                 time_in_force,
                 hidden_quantity,
+                extra_fields,
                 ..
             } => {
                 // Update visible quantity but keep hidden the same
@@ -296,6 +313,7 @@ impl OrderType {
                     side: *side,
                     timestamp: *timestamp,
                     time_in_force: *time_in_force,
+                    extra_fields: extra_fields.clone(),
                 }
             }
             Self::PostOnly {
@@ -304,6 +322,7 @@ impl OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields,
                 ..
             } => Self::PostOnly {
                 id: *id,
@@ -312,9 +331,10 @@ impl OrderType {
                 side: *side,
                 timestamp: *timestamp,
                 time_in_force: *time_in_force,
+                extra_fields: extra_fields.clone(),
             },
             // For other order types, similar pattern...
-            _ => *self, // Default fallback, though this should be implemented for all types
+            _ => self.clone(), // Default fallback, though this should be implemented for all types
         }
     }
 
@@ -329,6 +349,7 @@ impl OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields,
             } => {
                 let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
                 let used_hidden = hidden_quantity - new_hidden;
@@ -342,6 +363,7 @@ impl OrderType {
                         side: *side,
                         timestamp: *timestamp,
                         time_in_force: *time_in_force,
+                        extra_fields: extra_fields.clone(),
                     },
                     used_hidden,
                 )
@@ -357,6 +379,7 @@ impl OrderType {
                 replenish_threshold,
                 replenish_amount,
                 auto_replenish,
+                extra_fields,
             } => {
                 let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
                 let used_hidden = hidden_quantity - new_hidden;
@@ -373,16 +396,17 @@ impl OrderType {
                         replenish_threshold: *replenish_threshold,
                         replenish_amount: *replenish_amount,
                         auto_replenish: *auto_replenish,
+                        extra_fields: extra_fields.clone(),
                     },
                     used_hidden,
                 )
             }
-            _ => (*self, 0), // Non-iceberg orders don't refresh
+            _ => (self.clone(), 0), // Non-iceberg orders don't refresh
         }
     }
 }
 
-impl OrderType {
+impl<T: Clone> OrderType<T> {
     /// Matches this order against an incoming quantity
     ///
     /// Returns a tuple containing:
@@ -399,6 +423,7 @@ impl OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields,
             } => {
                 if *quantity <= incoming_quantity {
                     // Full match
@@ -419,6 +444,7 @@ impl OrderType {
                             side: *side,
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
+                            extra_fields: extra_fields.clone(),
                         }),
                         0, // not hidden quantity reduced
                         0, // not remaining quantity
@@ -435,6 +461,7 @@ impl OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields,
             } => {
                 if *visible_quantity <= incoming_quantity {
                     // Fully match the visible portion
@@ -457,6 +484,7 @@ impl OrderType {
                                 side: *side,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
+                                extra_fields: extra_fields.clone(),
                             }),
                             refresh_qty,
                             remaining,
@@ -479,6 +507,7 @@ impl OrderType {
                             side: *side,
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
+                            extra_fields: extra_fields.clone(),
                         }),
                         0,
                         0,
@@ -497,6 +526,7 @@ impl OrderType {
                 replenish_threshold,
                 replenish_amount,
                 auto_replenish,
+                extra_fields,
             } => {
                 // Ensure the threshold is never 0 if auto_replenish is true
                 let safe_threshold = if *auto_replenish && *replenish_threshold == 0 {
@@ -532,6 +562,7 @@ impl OrderType {
                                 replenish_threshold: *replenish_threshold,
                                 replenish_amount: *replenish_amount,
                                 auto_replenish: *auto_replenish,
+                                extra_fields: extra_fields.clone(),
                             }),
                             replenish_qty,
                             remaining,
@@ -563,6 +594,7 @@ impl OrderType {
                                 replenish_threshold: *replenish_threshold,
                                 replenish_amount: *replenish_amount,
                                 auto_replenish: *auto_replenish,
+                                extra_fields: extra_fields.clone(),
                             }),
                             replenish_qty,
                             0,
@@ -582,6 +614,7 @@ impl OrderType {
                                 replenish_threshold: *replenish_threshold,
                                 replenish_amount: *replenish_amount,
                                 auto_replenish: *auto_replenish,
+                                extra_fields: extra_fields.clone(),
                             }),
                             0,
                             0,
@@ -616,13 +649,187 @@ impl OrderType {
     }
 }
 
+impl<T> OrderType<T> {
+    /// Get the extra fields
+    pub fn extra_fields(&self) -> &T {
+        match self {
+            Self::Standard { extra_fields, .. } => extra_fields,
+            Self::IcebergOrder { extra_fields, .. } => extra_fields,
+            Self::PostOnly { extra_fields, .. } => extra_fields,
+            Self::TrailingStop { extra_fields, .. } => extra_fields,
+            Self::PeggedOrder { extra_fields, .. } => extra_fields,
+            Self::MarketToLimit { extra_fields, .. } => extra_fields,
+            Self::ReserveOrder { extra_fields, .. } => extra_fields,
+        }
+    }
+
+    /// Get mutable reference to extra fields
+    pub fn extra_fields_mut(&mut self) -> &mut T {
+        match self {
+            Self::Standard { extra_fields, .. } => extra_fields,
+            Self::IcebergOrder { extra_fields, .. } => extra_fields,
+            Self::PostOnly { extra_fields, .. } => extra_fields,
+            Self::TrailingStop { extra_fields, .. } => extra_fields,
+            Self::PeggedOrder { extra_fields, .. } => extra_fields,
+            Self::MarketToLimit { extra_fields, .. } => extra_fields,
+            Self::ReserveOrder { extra_fields, .. } => extra_fields,
+        }
+    }
+
+    /// Transform the extra fields type using a function
+    pub fn map_extra_fields<U, F>(self, f: F) -> OrderType<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            Self::Standard {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields,
+            } => OrderType::Standard {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields: f(extra_fields),
+            },
+            Self::IcebergOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields,
+            } => OrderType::IcebergOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields: f(extra_fields),
+            },
+            Self::PostOnly {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields,
+            } => OrderType::PostOnly {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields: f(extra_fields),
+            },
+            Self::TrailingStop {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                trail_amount,
+                last_reference_price,
+                extra_fields,
+            } => OrderType::TrailingStop {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                trail_amount,
+                last_reference_price,
+                extra_fields: f(extra_fields),
+            },
+            Self::PeggedOrder {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+                extra_fields,
+            } => OrderType::PeggedOrder {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+                extra_fields: f(extra_fields),
+            },
+            Self::MarketToLimit {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields,
+            } => OrderType::MarketToLimit {
+                id,
+                price,
+                quantity,
+                side,
+                timestamp,
+                time_in_force,
+                extra_fields: f(extra_fields),
+            },
+            Self::ReserveOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+                replenish_amount,
+                auto_replenish,
+                extra_fields,
+            } => OrderType::ReserveOrder {
+                id,
+                price,
+                visible_quantity,
+                hidden_quantity,
+                side,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+                replenish_amount,
+                auto_replenish,
+                extra_fields: f(extra_fields),
+            },
+        }
+    }
+}
+
 /// Expected string format:
 /// ORDER_TYPE:id=`<id>`;price=`<price>`;quantity=`<qty>`;side=<BUY|SELL>;timestamp=`<ts>`;time_in_force=`<tif>`;[additional fields]
 ///
 /// Examples:
 /// - Standard:id=123;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC
 /// - IcebergOrder:id=124;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC
-impl FromStr for OrderType {
+impl<T: Default> FromStr for OrderType<T> {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -699,6 +906,7 @@ impl FromStr for OrderType {
                     side,
                     timestamp,
                     time_in_force,
+                    extra_fields: T::default(),
                 })
             }
             "IcebergOrder" => {
@@ -716,6 +924,7 @@ impl FromStr for OrderType {
                     side,
                     timestamp,
                     time_in_force,
+                    extra_fields: T::default(),
                 })
             }
             "PostOnly" => {
@@ -729,6 +938,7 @@ impl FromStr for OrderType {
                     side,
                     timestamp,
                     time_in_force,
+                    extra_fields: T::default(),
                 })
             }
             "TrailingStop" => {
@@ -751,6 +961,7 @@ impl FromStr for OrderType {
                     time_in_force,
                     trail_amount,
                     last_reference_price,
+                    extra_fields: T::default(),
                 })
             }
             "PeggedOrder" => {
@@ -784,6 +995,7 @@ impl FromStr for OrderType {
                     time_in_force,
                     reference_price_offset,
                     reference_price_type,
+                    extra_fields: T::default(),
                 })
             }
             "MarketToLimit" => {
@@ -797,6 +1009,7 @@ impl FromStr for OrderType {
                     side,
                     timestamp,
                     time_in_force,
+                    extra_fields: T::default(),
                 })
             }
             "ReserveOrder" => {
@@ -838,6 +1051,7 @@ impl FromStr for OrderType {
                     replenish_threshold,
                     replenish_amount,
                     auto_replenish,
+                    extra_fields: T::default(),
                 })
             }
             _ => Err(PriceLevelError::UnknownOrderType(order_type.to_string())),
@@ -845,7 +1059,7 @@ impl FromStr for OrderType {
     }
 }
 
-impl fmt::Display for OrderType {
+impl<T> fmt::Display for OrderType<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OrderType::Standard {
@@ -855,6 +1069,7 @@ impl fmt::Display for OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -875,6 +1090,7 @@ impl fmt::Display for OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -895,6 +1111,7 @@ impl fmt::Display for OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -916,6 +1133,7 @@ impl fmt::Display for OrderType {
                 time_in_force,
                 trail_amount,
                 last_reference_price,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -939,6 +1157,7 @@ impl fmt::Display for OrderType {
                 time_in_force,
                 reference_price_offset,
                 reference_price_type,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -960,6 +1179,7 @@ impl fmt::Display for OrderType {
                 side,
                 timestamp,
                 time_in_force,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -983,6 +1203,7 @@ impl fmt::Display for OrderType {
                 replenish_threshold,
                 replenish_amount,
                 auto_replenish,
+                extra_fields: _,
             } => {
                 write!(
                     f,
@@ -1003,8 +1224,23 @@ impl fmt::Display for OrderType {
     }
 }
 
-impl From<OrderQueue> for Vec<Arc<OrderType>> {
+impl From<OrderQueue> for Vec<Arc<OrderType<()>>> {
     fn from(queue: OrderQueue) -> Self {
         queue.to_vec()
     }
+}
+
+// Type aliases for common use cases
+#[allow(dead_code)]
+pub type SimpleOrderType = OrderType<()>;
+#[allow(dead_code)]
+pub type OrderTypeWithMetadata = OrderType<OrderMetadata>;
+
+// Example of what the extra fields could contain
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct OrderMetadata {
+    pub client_id: Option<u64>,
+    pub user_id: Option<u64>,
+    pub exchange_id: Option<u8>,
+    pub priority: u8,
 }
