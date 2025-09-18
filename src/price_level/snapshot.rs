@@ -20,8 +20,8 @@ pub struct PriceLevelSnapshot {
     pub hidden_quantity: u64,
     /// Number of orders at this level.
     pub order_count: usize,
-    /// Orders at this level.  This is a vector of `Arc<OrderType>` representing each individual order at this price level.
-    pub orders: Vec<Arc<OrderType>>,
+    /// Orders at this level.  This is a vector of `Arc<OrderType<()>>` representing each individual order at this price level.
+    pub orders: Vec<Arc<OrderType<()>>>,
 }
 
 impl PriceLevelSnapshot {
@@ -42,7 +42,7 @@ impl PriceLevelSnapshot {
     }
 
     /// Get an iterator over the orders in this snapshot
-    pub fn iter_orders(&self) -> impl Iterator<Item = &Arc<OrderType>> {
+    pub fn iter_orders(&self) -> impl Iterator<Item = &Arc<OrderType<()>>> {
         self.orders.iter()
     }
 }
@@ -59,7 +59,7 @@ impl Serialize for PriceLevelSnapshot {
         state.serialize_field("hidden_quantity", &self.hidden_quantity)?;
         state.serialize_field("order_count", &self.order_count)?;
 
-        let plain_orders: Vec<OrderType> =
+        let plain_orders: Vec<OrderType<()>> =
             self.orders.iter().map(|arc_order| (**arc_order)).collect();
 
         state.serialize_field("orders", &plain_orders)?;
@@ -172,7 +172,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             if orders.is_some() {
                                 return Err(de::Error::duplicate_field("orders"));
                             }
-                            let plain_orders: Vec<OrderType> = map.next_value()?;
+                            let plain_orders: Vec<OrderType<()>> = map.next_value()?;
                             orders = Some(plain_orders.into_iter().map(Arc::new).collect());
                         }
                     }
