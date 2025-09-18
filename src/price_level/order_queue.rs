@@ -15,7 +15,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct OrderQueue {
     /// A map of order IDs to orders for quick lookups
-    orders: DashMap<OrderId, Arc<OrderType>>,
+    orders: DashMap<OrderId, Arc<OrderType<()>>>,
     /// A queue of order IDs to maintain FIFO order
     order_ids: SegQueue<OrderId>,
 }
@@ -30,14 +30,14 @@ impl OrderQueue {
     }
 
     /// Add an order to the queue
-    pub fn push(&self, order: Arc<OrderType>) {
+    pub fn push(&self, order: Arc<OrderType<()>>) {
         let order_id = order.id();
         self.orders.insert(order_id, order);
         self.order_ids.push(order_id);
     }
 
     /// Attempt to pop an order from the queue
-    pub fn pop(&self) -> Option<Arc<OrderType>> {
+    pub fn pop(&self) -> Option<Arc<OrderType<()>>> {
         loop {
             if let Some(order_id) = self.order_ids.pop() {
                 // If the order was removed, pop will return None, but the ID was in the queue.
@@ -52,19 +52,19 @@ impl OrderQueue {
     }
 
     /// Search for an order with the given ID. O(1) operation.
-    pub fn find(&self, order_id: OrderId) -> Option<Arc<OrderType>> {
+    pub fn find(&self, order_id: OrderId) -> Option<Arc<OrderType<()>>> {
         self.orders.get(&order_id).map(|o| o.value().clone())
     }
 
     /// Remove an order with the given ID
     /// Returns the removed order if found. O(1) for the map, but the ID remains in the queue.
-    pub fn remove(&self, order_id: OrderId) -> Option<Arc<OrderType>> {
+    pub fn remove(&self, order_id: OrderId) -> Option<Arc<OrderType<()>>> {
         self.orders.remove(&order_id).map(|(_, order)| order)
     }
 
     /// Convert the queue to a vector (for snapshots)
-    pub fn to_vec(&self) -> Vec<Arc<OrderType>> {
-        let mut orders: Vec<Arc<OrderType>> =
+    pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
+        let mut orders: Vec<Arc<OrderType<()>>> =
             self.orders.iter().map(|o| o.value().clone()).collect();
         orders.sort_by_key(|o| o.timestamp());
         orders
@@ -86,7 +86,7 @@ impl OrderQueue {
     /// A new `OrderQueue` instance containing all the orders from the input vector.
     ///
     #[allow(dead_code)]
-    pub fn from_vec(orders: Vec<Arc<OrderType>>) -> Self {
+    pub fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
             queue.push(order);
@@ -163,8 +163,8 @@ impl Display for OrderQueue {
     }
 }
 
-impl From<Vec<Arc<OrderType>>> for OrderQueue {
-    fn from(orders: Vec<Arc<OrderType>>) -> Self {
+impl From<Vec<Arc<OrderType<()>>>> for OrderQueue {
+    fn from(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
             queue.push(order);
@@ -200,7 +200,7 @@ impl<'de> Visitor<'de> for OrderQueueVisitor {
         let queue = OrderQueue::new();
 
         // Deserialize each order and add it to the queue
-        while let Some(order) = seq.next_element::<OrderType>()? {
+        while let Some(order) = seq.next_element::<OrderType<()>>()? {
             queue.push(Arc::new(order));
         }
 
