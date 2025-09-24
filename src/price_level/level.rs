@@ -486,6 +486,25 @@ impl From<&PriceLevel> for PriceLevelData {
     }
 }
 
+impl From<&PriceLevelSnapshot> for PriceLevel {
+    fn from(value: &PriceLevelSnapshot) -> Self {
+        let mut snapshot = value.clone();
+        snapshot.refresh_aggregates();
+
+        let order_count = snapshot.orders.len();
+        let queue = OrderQueue::from(snapshot.orders.clone());
+
+        Self {
+            price: snapshot.price,
+            visible_quantity: AtomicU64::new(snapshot.visible_quantity),
+            hidden_quantity: AtomicU64::new(snapshot.hidden_quantity),
+            order_count: AtomicUsize::new(order_count),
+            orders: queue,
+            stats: Arc::new(PriceLevelStatistics::new()),
+        }
+    }
+}
+
 impl TryFrom<PriceLevelData> for PriceLevel {
     type Error = PriceLevelError;
 
