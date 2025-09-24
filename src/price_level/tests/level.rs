@@ -3,6 +3,7 @@ mod tests {
     use crate::errors::PriceLevelError;
     use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::{PriceLevel, PriceLevelData};
+    use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,6 +25,129 @@ mod tests {
             timestamp,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
+        }
+    }
+
+    #[test]
+    fn test_price_level_snapshot_roundtrip() {
+        let price_level = PriceLevel::new(10000);
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
+
+        let package = price_level
+            .snapshot_package()
+            .expect("Failed to create snapshot package");
+
+        assert_eq!(package.version, SNAPSHOT_FORMAT_VERSION);
+        package.validate().expect("Snapshot validation failed");
+
+        let json = package
+            .to_json()
+            .expect("Failed to serialize snapshot package");
+        let restored = PriceLevel::from_snapshot_json(&json)
+            .expect("Failed to restore price level from snapshot JSON");
+
+        assert_eq!(restored.price(), price_level.price());
+        assert_eq!(restored.visible_quantity(), price_level.visible_quantity());
+        assert_eq!(restored.hidden_quantity(), price_level.hidden_quantity());
+        assert_eq!(restored.order_count(), price_level.order_count());
+
+        let original_ids: Vec<OrderId> = price_level
+            .iter_orders()
+            .into_iter()
+            .map(|order| order.id())
+            .collect();
+        let restored_ids: Vec<OrderId> = restored
+            .iter_orders()
+            .into_iter()
+            .map(|order| order.id())
+            .collect();
+        assert_eq!(restored_ids, original_ids);
+    }
+
+    #[test]
+    fn test_price_level_snapshot_checksum_failure() {
+        let price_level = PriceLevel::new(20000);
+        price_level.add_order(create_standard_order(1, 20000, 100));
+
+        let mut package = price_level
+            .snapshot_package()
+            .expect("Failed to create snapshot package");
+
+        package.validate().expect("Snapshot validation should pass");
+
+        // Corrupt the checksum and ensure validation fails
+        package.checksum = "deadbeef".to_string();
+        let err = PriceLevel::from_snapshot_package(package)
+            .expect_err("Restoration should fail due to checksum mismatch");
+
+        assert!(matches!(err, PriceLevelError::ChecksumMismatch { .. }));
+    }
+
+    #[test]
+    fn test_price_level_from_snapshot_preserves_order_positions() {
+        let price_level = PriceLevel::new(15000);
+        price_level.add_order(create_standard_order(1, 15000, 100));
+        price_level.add_order(create_iceberg_order(2, 15000, 40, 120));
+        price_level.add_order(create_post_only_order(3, 15000, 60));
+        price_level.add_order(create_reserve_order(4, 15000, 30, 90, 15, true, Some(20)));
+
+        let snapshot = price_level.snapshot();
+        let restored = PriceLevel::from(&snapshot);
+
+        let original_orders = price_level.iter_orders();
+        let restored_orders = restored.iter_orders();
+
+        assert_eq!(restored_orders.len(), original_orders.len());
+        assert_eq!(restored.order_count(), price_level.order_count());
+        assert_eq!(restored.visible_quantity(), price_level.visible_quantity());
+        assert_eq!(restored.hidden_quantity(), price_level.hidden_quantity());
+
+        for (index, (expected, actual)) in original_orders
+            .iter()
+            .zip(restored_orders.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                actual.id(),
+                expected.id(),
+                "Order mismatch at position {index}"
+            );
+            assert_eq!(actual.timestamp(), expected.timestamp());
+        }
+    }
+
+    #[test]
+    fn test_price_level_from_snapshot_package_preserves_order_positions() {
+        let price_level = PriceLevel::new(17500);
+        price_level.add_order(create_standard_order(10, 17500, 80));
+        price_level.add_order(create_trailing_stop_order(11, 17500, 50));
+        price_level.add_order(create_pegged_order(12, 17500, 40));
+        price_level.add_order(create_market_to_limit_order(13, 17500, 70));
+
+        let package = price_level
+            .snapshot_package()
+            .expect("Failed to create snapshot package");
+        let restored = PriceLevel::from_snapshot_package(package)
+            .expect("Failed to restore price level from snapshot package");
+
+        let original_orders = price_level.iter_orders();
+        let restored_orders = restored.iter_orders();
+
+        assert_eq!(restored_orders.len(), original_orders.len());
+        assert_eq!(restored.order_count(), price_level.order_count());
+
+        for (index, (expected, actual)) in original_orders
+            .iter()
+            .zip(restored_orders.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                actual.id(),
+                expected.id(),
+                "Order mismatch at position {index}"
+            );
+            assert_eq!(actual.timestamp(), expected.timestamp());
         }
     }
 

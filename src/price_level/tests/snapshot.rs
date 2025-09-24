@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use crate::errors::PriceLevelError;
     use crate::orders::{OrderId, OrderType, Side, TimeInForce};
-    use crate::price_level::PriceLevelSnapshot;
+    use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
+    use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage};
+    use serde_json::Value;
     use std::str::FromStr;
     use std::sync::Arc;
 
@@ -27,6 +30,68 @@ mod tests {
                 extra_fields: (),
             }),
         ]
+    }
+
+    #[test]
+    fn test_snapshot_package_roundtrip() {
+        let mut snapshot = PriceLevelSnapshot::new(42);
+        snapshot.orders = create_sample_orders();
+        snapshot.refresh_aggregates();
+
+        let package =
+            PriceLevelSnapshotPackage::new(snapshot.clone()).expect("Failed to create package");
+
+        assert_eq!(package.version, SNAPSHOT_FORMAT_VERSION);
+        package.validate().expect("Package validation failed");
+
+        let json = package.to_json().expect("Failed to serialize package");
+        let restored_package =
+            PriceLevelSnapshotPackage::from_json(&json).expect("Failed to deserialize package");
+
+        restored_package
+            .validate()
+            .expect("Checksum validation should succeed");
+
+        let restored_snapshot = restored_package
+            .into_snapshot()
+            .expect("Snapshot extraction failed");
+
+        assert_eq!(restored_snapshot.price, snapshot.price);
+        assert_eq!(restored_snapshot.order_count, snapshot.order_count);
+        assert_eq!(
+            restored_snapshot.visible_quantity,
+            snapshot.visible_quantity
+        );
+        assert_eq!(restored_snapshot.hidden_quantity, snapshot.hidden_quantity);
+        assert_eq!(restored_snapshot.orders.len(), snapshot.orders.len());
+    }
+
+    #[test]
+    fn test_snapshot_package_checksum_mismatch() {
+        let mut snapshot = PriceLevelSnapshot::new(99);
+        snapshot.orders = create_sample_orders();
+        snapshot.refresh_aggregates();
+
+        let package = PriceLevelSnapshotPackage::new(snapshot).expect("Failed to create package");
+        let json = package.to_json().expect("Failed to serialize package");
+
+        let mut value: Value = serde_json::from_str(&json).expect("JSON parsing failed");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "checksum".to_string(),
+                Value::String("deadbeef".to_string()),
+            );
+        }
+
+        let tampered_json = serde_json::to_string(&value).expect("JSON serialization failed");
+
+        let tampered_package = PriceLevelSnapshotPackage::from_json(&tampered_json)
+            .expect("Deserialization should still succeed");
+
+        let err = tampered_package
+            .validate()
+            .expect_err("Checksum mismatch expected");
+        assert!(matches!(err, PriceLevelError::ChecksumMismatch { .. }));
     }
 
     #[test]
