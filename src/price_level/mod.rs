@@ -17,5 +17,5 @@ mod tests;
 
 pub use level::{PriceLevel, PriceLevelData};
 pub use order_queue::OrderQueue;
-pub use snapshot::PriceLevelSnapshot;
+pub use snapshot::{PriceLevelSnapshot, PriceLevelSnapshotPackage};
 pub use statistics::PriceLevelStatistics;
