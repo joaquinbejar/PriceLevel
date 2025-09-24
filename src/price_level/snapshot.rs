@@ -3,6 +3,7 @@ use crate::orders::OrderType;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -45,6 +46,106 @@ impl PriceLevelSnapshot {
     pub fn iter_orders(&self) -> impl Iterator<Item = &Arc<OrderType<()>>> {
         self.orders.iter()
     }
+
+    /// Recomputes aggregate fields (`visible_quantity`, `hidden_quantity`, and `order_count`) based on current orders.
+    pub fn refresh_aggregates(&mut self) {
+        self.order_count = self.orders.len();
+
+        let mut visible_total: u64 = 0;
+        let mut hidden_total: u64 = 0;
+
+        for order in &self.orders {
+            visible_total = visible_total.saturating_add(order.visible_quantity());
+            hidden_total = hidden_total.saturating_add(order.hidden_quantity());
+        }
+
+        self.visible_quantity = visible_total;
+        self.hidden_quantity = hidden_total;
+    }
+}
+
+/// Format version for checksum-enabled price level snapshots.
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+
+/// Serialized representation of a price level snapshot including checksum validation metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceLevelSnapshotPackage {
+    /// Version of the serialized snapshot schema to support future migrations.
+    pub version: u32,
+    /// Captured snapshot data.
+    pub snapshot: PriceLevelSnapshot,
+    /// Hex-encoded checksum used to validate the snapshot integrity.
+    pub checksum: String,
+}
+
+impl PriceLevelSnapshotPackage {
+    /// Creates a new snapshot package computing the checksum for the provided snapshot.
+    pub fn new(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
+        snapshot.refresh_aggregates();
+
+        let checksum = Self::compute_checksum(&snapshot)?;
+
+        Ok(Self {
+            version: SNAPSHOT_FORMAT_VERSION,
+            snapshot,
+            checksum,
+        })
+    }
+
+    /// Serializes the package to JSON.
+    pub fn to_json(&self) -> Result<String, PriceLevelError> {
+        serde_json::to_string(self).map_err(|error| PriceLevelError::SerializationError {
+            message: error.to_string(),
+        })
+    }
+
+    /// Deserializes a package from JSON.
+    pub fn from_json(data: &str) -> Result<Self, PriceLevelError> {
+        serde_json::from_str(data).map_err(|error| PriceLevelError::DeserializationError {
+            message: error.to_string(),
+        })
+    }
+
+    /// Validates the checksum contained in the package against the serialized snapshot data.
+    pub fn validate(&self) -> Result<(), PriceLevelError> {
+        if self.version != SNAPSHOT_FORMAT_VERSION {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "Unsupported snapshot version: {} (expected {})",
+                    self.version, SNAPSHOT_FORMAT_VERSION
+                ),
+            });
+        }
+
+        let computed = Self::compute_checksum(&self.snapshot)?;
+        if computed != self.checksum {
+            return Err(PriceLevelError::ChecksumMismatch {
+                expected: self.checksum.clone(),
+                actual: computed,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Consumes the package after validating the checksum and returns the contained snapshot.
+    pub fn into_snapshot(self) -> Result<PriceLevelSnapshot, PriceLevelError> {
+        self.validate()?;
+        Ok(self.snapshot)
+    }
+
+    fn compute_checksum(snapshot: &PriceLevelSnapshot) -> Result<String, PriceLevelError> {
+        let payload =
+            serde_json::to_vec(snapshot).map_err(|error| PriceLevelError::SerializationError {
+                message: error.to_string(),
+            })?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(payload);
+
+        let checksum_bytes = hasher.finalize();
+        Ok(format!("{:x}", checksum_bytes))
+    }
 }
 
 impl Serialize for PriceLevelSnapshot {
@@ -60,7 +161,7 @@ impl Serialize for PriceLevelSnapshot {
         state.serialize_field("order_count", &self.order_count)?;
 
         let plain_orders: Vec<OrderType<()>> =
-            self.orders.iter().map(|arc_order| (**arc_order)).collect();
+            self.orders.iter().map(|arc_order| **arc_order).collect();
 
         state.serialize_field("orders", &plain_orders)?;
 
