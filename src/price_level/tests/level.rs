@@ -3,6 +3,7 @@ mod tests {
     use crate::errors::PriceLevelError;
     use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::{PriceLevel, PriceLevelData};
+    use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +26,62 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
+    }
+
+    #[test]
+    fn test_price_level_snapshot_roundtrip() {
+        let price_level = PriceLevel::new(10000);
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
+
+        let package = price_level
+            .snapshot_package()
+            .expect("Failed to create snapshot package");
+
+        assert_eq!(package.version, SNAPSHOT_FORMAT_VERSION);
+        package.validate().expect("Snapshot validation failed");
+
+        let json = package
+            .to_json()
+            .expect("Failed to serialize snapshot package");
+        let restored = PriceLevel::from_snapshot_json(&json)
+            .expect("Failed to restore price level from snapshot JSON");
+
+        assert_eq!(restored.price(), price_level.price());
+        assert_eq!(restored.visible_quantity(), price_level.visible_quantity());
+        assert_eq!(restored.hidden_quantity(), price_level.hidden_quantity());
+        assert_eq!(restored.order_count(), price_level.order_count());
+
+        let original_ids: Vec<OrderId> = price_level
+            .iter_orders()
+            .into_iter()
+            .map(|order| order.id())
+            .collect();
+        let restored_ids: Vec<OrderId> = restored
+            .iter_orders()
+            .into_iter()
+            .map(|order| order.id())
+            .collect();
+        assert_eq!(restored_ids, original_ids);
+    }
+
+    #[test]
+    fn test_price_level_snapshot_checksum_failure() {
+        let price_level = PriceLevel::new(20000);
+        price_level.add_order(create_standard_order(1, 20000, 100));
+
+        let mut package = price_level
+            .snapshot_package()
+            .expect("Failed to create snapshot package");
+
+        package.validate().expect("Snapshot validation should pass");
+
+        // Corrupt the checksum and ensure validation fails
+        package.checksum = "deadbeef".to_string();
+        let err = PriceLevel::from_snapshot_package(package)
+            .expect_err("Restoration should fail due to checksum mismatch");
+
+        assert!(matches!(err, PriceLevelError::ChecksumMismatch { .. }));
     }
 
     fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
