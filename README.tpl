@@ -115,6 +115,7 @@
 
  **Joaquín Béjar García**
  - Email: jb@taunais.com
+ - **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
  - GitHub: [joaquinbejar](https://github.com/joaquinbejar)
 
  We appreciate your interest and look forward to your contributions!
