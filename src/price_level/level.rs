@@ -5,7 +5,7 @@ use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, Transaction};
 use crate::orders::{OrderId, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
-use crate::price_level::{PriceLevelSnapshot, PriceLevelStatistics};
+use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -33,6 +33,39 @@ pub struct PriceLevel {
 
     /// Statistics for this price level
     stats: Arc<PriceLevelStatistics>,
+}
+
+impl PriceLevel {
+    /// Reconstructs a price level directly from a snapshot.
+    pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
+        snapshot.refresh_aggregates();
+
+        let order_count = snapshot.orders.len();
+        let queue = OrderQueue::from(snapshot.orders.clone());
+
+        Ok(Self {
+            price: snapshot.price,
+            visible_quantity: AtomicU64::new(snapshot.visible_quantity),
+            hidden_quantity: AtomicU64::new(snapshot.hidden_quantity),
+            order_count: AtomicUsize::new(order_count),
+            orders: queue,
+            stats: Arc::new(PriceLevelStatistics::new()),
+        })
+    }
+
+    /// Reconstructs a price level from a checksum-protected snapshot package.
+    pub fn from_snapshot_package(
+        package: PriceLevelSnapshotPackage,
+    ) -> Result<Self, PriceLevelError> {
+        let snapshot = package.into_snapshot()?;
+        Self::from_snapshot(snapshot)
+    }
+
+    /// Restores a price level from its snapshot JSON representation.
+    pub fn from_snapshot_json(data: &str) -> Result<Self, PriceLevelError> {
+        let package = PriceLevelSnapshotPackage::from_json(data)?;
+        Self::from_snapshot_package(package)
+    }
 }
 
 impl PriceLevel {
@@ -224,6 +257,16 @@ impl PriceLevel {
             order_count: self.order_count(),
             orders: self.iter_orders(),
         }
+    }
+
+    /// Serialize the current price level state into a checksum-protected snapshot package.
+    pub fn snapshot_package(&self) -> Result<PriceLevelSnapshotPackage, PriceLevelError> {
+        PriceLevelSnapshotPackage::new(self.snapshot())
+    }
+
+    /// Serialize the current price level state to JSON, including checksum metadata.
+    pub fn snapshot_to_json(&self) -> Result<String, PriceLevelError> {
+        self.snapshot_package()?.to_json()
     }
 }
 
@@ -437,7 +480,7 @@ impl From<&PriceLevel> for PriceLevelData {
             orders: price_level
                 .iter_orders()
                 .into_iter()
-                .map(|order_arc| (*order_arc))
+                .map(|order_arc| *order_arc)
                 .collect(),
         }
     }
