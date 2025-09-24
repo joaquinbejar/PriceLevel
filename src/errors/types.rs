@@ -62,6 +62,26 @@ pub enum PriceLevelError {
         /// Explanation of why the operation is invalid
         message: String,
     },
+
+    /// Error raised when serialization of internal data structures fails.
+    SerializationError {
+        /// Descriptive message with the serialization failure details
+        message: String,
+    },
+
+    /// Error raised when deserialization of external data into internal structures fails.
+    DeserializationError {
+        /// Descriptive message with the deserialization failure details
+        message: String,
+    },
+
+    /// Error raised when a checksum validation fails while restoring a snapshot.
+    ChecksumMismatch {
+        /// The checksum that was expected according to the serialized payload
+        expected: String,
+        /// The checksum that was computed from the provided payload
+        actual: String,
+    },
 }
 impl Display for PriceLevelError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
@@ -77,6 +97,15 @@ impl Display for PriceLevelError {
             }
             PriceLevelError::InvalidOperation { message } => {
                 write!(f, "Invalid operation: {message}")
+            }
+            PriceLevelError::SerializationError { message } => {
+                write!(f, "Serialization error: {message}")
+            }
+            PriceLevelError::DeserializationError { message } => {
+                write!(f, "Deserialization error: {message}")
+            }
+            PriceLevelError::ChecksumMismatch { expected, actual } => {
+                write!(f, "Checksum mismatch: expected {expected}, got {actual}")
             }
         }
     }
@@ -96,6 +125,15 @@ impl Debug for PriceLevelError {
             }
             PriceLevelError::InvalidOperation { message } => {
                 write!(f, "Invalid operation: {message}")
+            }
+            PriceLevelError::SerializationError { message } => {
+                write!(f, "Serialization error: {message}")
+            }
+            PriceLevelError::DeserializationError { message } => {
+                write!(f, "Deserialization error: {message}")
+            }
+            PriceLevelError::ChecksumMismatch { expected, actual } => {
+                write!(f, "Checksum mismatch: expected {expected}, got {actual}")
             }
         }
     }
