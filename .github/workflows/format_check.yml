@@ -25,6 +25,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          components: rustfmt
 
       - name: Install make
         run: sudo apt-get install make
