@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -24,6 +25,7 @@ use uuid::Uuid;
 ///
 /// This is useful for applications that need deterministic but unique identifiers
 /// within a specific namespace context.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UuidGenerator {
     namespace: Uuid,
     counter: AtomicU64,
