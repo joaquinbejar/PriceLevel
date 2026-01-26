@@ -40,7 +40,7 @@ sha2 = "0.10"
 
 
 [dev-dependencies]
-criterion = { version = "0.7", default-features = false, features = ["html_reports"] }
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
 
 [[test]]
 name = "tests"
