@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::errors::PriceLevelError;
-    use crate::orders::{OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
+    use crate::orders::{
+        Hash32, OrderId, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce,
+    };
     use crate::price_level::level::{PriceLevel, PriceLevelData};
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
@@ -14,7 +16,7 @@ mod tests {
     static TIMESTAMP_COUNTER: AtomicU64 = AtomicU64::new(1616823000000);
 
     // Helper functions to create different order types for testing
-    pub fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    pub fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let order_id = OrderId::from_u64(id);
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
@@ -22,6 +24,7 @@ mod tests {
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -151,7 +154,7 @@ mod tests {
         }
     }
 
-    fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
+    fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::IcebergOrder {
             id: OrderId::from_u64(id),
@@ -159,47 +162,51 @@ mod tests {
             visible_quantity: visible,
             hidden_quantity: hidden,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
     }
 
-    fn create_post_only_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_post_only_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PostOnly {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
     }
 
-    fn create_trailing_stop_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_trailing_stop_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::TrailingStop {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
-            last_reference_price: price + 100,
+            last_reference_price: price + 100u128,
             extra_fields: (),
         }
     }
 
-    fn create_pegged_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_pegged_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PeggedOrder {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
@@ -208,13 +215,14 @@ mod tests {
         }
     }
 
-    fn create_market_to_limit_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_market_to_limit_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::MarketToLimit {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -223,7 +231,7 @@ mod tests {
 
     fn create_reserve_order(
         id: u64,
-        price: u64,
+        price: u128,
         visible: u64,
         hidden: u64,
         threshold: u64,
@@ -237,6 +245,7 @@ mod tests {
             visible_quantity: visible,
             hidden_quantity: hidden,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: threshold,
@@ -246,26 +255,28 @@ mod tests {
         }
     }
 
-    fn create_fill_or_kill_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_fill_or_kill_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Fok,
             extra_fields: (),
         }
     }
 
-    fn create_immediate_or_cancel_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_immediate_or_cancel_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Ioc,
             extra_fields: (),
@@ -274,7 +285,7 @@ mod tests {
 
     fn create_good_till_date_order(
         id: u64,
-        price: u64,
+        price: u128,
         quantity: u64,
         expiry: u64,
     ) -> OrderType<()> {
@@ -284,6 +295,7 @@ mod tests {
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp,
             time_in_force: TimeInForce::Gtd(expiry),
             extra_fields: (),
@@ -1630,9 +1642,10 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1682,9 +1695,10 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1727,9 +1741,10 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             quantity: 50,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1758,10 +1773,11 @@ mod tests {
         // Add an iceberg order with visible and hidden quantities
         let order = OrderType::IcebergOrder {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 50,
             hidden_quantity: 150,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1775,10 +1791,11 @@ mod tests {
         // Create a new iceberg order with different quantities
         let new_order = OrderType::IcebergOrder {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 40,
             hidden_quantity: 200,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1804,9 +1821,10 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             quantity: 50,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1839,9 +1857,10 @@ mod tests {
         // Add some orders
         let order1 = OrderType::<()>::Standard {
             id: OrderId::from_u64(1),
-            price: 10000,
+            price: 10000u128,
             quantity: 50,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -1850,10 +1869,11 @@ mod tests {
 
         let order2 = OrderType::<()>::IcebergOrder {
             id: OrderId::from_u64(2),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 30,
             hidden_quantity: 70,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),

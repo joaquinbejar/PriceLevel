@@ -2,11 +2,19 @@
 
 use crate::OrderQueue;
 use crate::errors::PriceLevelError;
-use crate::orders::{OrderId, PegReferenceType, Side, TimeInForce};
+use crate::orders::{Hash32, OrderId, PegReferenceType, Side, TimeInForce};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+
+fn user_id_from_str(value: &str) -> Result<Hash32, PriceLevelError> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    Hash32::from_hex(value).map_err(|_| PriceLevelError::InvalidFieldValue {
+        field: "user_id".to_string(),
+        value: value.to_string(),
+    })
+}
 
 /// Default amount to replenish the reserve with.
 pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
@@ -19,11 +27,13 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The quantity of the order
         quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -37,13 +47,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The visible quantity of the order
         visible_quantity: u64,
         /// The hidden quantity of the order
         hidden_quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -57,11 +69,13 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The quantity of the order
         quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -75,11 +89,13 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The quantity of the order
         quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -87,7 +103,7 @@ pub enum OrderType<T> {
         /// Amount to trail the market price
         trail_amount: u64,
         /// Last reference price
-        last_reference_price: u64,
+        last_reference_price: u128,
         /// Additional custom fields
         extra_fields: T,
     },
@@ -97,11 +113,13 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The quantity of the order
         quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -119,11 +137,13 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The quantity of the order
         quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -141,13 +161,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: OrderId,
         /// The price of the order
-        price: u64,
+        price: u128,
         /// The visible quantity of the order
         visible_quantity: u64,
         /// The hidden quantity of the order
         hidden_quantity: u64,
         /// The side of the order (buy or sell)
         side: Side,
+        /// Owner identifier for fast lookup (32 bytes)
+        user_id: Hash32,
         /// When the order was created
         timestamp: u64,
         /// Time-in-force policy
@@ -177,8 +199,21 @@ impl<T: Clone> OrderType<T> {
         }
     }
 
+    /// Get the user ID associated with this order
+    pub fn user_id(&self) -> Hash32 {
+        match self {
+            Self::Standard { user_id, .. }
+            | Self::IcebergOrder { user_id, .. }
+            | Self::PostOnly { user_id, .. }
+            | Self::TrailingStop { user_id, .. }
+            | Self::PeggedOrder { user_id, .. }
+            | Self::MarketToLimit { user_id, .. }
+            | Self::ReserveOrder { user_id, .. } => *user_id,
+        }
+    }
+
     /// Get the price
-    pub fn price(&self) -> u64 {
+    pub fn price(&self) -> u128 {
         match self {
             Self::Standard { price, .. } => *price,
             Self::IcebergOrder { price, .. } => *price,
@@ -281,6 +316,7 @@ impl<T: Clone> OrderType<T> {
                 id,
                 price,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -290,6 +326,7 @@ impl<T: Clone> OrderType<T> {
                 price: *price,
                 quantity: new_quantity,
                 side: *side,
+                user_id: *user_id,
                 timestamp: *timestamp,
                 time_in_force: *time_in_force,
                 extra_fields: extra_fields.clone(),
@@ -298,6 +335,7 @@ impl<T: Clone> OrderType<T> {
                 id,
                 price,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 hidden_quantity,
@@ -311,6 +349,7 @@ impl<T: Clone> OrderType<T> {
                     visible_quantity: new_quantity,
                     hidden_quantity: *hidden_quantity,
                     side: *side,
+                    user_id: *user_id,
                     timestamp: *timestamp,
                     time_in_force: *time_in_force,
                     extra_fields: extra_fields.clone(),
@@ -320,6 +359,7 @@ impl<T: Clone> OrderType<T> {
                 id,
                 price,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -329,6 +369,7 @@ impl<T: Clone> OrderType<T> {
                 price: *price,
                 quantity: new_quantity,
                 side: *side,
+                user_id: *user_id,
                 timestamp: *timestamp,
                 time_in_force: *time_in_force,
                 extra_fields: extra_fields.clone(),
@@ -347,20 +388,22 @@ impl<T: Clone> OrderType<T> {
                 visible_quantity: _,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
             } => {
-                let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
-                let used_hidden = hidden_quantity - new_hidden;
+                let used_hidden = refresh_amount.min(*hidden_quantity);
+                let new_hidden = *hidden_quantity - used_hidden;
 
                 (
                     Self::IcebergOrder {
                         id: *id,
                         price: *price,
-                        visible_quantity: refresh_amount,
+                        visible_quantity: used_hidden,
                         hidden_quantity: new_hidden,
                         side: *side,
+                        user_id: *user_id,
                         timestamp: *timestamp,
                         time_in_force: *time_in_force,
                         extra_fields: extra_fields.clone(),
@@ -374,6 +417,7 @@ impl<T: Clone> OrderType<T> {
                 visible_quantity: _,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 replenish_threshold,
@@ -381,16 +425,17 @@ impl<T: Clone> OrderType<T> {
                 auto_replenish,
                 extra_fields,
             } => {
-                let new_hidden = hidden_quantity.saturating_sub(refresh_amount);
-                let used_hidden = hidden_quantity - new_hidden;
+                let used_hidden = refresh_amount.min(*hidden_quantity);
+                let new_hidden = *hidden_quantity - used_hidden;
 
                 (
                     Self::ReserveOrder {
                         id: *id,
                         price: *price,
-                        visible_quantity: refresh_amount,
+                        visible_quantity: used_hidden,
                         hidden_quantity: new_hidden,
                         side: *side,
+                        user_id: *user_id,
                         timestamp: *timestamp,
                         time_in_force: *time_in_force,
                         replenish_threshold: *replenish_threshold,
@@ -421,6 +466,7 @@ impl<T: Clone> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -442,6 +488,7 @@ impl<T: Clone> OrderType<T> {
                             price: *price,
                             quantity: *quantity - incoming_quantity, // reduce quantity
                             side: *side,
+                            user_id: *user_id,
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                             extra_fields: extra_fields.clone(),
@@ -459,6 +506,7 @@ impl<T: Clone> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -482,6 +530,7 @@ impl<T: Clone> OrderType<T> {
                                 visible_quantity: refresh_qty,
                                 hidden_quantity: new_hidden,
                                 side: *side,
+                                user_id: *user_id,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 extra_fields: extra_fields.clone(),
@@ -505,6 +554,7 @@ impl<T: Clone> OrderType<T> {
                             visible_quantity: *visible_quantity - executed,
                             hidden_quantity: *hidden_quantity,
                             side: *side,
+                            user_id: *user_id,
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                             extra_fields: extra_fields.clone(),
@@ -521,6 +571,7 @@ impl<T: Clone> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 replenish_threshold,
@@ -557,6 +608,7 @@ impl<T: Clone> OrderType<T> {
                                 visible_quantity: replenish_qty,
                                 hidden_quantity: new_hidden,
                                 side: *side,
+                                user_id: *user_id,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
@@ -589,6 +641,7 @@ impl<T: Clone> OrderType<T> {
                                 visible_quantity: new_visible + replenish_qty,
                                 hidden_quantity: new_hidden,
                                 side: *side,
+                                user_id: *user_id,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
@@ -609,6 +662,7 @@ impl<T: Clone> OrderType<T> {
                                 visible_quantity: new_visible,
                                 hidden_quantity: *hidden_quantity,
                                 side: *side,
+                                user_id: *user_id,
                                 timestamp: *timestamp,
                                 time_in_force: *time_in_force,
                                 replenish_threshold: *replenish_threshold,
@@ -687,6 +741,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -695,6 +750,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: f(extra_fields),
@@ -705,6 +761,7 @@ impl<T> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -714,6 +771,7 @@ impl<T> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: f(extra_fields),
@@ -723,6 +781,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -731,6 +790,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: f(extra_fields),
@@ -740,6 +800,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 trail_amount,
@@ -750,6 +811,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 trail_amount,
@@ -761,6 +823,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 reference_price_offset,
@@ -771,6 +834,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 reference_price_offset,
@@ -782,6 +846,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields,
@@ -790,6 +855,7 @@ impl<T> OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: f(extra_fields),
@@ -800,6 +866,7 @@ impl<T> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 replenish_threshold,
@@ -812,6 +879,7 @@ impl<T> OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 replenish_threshold,
@@ -865,6 +933,15 @@ impl<T: Default> FromStr for OrderType<T> {
                 })
         };
 
+        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
+            value
+                .parse::<u128>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
         let parse_i64 = |field: &str, value: &str| -> Result<i64, PriceLevelError> {
             value
                 .parse::<i64>()
@@ -882,7 +959,7 @@ impl<T: Default> FromStr for OrderType<T> {
         })?;
 
         let price_str = get_field("price")?;
-        let price = parse_u64("price", price_str)?;
+        let price = parse_u128("price", price_str)?;
 
         let side_str = get_field("side")?;
         let side: Side = Side::from_str(side_str)?;
@@ -892,6 +969,11 @@ impl<T: Default> FromStr for OrderType<T> {
 
         let tif_str = get_field("time_in_force")?;
         let time_in_force = TimeInForce::from_str(tif_str)?;
+
+        let user_id = match fields.get("user_id") {
+            Some(value) => user_id_from_str(value)?,
+            None => Hash32::zero(),
+        };
 
         // Parse specific order types
         match order_type {
@@ -904,6 +986,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     price,
                     quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     extra_fields: T::default(),
@@ -922,6 +1005,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     visible_quantity,
                     hidden_quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     extra_fields: T::default(),
@@ -936,6 +1020,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     price,
                     quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     extra_fields: T::default(),
@@ -950,13 +1035,14 @@ impl<T: Default> FromStr for OrderType<T> {
 
                 let last_reference_price_str = get_field("last_reference_price")?;
                 let last_reference_price =
-                    parse_u64("last_reference_price", last_reference_price_str)?;
+                    parse_u128("last_reference_price", last_reference_price_str)?;
 
                 Ok(OrderType::TrailingStop {
                     id,
                     price,
                     quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     trail_amount,
@@ -991,6 +1077,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     price,
                     quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     reference_price_offset,
@@ -1007,6 +1094,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     price,
                     quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     extra_fields: T::default(),
@@ -1046,6 +1134,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     visible_quantity,
                     hidden_quantity,
                     side,
+                    user_id,
                     timestamp,
                     time_in_force,
                     replenish_threshold,
@@ -1067,17 +1156,19 @@ impl<T> fmt::Display for OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: _,
             } => {
                 write!(
                     f,
-                    "Standard:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    "Standard:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
                     id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force
                 )
@@ -1088,18 +1179,20 @@ impl<T> fmt::Display for OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: _,
             } => {
                 write!(
                     f,
-                    "IcebergOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={}",
+                    "IcebergOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};user_id={};timestamp={};time_in_force={}",
                     id,
                     price,
                     visible_quantity,
                     hidden_quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force
                 )
@@ -1109,17 +1202,19 @@ impl<T> fmt::Display for OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: _,
             } => {
                 write!(
                     f,
-                    "PostOnly:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    "PostOnly:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
                     id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force
                 )
@@ -1129,6 +1224,7 @@ impl<T> fmt::Display for OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 trail_amount,
@@ -1137,11 +1233,12 @@ impl<T> fmt::Display for OrderType<T> {
             } => {
                 write!(
                     f,
-                    "TrailingStop:id={};price={};quantity={};side={};timestamp={};time_in_force={};trail_amount={};last_reference_price={}",
+                    "TrailingStop:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={};trail_amount={};last_reference_price={}",
                     id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force,
                     trail_amount,
@@ -1153,6 +1250,7 @@ impl<T> fmt::Display for OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 reference_price_offset,
@@ -1161,11 +1259,12 @@ impl<T> fmt::Display for OrderType<T> {
             } => {
                 write!(
                     f,
-                    "PeggedOrder:id={};price={};quantity={};side={};timestamp={};time_in_force={};reference_price_offset={};reference_price_type={}",
+                    "PeggedOrder:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={};reference_price_offset={};reference_price_type={}",
                     id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force,
                     reference_price_offset,
@@ -1177,17 +1276,19 @@ impl<T> fmt::Display for OrderType<T> {
                 price,
                 quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 extra_fields: _,
             } => {
                 write!(
                     f,
-                    "MarketToLimit:id={};price={};quantity={};side={};timestamp={};time_in_force={}",
+                    "MarketToLimit:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
                     id,
                     price,
                     quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force
                 )
@@ -1198,6 +1299,7 @@ impl<T> fmt::Display for OrderType<T> {
                 visible_quantity,
                 hidden_quantity,
                 side,
+                user_id,
                 timestamp,
                 time_in_force,
                 replenish_threshold,
@@ -1207,12 +1309,13 @@ impl<T> fmt::Display for OrderType<T> {
             } => {
                 write!(
                     f,
-                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount={};auto_replenish={}",
+                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};user_id={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount={};auto_replenish={}",
                     id,
                     price,
                     visible_quantity,
                     hidden_quantity,
                     format!("{side:?}").to_uppercase(),
+                    user_id,
                     timestamp,
                     time_in_force,
                     replenish_threshold,

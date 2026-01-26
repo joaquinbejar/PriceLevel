@@ -66,7 +66,7 @@ impl PriceLevelStatistics {
     }
 
     /// Record an order execution
-    pub fn record_execution(&self, quantity: u64, price: u64, order_timestamp: u64) {
+    pub fn record_execution(&self, quantity: u64, price: u128, order_timestamp: u64) {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,8 +75,10 @@ impl PriceLevelStatistics {
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
         self.quantity_executed
             .fetch_add(quantity, Ordering::Relaxed);
+        // Saturating multiplication to avoid overflow, then truncate to u64 for atomic storage
+        let value = (quantity as u128).saturating_mul(price);
         self.value_executed
-            .fetch_add(quantity * price, Ordering::Relaxed);
+            .fetch_add(value.min(u64::MAX as u128) as u64, Ordering::Relaxed);
         self.last_execution_time
             .store(current_time, Ordering::Relaxed);
 

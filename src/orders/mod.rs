@@ -12,7 +12,7 @@ mod update;
 
 mod tests;
 
-pub use base::{OrderId, Side};
+pub use base::{Hash32, OrderId, Side};
 pub use order_type::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use order_type::OrderType;
 pub use pegged::PegReferenceType;

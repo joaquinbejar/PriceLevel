@@ -2,7 +2,7 @@
 mod tests {
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
-    use crate::{OrderId, OrderType, Side, TimeInForce};
+    use crate::{Hash32, OrderId, OrderType, Side, TimeInForce};
     use std::str::FromStr;
     use std::sync::Arc;
     use tracing::info;
@@ -125,9 +125,10 @@ mod tests {
         // Add an order to make the test more meaningful
         let order = OrderType::Standard {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -190,13 +191,14 @@ mod tests {
 
 #[cfg(test)]
 mod tests_order_book_entry {
+    use crate::orders::Hash32;
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
     use std::cmp::Ordering;
     use std::sync::Arc;
 
     /// Create a test OrderBookEntry with specified price and index
-    fn create_test_entry(price: u64, index: usize) -> OrderBookEntry {
+    fn create_test_entry(price: u128, index: usize) -> OrderBookEntry {
         let level = Arc::new(PriceLevel::new(price));
         OrderBookEntry::new(level, index)
     }
@@ -214,9 +216,10 @@ mod tests_order_book_entry {
         // Add some orders and check again
         let order_type = crate::orders::OrderType::Standard {
             id: crate::orders::OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: crate::orders::Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
@@ -228,9 +231,10 @@ mod tests_order_book_entry {
         // Add another order
         let order_type2 = crate::orders::OrderType::Standard {
             id: crate::orders::OrderId::from_u64(2),
-            price: 1000,
+            price: 1000u128,
             quantity: 20,
             side: crate::orders::Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000001,
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
@@ -359,9 +363,10 @@ mod tests_order_book_entry {
         // Add an order with visible quantity
         let standard_order = crate::orders::OrderType::Standard {
             id: crate::orders::OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: crate::orders::Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
@@ -375,10 +380,11 @@ mod tests_order_book_entry {
         // Add an iceberg order with hidden quantity
         let iceberg_order = crate::orders::OrderType::IcebergOrder {
             id: crate::orders::OrderId::from_u64(2),
-            price: 1000,
+            price: 1000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
             side: crate::orders::Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000001,
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
@@ -482,7 +488,7 @@ mod tests_order_book_entry_deserialize {
         // This is based on the Deserialize implementation shown earlier
         #[derive(serde::Deserialize)]
         struct Wrapper {
-            price: u64,
+            price: u128,
             index: usize,
         }
 

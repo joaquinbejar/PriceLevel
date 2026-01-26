@@ -19,7 +19,7 @@ pub struct Transaction {
     pub maker_order_id: OrderId,
 
     /// Price at which the transaction occurred
-    pub price: u64,
+    pub price: u128,
 
     /// Quantity that was traded
     pub quantity: u64,
@@ -37,7 +37,7 @@ impl Transaction {
         transaction_id: Uuid,
         taker_order_id: OrderId,
         maker_order_id: OrderId,
-        price: u64,
+        price: u128,
         quantity: u64,
         taker_side: Side,
     ) -> Self {
@@ -66,8 +66,8 @@ impl Transaction {
     }
 
     /// Returns the total value of this transaction
-    pub fn total_value(&self) -> u64 {
-        self.price * self.quantity
+    pub fn total_value(&self) -> u128 {
+        self.price * (self.quantity as u128)
     }
 }
 
@@ -122,6 +122,15 @@ impl FromStr for Transaction {
                 })
         };
 
+        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
+            value
+                .parse::<u128>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
         // Parse transaction_id
         let transaction_id_str = get_field("transaction_id")?;
         let transaction_id = match Uuid::from_str(transaction_id_str) {
@@ -154,7 +163,7 @@ impl FromStr for Transaction {
 
         // Parse price
         let price_str = get_field("price")?;
-        let price = parse_u64("price", price_str)?;
+        let price = parse_u128("price", price_str)?;
 
         // Parse quantity
         let quantity_str = get_field("quantity")?;
