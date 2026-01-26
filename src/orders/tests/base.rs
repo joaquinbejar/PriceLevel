@@ -239,4 +239,91 @@ mod tests_orderid {
         // So we just need to verify it's not nil
         assert_ne!(default_id, OrderId::Uuid(Uuid::nil()));
     }
+
+    #[test]
+    fn test_order_id_sequential() {
+        // Test creating sequential OrderIds
+        let id1 = OrderId::sequential(1);
+        let id2 = OrderId::sequential(2);
+        let id3 = OrderId::sequential(1);
+
+        assert_eq!(id1, id3);
+        assert_ne!(id1, id2);
+
+        // Test is_sequential
+        assert!(id1.is_sequential());
+        assert!(!OrderId::new_uuid().is_sequential());
+        assert!(!OrderId::new_ulid().is_sequential());
+
+        // Test as_u64
+        assert_eq!(id1.as_u64(), Some(1));
+        assert_eq!(id2.as_u64(), Some(2));
+        assert_eq!(OrderId::new_uuid().as_u64(), None);
+
+        // Test display
+        assert_eq!(id1.to_string(), "1");
+        assert_eq!(id2.to_string(), "2");
+
+        // Test from_str roundtrip
+        let parsed: OrderId = "42".parse().unwrap();
+        assert_eq!(parsed, OrderId::sequential(42));
+        assert!(parsed.is_sequential());
+    }
+
+    #[test]
+    fn test_order_id_sequential_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(OrderId::sequential(1));
+        set.insert(OrderId::sequential(2));
+        set.insert(OrderId::sequential(1)); // Duplicate
+
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&OrderId::sequential(1)));
+        assert!(set.contains(&OrderId::sequential(2)));
+        assert!(!set.contains(&OrderId::sequential(3)));
+    }
+
+    #[test]
+    fn test_order_id_sequential_serialization() {
+        let id = OrderId::sequential(12345);
+        let serialized = serde_json::to_string(&id).unwrap();
+        assert_eq!(serialized, "\"12345\"");
+
+        let deserialized: OrderId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, id);
+        assert!(deserialized.is_sequential());
+    }
+
+    #[test]
+    fn test_order_id_sequential_as_bytes() {
+        let id = OrderId::sequential(0x0102030405060708);
+        let bytes = id.as_bytes();
+
+        // Sequential IDs are stored in the last 8 bytes (big-endian)
+        assert_eq!(bytes[0..8], [0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            bytes[8..16],
+            [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
+    }
+
+    #[test]
+    fn test_order_id_type_checks() {
+        let uuid_id = OrderId::new_uuid();
+        let ulid_id = OrderId::new_ulid();
+        let seq_id = OrderId::sequential(1);
+
+        assert!(uuid_id.is_uuid());
+        assert!(!uuid_id.is_ulid());
+        assert!(!uuid_id.is_sequential());
+
+        assert!(!ulid_id.is_uuid());
+        assert!(ulid_id.is_ulid());
+        assert!(!ulid_id.is_sequential());
+
+        assert!(!seq_id.is_uuid());
+        assert!(!seq_id.is_ulid());
+        assert!(seq_id.is_sequential());
+    }
 }
