@@ -23,7 +23,7 @@ impl OrderBookEntry {
     }
 
     /// Get the price of this entry
-    pub fn price(&self) -> u64 {
+    pub fn price(&self) -> u128 {
         self.level.price()
     }
 
@@ -89,7 +89,7 @@ impl<'de> Deserialize<'de> for OrderBookEntry {
     {
         #[derive(Deserialize)]
         struct Wrapper {
-            price: u64,
+            price: u128,
             index: usize,
         }
 
@@ -145,9 +145,9 @@ impl FromStr for OrderBookEntry {
             }
         };
 
-        let parse_u64 = |field: &str, value: &str| -> Result<u64, PriceLevelError> {
+        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
             value
-                .parse::<u64>()
+                .parse::<u128>()
                 .map_err(|_| PriceLevelError::InvalidFieldValue {
                     field: field.to_string(),
                     value: value.to_string(),
@@ -164,7 +164,7 @@ impl FromStr for OrderBookEntry {
         };
 
         let price_str = get_field("price")?;
-        let price = parse_u64("price", price_str)?;
+        let price = parse_u128("price", price_str)?;
 
         let index_str = get_field("index")?;
         let index = parse_usize("index", index_str)?;

@@ -55,11 +55,11 @@ impl MatchResult {
     }
 
     /// Get the total value executed
-    pub fn executed_value(&self) -> u64 {
+    pub fn executed_value(&self) -> u128 {
         self.transactions
             .as_vec()
             .iter()
-            .map(|t| t.price * t.quantity)
+            .map(|t| t.price * (t.quantity as u128))
             .sum()
     }
 

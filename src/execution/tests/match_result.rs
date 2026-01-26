@@ -14,7 +14,7 @@ mod tests {
         id: Uuid,
         taker_id: u64,
         maker_id: u64,
-        price: u64,
+        price: u128,
         quantity: u64,
     ) -> Transaction {
         Transaction {

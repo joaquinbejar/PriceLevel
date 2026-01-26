@@ -1,5 +1,7 @@
 use criterion::Criterion;
-use pricelevel::{OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator};
+use pricelevel::{
+    Hash32, OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
+};
 use std::hint::black_box;
 use uuid::Uuid;
 
@@ -154,12 +156,13 @@ pub fn register_benchmarks(c: &mut Criterion) {
 // Helper functions to create different types of orders for benchmarking
 
 /// Create a standard limit order for testing
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: 1616823000000 + id,
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
@@ -167,13 +170,14 @@ fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
 }
 
 /// Create an iceberg order for testing
-fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> OrderType<()> {
+fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: OrderId::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: 1616823000000 + id,
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
@@ -183,7 +187,7 @@ fn create_iceberg_order(id: u64, price: u64, visible: u64, hidden: u64) -> Order
 /// Create a reserve order for testing
 fn create_reserve_order(
     id: u64,
-    price: u64,
+    price: u128,
     visible: u64,
     hidden: u64,
     threshold: u64,
@@ -196,6 +200,7 @@ fn create_reserve_order(
         visible_quantity: visible,
         hidden_quantity: hidden,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: 1616823000000 + id,
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: threshold,

@@ -1,17 +1,18 @@
 #[cfg(test)]
 mod tests {
-    use crate::orders::{OrderId, OrderType, Side, TimeInForce};
+    use crate::orders::{Hash32, OrderId, OrderType, Side, TimeInForce};
     use crate::price_level::order_queue::OrderQueue;
     use std::str::FromStr;
     use std::sync::Arc;
     use tracing::info;
 
-    fn create_test_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+    fn create_test_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         OrderType::<()>::Standard {
             id: OrderId::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -21,8 +22,8 @@ mod tests {
     #[test]
     fn test_display() {
         let queue = OrderQueue::new();
-        queue.push(Arc::new(create_test_order(1, 1000, 10)));
-        queue.push(Arc::new(create_test_order(2, 1100, 20)));
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1100u128, 20)));
 
         let display_string = queue.to_string();
         info!("Display: {}", display_string);
@@ -38,8 +39,8 @@ mod tests {
     fn test_from_str() {
         // Create a queue directly for consistency check
         let queue = OrderQueue::new();
-        queue.push(Arc::new(create_test_order(1, 1000, 10)));
-        queue.push(Arc::new(create_test_order(2, 1100, 20)));
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1100u128, 20)));
 
         // Get the display string
         let display_string = queue.to_string();
@@ -73,10 +74,10 @@ mod tests {
 
         // Verify individual orders (order might not be preserved)
         let has_order1 = orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10
+            o.id() == OrderId::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
         });
         let has_order2 = orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20
+            o.id() == OrderId::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
         });
 
         assert!(has_order1, "First order not found or incorrect");
@@ -93,10 +94,10 @@ mod tests {
         );
 
         let round_trip_has_order1 = round_trip_orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(1) && o.price() == 1000 && o.visible_quantity() == 10
+            o.id() == OrderId::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
         });
         let round_trip_has_order2 = round_trip_orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(2) && o.price() == 1100 && o.visible_quantity() == 20
+            o.id() == OrderId::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
         });
 
         assert!(
@@ -112,8 +113,8 @@ mod tests {
     #[test]
     fn test_serialize_deserialize() {
         let queue = OrderQueue::new();
-        queue.push(Arc::new(create_test_order(1, 1000, 10)));
-        queue.push(Arc::new(create_test_order(2, 1100, 20)));
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1100u128, 20)));
 
         // Serialize to JSON
         let serialized = serde_json::to_string(&queue).unwrap();
@@ -220,12 +221,13 @@ mod tests {
 
     #[test]
     fn test_order_queue_serialization() {
-        fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+        fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
             OrderType::Standard {
                 id: OrderId::from_u64(id),
                 price,
                 quantity,
                 side: Side::Buy,
+                user_id: Hash32::zero(),
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
@@ -234,7 +236,7 @@ mod tests {
         let queue = OrderQueue::new();
 
         // Add an order
-        let order = create_standard_order(1, 10000, 100);
+        let order = create_standard_order(1, 10000u128, 100);
         queue.push(Arc::new(order));
 
         // Serialize
@@ -260,7 +262,7 @@ mod tests {
         } = **deserialized_order
         {
             assert_eq!(id, OrderId::from_u64(1));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(quantity, 100);
         } else {
             panic!("Expected Standard order");
@@ -278,9 +280,10 @@ mod tests {
         // Add an order and check again
         let order = OrderType::Standard {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -305,9 +308,10 @@ mod tests {
         // Create a vector of orders
         let order1 = Arc::new(OrderType::Standard {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -315,9 +319,10 @@ mod tests {
 
         let order2 = Arc::new(OrderType::Standard {
             id: OrderId::from_u64(2),
-            price: 1000,
+            price: 1000u128,
             quantity: 20,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -393,9 +398,10 @@ mod tests {
 
         let order1 = OrderType::Standard {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -403,10 +409,11 @@ mod tests {
 
         let order2 = OrderType::IcebergOrder {
             id: OrderId::from_u64(2),
-            price: 1000,
+            price: 1000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000001,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),

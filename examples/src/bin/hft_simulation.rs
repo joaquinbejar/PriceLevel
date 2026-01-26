@@ -1,7 +1,7 @@
 // examples/src/bin/hft_simulation.rs
 
 use pricelevel::{
-    OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
+    Hash32, OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
     UuidGenerator, setup_logger,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use tracing::info;
 use uuid::Uuid;
 
 // Simulation parameters
-const PRICE: u64 = 10000;
+const PRICE: u128 = 10000;
 const SIMULATION_DURATION_MS: u64 = 5000; // 5 seconds
 const MAKER_THREAD_COUNT: usize = 10;
 const TAKER_THREAD_COUNT: usize = 10;
@@ -319,6 +319,7 @@ fn create_standard_order(id: u64) -> OrderType<()> {
         price: PRICE,
         quantity: 10,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
@@ -333,6 +334,7 @@ fn create_iceberg_order(id: u64) -> OrderType<()> {
         visible_quantity: 5,
         hidden_quantity: 15,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
@@ -346,6 +348,7 @@ fn create_post_only_order(id: u64) -> OrderType<()> {
         price: PRICE,
         quantity: 8,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
@@ -360,6 +363,7 @@ fn create_reserve_order(id: u64) -> OrderType<()> {
         visible_quantity: 5,
         hidden_quantity: 15,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: 2,
@@ -376,6 +380,7 @@ fn create_pegged_order(id: u64) -> OrderType<()> {
         price: PRICE,
         quantity: 10,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: get_current_timestamp(),
         time_in_force: TimeInForce::Gtc,
         reference_price_offset: -50,

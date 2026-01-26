@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 #[derive(Debug)]
 pub struct PriceLevel {
     /// The price of this level
-    price: u64,
+    price: u128,
 
     /// Total visible quantity at this price level
     visible_quantity: AtomicU64,
@@ -70,7 +70,7 @@ impl PriceLevel {
 
 impl PriceLevel {
     /// Create a new price level
-    pub fn new(price: u64) -> Self {
+    pub fn new(price: u128) -> Self {
         Self {
             price,
             visible_quantity: AtomicU64::new(0),
@@ -82,7 +82,7 @@ impl PriceLevel {
     }
 
     /// Get the price of this level
-    pub fn price(&self) -> u64 {
+    pub fn price(&self) -> u128 {
         self.price
     }
 
@@ -459,7 +459,7 @@ impl PriceLevel {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PriceLevelData {
     /// The price of this level
-    pub price: u64,
+    pub price: u128,
     /// Total visible quantity at this price level
     pub visible_quantity: u64,
     /// Total hidden quantity at this price level
@@ -576,7 +576,7 @@ impl FromStr for PriceLevel {
 
         let price = parts
             .get("price")
-            .and_then(|v| v.parse::<u64>().ok())
+            .and_then(|v| v.parse::<u128>().ok())
             .ok_or_else(|| PriceLevelError::ParseError {
                 message: "Missing or invalid price".to_string(),
             })?;

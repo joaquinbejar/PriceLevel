@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
     /// The price of this level.
-    pub price: u64,
+    pub price: u128,
     /// Total visible quantity at this level. This represents the sum of the visible quantities of all orders at this price level.
     pub visible_quantity: u64,
     /// Total hidden quantity at this level. This represents the sum of the hidden quantities of all orders at this price level.
@@ -27,7 +27,7 @@ pub struct PriceLevelSnapshot {
 
 impl PriceLevelSnapshot {
     /// Create a new empty snapshot
-    pub fn new(price: u64) -> Self {
+    pub fn new(price: u128) -> Self {
         Self {
             price,
             visible_quantity: 0,
@@ -354,6 +354,15 @@ impl FromStr for PriceLevelSnapshot {
                 })
         };
 
+        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
+            value
+                .parse::<u128>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
         let parse_usize = |field: &str, value: &str| -> Result<usize, PriceLevelError> {
             value
                 .parse::<usize>()
@@ -365,7 +374,7 @@ impl FromStr for PriceLevelSnapshot {
 
         // Parse fields
         let price_str = get_field("price")?;
-        let price = parse_u64("price", price_str)?;
+        let price = parse_u128("price", price_str)?;
 
         let visible_quantity_str = get_field("visible_quantity")?;
         let visible_quantity = parse_u64("visible_quantity", visible_quantity_str)?;

@@ -1,16 +1,17 @@
 #[cfg(test)]
 mod tests {
     use crate::orders::time_in_force::TimeInForce;
-    use crate::orders::{OrderId, OrderType, PegReferenceType, Side};
+    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side};
     use std::str::FromStr;
     use tracing::info;
 
     fn create_standard_order() -> OrderType<()> {
         OrderType::<()>::Standard {
             id: OrderId::from_u64(123),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -21,10 +22,11 @@ mod tests {
     fn create_iceberg_order() -> OrderType<()> {
         OrderType::<()>::IcebergOrder {
             id: OrderId::from_u64(124),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -35,9 +37,10 @@ mod tests {
     fn create_post_only_order() -> OrderType<()> {
         OrderType::<()>::PostOnly {
             id: OrderId::from_u64(125),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -48,13 +51,14 @@ mod tests {
     fn create_trailing_stop_order() -> OrderType<()> {
         OrderType::<()>::TrailingStop {
             id: OrderId::from_u64(126),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
-            last_reference_price: 10100,
+            last_reference_price: 10100u128,
             extra_fields: (),
         }
     }
@@ -63,9 +67,10 @@ mod tests {
     fn create_pegged_order() -> OrderType<()> {
         OrderType::<()>::PeggedOrder {
             id: OrderId::from_u64(127),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
@@ -78,9 +83,10 @@ mod tests {
     fn create_market_to_limit_order() -> OrderType<()> {
         OrderType::<()>::MarketToLimit {
             id: OrderId::from_u64(128),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -91,10 +97,11 @@ mod tests {
     fn create_reserve_order() -> OrderType<()> {
         OrderType::<()>::ReserveOrder {
             id: OrderId::from_u64(129),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: 0,
@@ -117,13 +124,13 @@ mod tests {
 
     #[test]
     fn test_order_price() {
-        assert_eq!(create_standard_order().price(), 10000);
-        assert_eq!(create_iceberg_order().price(), 10000);
-        assert_eq!(create_post_only_order().price(), 10000);
-        assert_eq!(create_trailing_stop_order().price(), 10000);
-        assert_eq!(create_pegged_order().price(), 10000);
-        assert_eq!(create_market_to_limit_order().price(), 10000);
-        assert_eq!(create_reserve_order().price(), 10000);
+        assert_eq!(create_standard_order().price(), 10000u128);
+        assert_eq!(create_iceberg_order().price(), 10000u128);
+        assert_eq!(create_post_only_order().price(), 10000u128);
+        assert_eq!(create_trailing_stop_order().price(), 10000u128);
+        assert_eq!(create_pegged_order().price(), 10000u128);
+        assert_eq!(create_market_to_limit_order().price(), 10000u128);
+        assert_eq!(create_reserve_order().price(), 10000u128);
     }
 
     #[test]
@@ -380,11 +387,11 @@ mod tests {
             side,
             timestamp,
             time_in_force,
-            extra_fields: _,
+            ..
         } = order
         {
             assert_eq!(id, OrderId::from_u64(123));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
             assert_eq!(timestamp, 1616823000000);
@@ -407,11 +414,11 @@ mod tests {
             side,
             timestamp,
             time_in_force,
-            extra_fields: _,
+            ..
         } = order
         {
             assert_eq!(id, OrderId::from_u64(124));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(visible_quantity, 1);
             assert_eq!(hidden_quantity, 4);
             assert_eq!(side, Side::Buy);
@@ -436,17 +443,17 @@ mod tests {
             time_in_force,
             trail_amount,
             last_reference_price,
-            extra_fields: _,
+            ..
         } = order
         {
             assert_eq!(id, OrderId::from_u64(126));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Sell);
             assert_eq!(timestamp, 1616823000000);
             assert_eq!(time_in_force, TimeInForce::Gtc);
             assert_eq!(trail_amount, 100);
-            assert_eq!(last_reference_price, 10100);
+            assert_eq!(last_reference_price, 10100u128);
         } else {
             panic!("Expected TrailingStop");
         }
@@ -466,11 +473,11 @@ mod tests {
             time_in_force,
             reference_price_offset,
             reference_price_type,
-            extra_fields: _,
+            ..
         } = order
         {
             assert_eq!(id, OrderId::from_u64(127));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
             assert_eq!(timestamp, 1616823000000);
@@ -643,9 +650,10 @@ mod tests {
         // Lines 663-664
         let order = OrderType::<()>::MarketToLimit {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -667,9 +675,10 @@ mod tests {
         // Lines 720-721
         let order = OrderType::PeggedOrder {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
@@ -693,13 +702,14 @@ mod tests {
         // Line 741
         let order = OrderType::TrailingStop {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
-            last_reference_price: 1100,
+            last_reference_price: 1100u128,
             extra_fields: (),
         };
 
@@ -719,9 +729,10 @@ mod tests {
         // Line 760
         let standard_order = OrderType::Standard {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -743,13 +754,14 @@ mod tests {
         // Line 809 (or nearby)
         let order = OrderType::TrailingStop {
             id: OrderId::from_u64(1),
-            price: 1000,
+            price: 1000u128,
             quantity: 10,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
-            last_reference_price: 1100,
+            last_reference_price: 1100u128,
             extra_fields: (),
         };
 
@@ -780,16 +792,17 @@ mod tests {
 #[cfg(test)]
 mod test_order_type_display {
     use crate::orders::time_in_force::TimeInForce;
-    use crate::orders::{OrderId, OrderType, PegReferenceType, Side};
+    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side};
     use std::str::FromStr;
 
     #[test]
     fn test_standard_order_display() {
         let order = OrderType::Standard {
             id: OrderId::from_u64(123),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -798,7 +811,7 @@ mod test_order_type_display {
         let display_str = order.to_string();
         assert_eq!(
             display_str,
-            "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC"
+            "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;user_id=0000000000000000000000000000000000000000000000000000000000000000;timestamp=1616823000000;time_in_force=GTC"
         );
 
         // Test that it can be parsed back (round-trip)
@@ -814,7 +827,7 @@ mod test_order_type_display {
         }) = parsed
         {
             assert_eq!(id, OrderId::from_u64(123));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
         } else {
@@ -826,10 +839,11 @@ mod test_order_type_display {
     fn test_iceberg_order_display() {
         let order = OrderType::IcebergOrder {
             id: OrderId::from_u64(124),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -838,7 +852,7 @@ mod test_order_type_display {
         let display_str = order.to_string();
         assert_eq!(
             display_str,
-            "IcebergOrder:id=00000000-0000-007c-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC"
+            "IcebergOrder:id=00000000-0000-007c-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;user_id=0000000000000000000000000000000000000000000000000000000000000000;timestamp=1616823000000;time_in_force=GTC"
         );
 
         // Test that it can be parsed back (round-trip)
@@ -855,7 +869,7 @@ mod test_order_type_display {
         }) = parsed
         {
             assert_eq!(id, OrderId::from_u64(124));
-            assert_eq!(price, 10000);
+            assert_eq!(price, 10000u128);
             assert_eq!(visible_quantity, 1);
             assert_eq!(hidden_quantity, 4);
             assert_eq!(side, Side::Sell);
@@ -868,9 +882,10 @@ mod test_order_type_display {
     fn test_post_only_order_display() {
         let order = OrderType::PostOnly {
             id: OrderId::from_u64(125),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -901,13 +916,14 @@ mod test_order_type_display {
     fn test_trailing_stop_order_display() {
         let order = OrderType::TrailingStop {
             id: OrderId::from_u64(126),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             trail_amount: 100,
-            last_reference_price: 10100,
+            last_reference_price: 10100u128,
             extra_fields: (),
         };
 
@@ -933,9 +949,10 @@ mod test_order_type_display {
     fn test_pegged_order_display() {
         let order = OrderType::PeggedOrder {
             id: OrderId::from_u64(127),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
@@ -965,9 +982,10 @@ mod test_order_type_display {
     fn test_market_to_limit_order_display() {
         let order = OrderType::MarketToLimit {
             id: OrderId::from_u64(128),
-            price: 10000,
+            price: 10000u128,
             quantity: 5,
             side: Side::Buy,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
@@ -993,10 +1011,11 @@ mod test_order_type_display {
     fn test_reserve_order_display() {
         let order = OrderType::ReserveOrder {
             id: OrderId::from_u64(129),
-            price: 10000,
+            price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
             side: Side::Sell,
+            user_id: Hash32::zero(),
             timestamp: 1616823000000,
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: 0,
@@ -1026,7 +1045,7 @@ mod test_order_type_display {
 
 #[cfg(test)]
 mod from_str_specific_tests {
-    use crate::orders::{OrderId, OrderType, PegReferenceType, Side, TimeInForce};
+    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side, TimeInForce};
     use std::str::FromStr;
 
     #[test]
@@ -1302,7 +1321,7 @@ mod from_str_specific_tests {
                 ..
             } => {
                 assert_eq!(id, OrderId::from_u64(u64::MAX));
-                assert_eq!(price, u64::MAX);
+                assert_eq!(price, u64::MAX.into());
                 assert_eq!(quantity, u64::MAX);
                 assert_eq!(timestamp, u64::MAX);
                 assert_eq!(reference_price_offset, i64::MAX);
@@ -1334,10 +1353,11 @@ mod from_str_specific_tests {
         let orders = vec![
             OrderType::ReserveOrder {
                 id: OrderId::from_u64(129),
-                price: 10000,
+                price: 10000u128,
                 visible_quantity: 1,
                 hidden_quantity: 4,
                 side: Side::Sell,
+                user_id: Hash32::zero(),
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: 0,
@@ -1347,18 +1367,20 @@ mod from_str_specific_tests {
             },
             OrderType::MarketToLimit {
                 id: OrderId::from_u64(128),
-                price: 10000,
+                price: 10000u128,
                 quantity: 5,
                 side: Side::Buy,
+                user_id: Hash32::zero(),
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Ioc,
                 extra_fields: (),
             },
             OrderType::PeggedOrder {
                 id: OrderId::from_u64(127),
-                price: 10000,
+                price: 10000u128,
                 quantity: 5,
                 side: Side::Buy,
+                user_id: Hash32::zero(),
                 timestamp: 1616823000000,
                 time_in_force: TimeInForce::Gtc,
                 reference_price_offset: -50,

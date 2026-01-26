@@ -1,7 +1,8 @@
 // examples/src/bin/contention_test.rs
 
 use pricelevel::{
-    OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
+    Hash32, OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
+    setup_logger,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -191,12 +192,13 @@ fn setup_orders_for_read_write_test(price_level: &PriceLevel) {
 }
 
 // Helper function to create a standard order
-fn create_standard_order(id: u64, price: u64, quantity: u64) -> OrderType<()> {
+fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: OrderId::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
+        user_id: Hash32::zero(),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

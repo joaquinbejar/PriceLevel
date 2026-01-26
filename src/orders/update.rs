@@ -11,7 +11,7 @@ pub enum OrderUpdate {
         /// ID of the order to update
         order_id: OrderId,
         /// New price for the order
-        new_price: u64,
+        new_price: u128,
     },
 
     /// Update the quantity of an order
@@ -27,7 +27,7 @@ pub enum OrderUpdate {
         /// ID of the order to update
         order_id: OrderId,
         /// New price for the order
-        new_price: u64,
+        new_price: u128,
         /// New quantity for the order
         new_quantity: u64,
     },
@@ -43,7 +43,7 @@ pub enum OrderUpdate {
         /// ID of the order to replace
         order_id: OrderId,
         /// New price for the replacement order
-        price: u64,
+        price: u128,
         /// New quantity for the replacement order
         quantity: u64,
         /// Side of the market (unchanged)
@@ -87,6 +87,15 @@ impl FromStr for OrderUpdate {
                 })
         };
 
+        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
+            value
+                .parse::<u128>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: value.to_string(),
+                })
+        };
+
         // Parse order_id field which is common to all update types
         let order_id_str = get_field("order_id")?;
         let order_id =
@@ -98,7 +107,7 @@ impl FromStr for OrderUpdate {
         match update_type {
             "UpdatePrice" => {
                 let new_price_str = get_field("new_price")?;
-                let new_price = parse_u64("new_price", new_price_str)?;
+                let new_price = parse_u128("new_price", new_price_str)?;
 
                 Ok(OrderUpdate::UpdatePrice {
                     order_id,
@@ -116,7 +125,7 @@ impl FromStr for OrderUpdate {
             }
             "UpdatePriceAndQuantity" => {
                 let new_price_str = get_field("new_price")?;
-                let new_price = parse_u64("new_price", new_price_str)?;
+                let new_price = parse_u128("new_price", new_price_str)?;
 
                 let new_quantity_str = get_field("new_quantity")?;
                 let new_quantity = parse_u64("new_quantity", new_quantity_str)?;
@@ -130,7 +139,7 @@ impl FromStr for OrderUpdate {
             "Cancel" => Ok(OrderUpdate::Cancel { order_id }),
             "Replace" => {
                 let price_str = get_field("price")?;
-                let price = parse_u64("price", price_str)?;
+                let price = parse_u128("price", price_str)?;
 
                 let quantity_str = get_field("quantity")?;
                 let quantity = parse_u64("quantity", quantity_str)?;
