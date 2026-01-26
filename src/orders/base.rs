@@ -68,31 +68,39 @@ impl fmt::Display for Side {
 
 /// Represents a unique identifier for an order in the trading system.
 ///
-/// This enum supports two different ID formats to provide flexibility
+/// This enum supports multiple ID formats to provide flexibility
 /// in order identification and tracking across different systems.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OrderId {
-    /// UUID (Universally Unique Identifier) format
-    /// A 128-bit identifier that is globally unique across space and time
+    /// UUID (Universally Unique Identifier) format.
+    /// A 128-bit identifier that is globally unique across space and time.
     Uuid(Uuid),
 
-    /// ULID (Universally Unique Lexicographically Sortable Identifier) format
-    /// A 128-bit identifier that is lexicographically sortable and globally unique
+    /// ULID (Universally Unique Lexicographically Sortable Identifier) format.
+    /// A 128-bit identifier that is lexicographically sortable and globally unique.
     Ulid(Ulid),
+
+    /// Sequential u64 identifier.
+    /// Useful for CEX systems where orders are assigned sequential IDs per market.
+    Sequential(u64),
 }
 
 impl FromStr for OrderId {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Try UUID first (has hyphens), then ULID
+        // Try parsing as u64 first (for sequential IDs)
+        if let Ok(id) = s.parse::<u64>() {
+            return Ok(OrderId::Sequential(id));
+        }
+        // Try UUID (has hyphens), then ULID
         if let Ok(uuid) = Uuid::from_str(s) {
             Ok(OrderId::Uuid(uuid))
         } else if let Ok(ulid) = Ulid::from_string(s) {
             Ok(OrderId::Ulid(ulid))
         } else {
             Err(PriceLevelError::ParseError {
-                message: format!("Failed to parse OrderId as UUID or ULID: {s}"),
+                message: format!("Failed to parse OrderId as u64, UUID, or ULID: {s}"),
             })
         }
     }
@@ -101,8 +109,9 @@ impl FromStr for OrderId {
 impl fmt::Display for OrderId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OrderId::Uuid(uuid) => write!(f, "{}", uuid),
-            OrderId::Ulid(ulid) => write!(f, "{}", ulid),
+            OrderId::Uuid(uuid) => write!(f, "{uuid}"),
+            OrderId::Ulid(ulid) => write!(f, "{ulid}"),
+            OrderId::Sequential(id) => write!(f, "{id}"),
         }
     }
 }
@@ -165,15 +174,34 @@ impl OrderId {
         OrderId::Ulid(ulid)
     }
 
-    /// Get as bytes (both UUID and ULID are 16 bytes)
+    /// Get as bytes.
+    ///
+    /// UUID and ULID return 16 bytes, Sequential returns 8 bytes zero-padded to 16.
     pub fn as_bytes(&self) -> [u8; 16] {
         match self {
             OrderId::Uuid(uuid) => *uuid.as_bytes(),
             OrderId::Ulid(ulid) => ulid.to_bytes(),
+            OrderId::Sequential(id) => {
+                let mut bytes = [0u8; 16];
+                bytes[8..16].copy_from_slice(&id.to_be_bytes());
+                bytes
+            }
         }
     }
 
-    /// For backward compatibility with code still using u64 IDs
+    /// Create a sequential OrderId from a u64.
+    ///
+    /// This is the preferred method for CEX systems using sequential order IDs.
+    #[must_use]
+    pub fn sequential(id: u64) -> Self {
+        OrderId::Sequential(id)
+    }
+
+    /// Create an OrderId from a u64 by embedding it in a UUID.
+    ///
+    /// This method exists for backward compatibility. For new CEX systems,
+    /// prefer using [`OrderId::sequential`] instead.
+    #[must_use]
     pub fn from_u64(id: u64) -> Self {
         let bytes = [
             ((id >> 56) & 0xFF) as u8,
@@ -194,5 +222,34 @@ impl OrderId {
             0,
         ];
         OrderId::Uuid(Uuid::from_bytes(bytes))
+    }
+
+    /// Try to get the u64 value if this is a Sequential OrderId.
+    ///
+    /// Returns `None` for UUID and ULID variants.
+    #[must_use]
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            OrderId::Sequential(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a Sequential OrderId.
+    #[must_use]
+    pub fn is_sequential(&self) -> bool {
+        matches!(self, OrderId::Sequential(_))
+    }
+
+    /// Check if this is a UUID OrderId.
+    #[must_use]
+    pub fn is_uuid(&self) -> bool {
+        matches!(self, OrderId::Uuid(_))
+    }
+
+    /// Check if this is a ULID OrderId.
+    #[must_use]
+    pub fn is_ulid(&self) -> bool {
+        matches!(self, OrderId::Ulid(_))
     }
 }
