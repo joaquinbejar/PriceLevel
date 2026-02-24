@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::errors::PriceLevelError;
-    use crate::execution::transaction::Trade;
-    use crate::orders::{OrderId, Side};
+    use crate::execution::trade::Trade;
+    use crate::orders::{Id, Side};
     use std::str::FromStr;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
@@ -11,9 +11,9 @@ mod tests {
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
 
         Trade {
-            trade_id: uuid,
-            taker_order_id: OrderId::from_u64(1),
-            maker_order_id: OrderId::from_u64(2),
+            trade_id: Id::from_uuid(uuid),
+            taker_order_id: Id::from_u64(1),
+            maker_order_id: Id::from_u64(2),
             price: 10000,
             quantity: 5,
             taker_side: Side::Buy,
@@ -41,9 +41,9 @@ mod tests {
         let input = "Trade:trade_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Trade::from_str(input).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, uuid);
-        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
-        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -152,17 +152,17 @@ mod tests {
 
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction = Trade::new(
-            uuid,
-            OrderId::from_u64(1),
-            OrderId::from_u64(2),
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
             10000,
             5,
             Side::Buy,
         );
 
-        assert_eq!(transaction.trade_id, uuid);
-        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
-        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -186,9 +186,9 @@ mod tests {
         let transaction = Trade::from_str(input).unwrap();
 
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, uuid);
-        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
-        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -255,17 +255,17 @@ mod tests {
 
 #[cfg(test)]
 mod transaction_serialization_tests {
-    use crate::execution::transaction::Trade;
-    use crate::orders::{OrderId, Side};
+    use crate::execution::trade::Trade;
+    use crate::orders::{Id, Side};
     use std::str::FromStr;
     use uuid::Uuid;
 
     fn create_test_trade() -> Trade {
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         Trade {
-            trade_id: uuid,
-            taker_order_id: OrderId::from_u64(1),
-            maker_order_id: OrderId::from_u64(2),
+            trade_id: Id::from_uuid(uuid),
+            taker_order_id: Id::from_u64(1),
+            maker_order_id: Id::from_u64(2),
             price: 10000,
             quantity: 5,
             taker_side: Side::Buy,
@@ -300,9 +300,9 @@ mod transaction_serialization_tests {
 
         let transaction: Trade = serde_json::from_str(json).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, uuid);
-        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
-        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);
@@ -346,9 +346,9 @@ mod transaction_serialization_tests {
         let input = "Trade:trade_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Trade::from_str(input).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, uuid);
-        assert_eq!(transaction.taker_order_id, OrderId::from_u64(1));
-        assert_eq!(transaction.maker_order_id, OrderId::from_u64(2));
+        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
         assert_eq!(transaction.price, 10000);
         assert_eq!(transaction.quantity, 5);
         assert_eq!(transaction.taker_side, Side::Buy);

@@ -3,7 +3,7 @@
 use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, Trade};
-use crate::orders::{OrderId, OrderType, OrderUpdate};
+use crate::orders::{Id, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,7 @@ impl PriceLevel {
     pub fn match_order(
         &self,
         incoming_quantity: u64,
-        taker_order_id: OrderId,
+        taker_order_id: Id,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
         let mut result = MatchResult::new(taker_order_id, incoming_quantity);
@@ -177,7 +177,7 @@ impl PriceLevel {
                     self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
 
                     // Use UUID generator directly
-                    let trade_id = trade_id_generator.next();
+                    let trade_id = Id::from_uuid(trade_id_generator.next());
 
                     let trade = Trade::new(
                         trade_id,

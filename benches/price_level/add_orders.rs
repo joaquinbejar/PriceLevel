@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion};
-use pricelevel::{Hash32, OrderId, OrderType, PriceLevel, Side, TimeInForce};
+use pricelevel::{Hash32, Id, OrderType, PriceLevel, Side, TimeInForce};
 use std::hint::black_box;
 
 /// Register all benchmarks for adding orders to a price level
@@ -81,7 +81,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
 /// Create a standard limit order for testing
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -95,7 +95,7 @@ fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
 /// Create an iceberg order for testing
 fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -110,7 +110,7 @@ fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> Orde
 /// Create a post-only order for testing
 fn create_post_only_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::PostOnly {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -132,7 +132,7 @@ fn create_reserve_order(
     replenish_amount: Option<u64>,
 ) -> OrderType<()> {
     OrderType::ReserveOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -152,7 +152,7 @@ fn create_pegged_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     use pricelevel::PegReferenceType;
 
     OrderType::PeggedOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,

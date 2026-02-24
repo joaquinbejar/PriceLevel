@@ -1,8 +1,7 @@
 // examples/src/bin/contention_test.rs
 
 use pricelevel::{
-    Hash32, OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
-    setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -108,7 +107,7 @@ fn test_read_write_ratio() {
                             1 => {
                                 // Match order
                                 let taker_id =
-                                    OrderId::from_u64(thread_id as u64 * 10000 + local_counter);
+                                    Id::from_u64(thread_id as u64 * 10000 + local_counter);
                                 thread_price_level.match_order(
                                     5, // Match 5 units
                                     taker_id,
@@ -117,7 +116,7 @@ fn test_read_write_ratio() {
                             }
                             _ => {
                                 // Cancel/update order
-                                let order_id = OrderId::from_u64(local_counter % 500);
+                                let order_id = Id::from_u64(local_counter % 500);
                                 let _ = thread_price_level
                                     .update_order(OrderUpdate::Cancel { order_id });
                             }
@@ -194,7 +193,7 @@ fn setup_orders_for_read_write_test(price_level: &PriceLevel) {
 // Helper function to create a standard order
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -292,14 +291,14 @@ fn test_hot_spot_contention() {
                         1 => {
                             // Cancel an order
                             let _result = thread_price_level.update_order(OrderUpdate::Cancel {
-                                order_id: OrderId::from_u64(order_idx),
+                                order_id: Id::from_u64(order_idx),
                             });
                         }
                         _ => {
                             // Update an order
                             let _result =
                                 thread_price_level.update_order(OrderUpdate::UpdateQuantity {
-                                    order_id: OrderId::from_u64(order_idx),
+                                    order_id: Id::from_u64(order_idx),
                                     new_quantity: 15,
                                 });
                         }

@@ -1,7 +1,7 @@
 use crate::errors::PriceLevelError;
 use crate::execution::list::TradeList;
-use crate::execution::transaction::Trade;
-use crate::orders::OrderId;
+use crate::execution::trade::Trade;
+use crate::orders::Id;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -10,7 +10,7 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
-    pub order_id: OrderId,
+    pub order_id: Id,
 
     /// List of trades that resulted from the match
     pub trades: TradeList,
@@ -22,12 +22,12 @@ pub struct MatchResult {
     pub is_complete: bool,
 
     /// Any orders that were completely filled and removed from the book
-    pub filled_order_ids: Vec<OrderId>,
+    pub filled_order_ids: Vec<Id>,
 }
 
 impl MatchResult {
     /// Create a new empty match result
-    pub fn new(order_id: OrderId, initial_quantity: u64) -> Self {
+    pub fn new(order_id: Id, initial_quantity: u64) -> Self {
         Self {
             order_id,
             trades: TradeList::new(),
@@ -45,7 +45,7 @@ impl MatchResult {
     }
 
     /// Add a filled order ID to track orders removed from the book
-    pub fn add_filled_order_id(&mut self, order_id: OrderId) {
+    pub fn add_filled_order_id(&mut self, order_id: Id) {
         self.filled_order_ids.push(order_id);
     }
 
@@ -236,7 +236,7 @@ impl FromStr for MatchResult {
             .ok_or_else(|| PriceLevelError::MissingField("filled_order_ids".to_string()))?;
 
         let order_id =
-            OrderId::from_str(order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+            Id::from_str(order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "order_id".to_string(),
                 value: order_id_str.to_string(),
             })?;
@@ -269,12 +269,12 @@ impl FromStr for MatchResult {
                 content
                     .split(',')
                     .map(|id_str| {
-                        OrderId::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+                        Id::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                             field: "filled_order_ids".to_string(),
                             value: id_str.to_string(),
                         })
                     })
-                    .collect::<Result<Vec<OrderId>, PriceLevelError>>()?
+                    .collect::<Result<Vec<Id>, PriceLevelError>>()?
             }
         };
 

@@ -1,6 +1,6 @@
 use criterion::Criterion;
 use pricelevel::{
-    Hash32, OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
+    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
 };
 use std::hint::black_box;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for _ in 0..5 {
                 let _ = black_box(price_level.match_order(
                     50,
-                    OrderId::from_u64(999),
+                    Id::from_u64(999),
                     &transaction_id_generator,
                 ));
             }
@@ -39,12 +39,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for i in 20..40 {
                 if i % 2 == 0 {
                     let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
-                        order_id: OrderId::from_u64(i),
+                        order_id: Id::from_u64(i),
                         new_quantity: 20,
                     }));
                 } else {
                     let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                        order_id: OrderId::from_u64(i),
+                        order_id: Id::from_u64(i),
                     }));
                 }
             }
@@ -63,7 +63,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for _ in 0..3 {
                 black_box(price_level.match_order(
                     100,
-                    OrderId::from_u64(1000),
+                    Id::from_u64(1000),
                     &transaction_id_generator,
                 ));
             }
@@ -88,7 +88,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // Match a small amount
                 black_box(price_level.match_order(
                     2,
-                    OrderId::from_u64(1000 + i),
+                    Id::from_u64(1000 + i),
                     &transaction_id_generator,
                 ));
 
@@ -99,7 +99,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // Cancel an order
                 if i % 10 == 0 {
                     let _ = black_box(price_level.update_order(OrderUpdate::Cancel {
-                        order_id: OrderId::from_u64(i),
+                        order_id: Id::from_u64(i),
                     }));
                 }
             }
@@ -120,21 +120,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Execute a few large matches
-            black_box(price_level.match_order(
-                300,
-                OrderId::from_u64(1001),
-                &transaction_id_generator,
-            ));
-            black_box(price_level.match_order(
-                400,
-                OrderId::from_u64(1002),
-                &transaction_id_generator,
-            ));
-            black_box(price_level.match_order(
-                300,
-                OrderId::from_u64(1003),
-                &transaction_id_generator,
-            ));
+            black_box(price_level.match_order(300, Id::from_u64(1001), &transaction_id_generator));
+            black_box(price_level.match_order(400, Id::from_u64(1002), &transaction_id_generator));
+            black_box(price_level.match_order(300, Id::from_u64(1003), &transaction_id_generator));
         })
     });
 
@@ -158,7 +146,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
 /// Create a standard limit order for testing
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -172,7 +160,7 @@ fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
 /// Create an iceberg order for testing
 fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -195,7 +183,7 @@ fn create_reserve_order(
     replenish_amount: Option<u64>,
 ) -> OrderType<()> {
     OrderType::ReserveOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,

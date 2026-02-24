@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::errors::PriceLevelError;
-    use crate::orders::{Hash32, OrderId, OrderType, Side, TimeInForce};
+    use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage};
     use serde_json::Value;
@@ -11,7 +11,7 @@ mod tests {
     fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
             Arc::new(OrderType::Standard {
-                id: OrderId::from_u64(1),
+                id: Id::from_u64(1),
                 price: 1000u128,
                 quantity: 10,
                 side: Side::Buy,
@@ -21,7 +21,7 @@ mod tests {
                 extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
-                id: OrderId::from_u64(2),
+                id: Id::from_u64(2),
                 price: 1000u128,
                 visible_quantity: 5,
                 hidden_quantity: 15,
@@ -136,14 +136,14 @@ mod tests {
 
         // Verify first order
         if let OrderType::Standard { id, .. } = **collected[0] {
-            assert_eq!(id, OrderId::from_u64(1));
+            assert_eq!(id, Id::from_u64(1));
         } else {
             panic!("Expected StandardOrder");
         }
 
         // Verify second order
         if let OrderType::IcebergOrder { id, .. } = **collected[1] {
-            assert_eq!(id, OrderId::from_u64(2));
+            assert_eq!(id, Id::from_u64(2));
         } else {
             panic!("Expected IcebergOrder");
         }
@@ -297,7 +297,7 @@ mod tests {
     fn test_snapshot_with_actual_orders() {
         fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
             OrderType::<()>::Standard {
-                id: OrderId::from_u64(id),
+                id: Id::from_u64(id),
                 price,
                 quantity,
                 side: Side::Buy,
@@ -315,7 +315,7 @@ mod tests {
             hidden_quantity: u64,
         ) -> OrderType<()> {
             OrderType::<()>::IcebergOrder {
-                id: OrderId::from_u64(id),
+                id: Id::from_u64(id),
                 price,
                 visible_quantity,
                 hidden_quantity,
@@ -362,7 +362,7 @@ mod tests {
 
         // Verify order types
         if let OrderType::Standard { id, quantity, .. } = &*deserialized.orders[0] {
-            assert_eq!(*id, OrderId::from_u64(1));
+            assert_eq!(*id, Id::from_u64(1));
             assert_eq!(*quantity, 100);
         } else {
             panic!("Expected Standard order");
@@ -375,7 +375,7 @@ mod tests {
             ..
         } = &*deserialized.orders[1]
         {
-            assert_eq!(*id, OrderId::from_u64(2));
+            assert_eq!(*id, Id::from_u64(2));
             assert_eq!(*visible_quantity, 50);
             assert_eq!(*hidden_quantity, 250);
         } else {
@@ -386,7 +386,7 @@ mod tests {
 
 #[cfg(test)]
 mod pricelevel_snapshot_serialization_tests {
-    use crate::orders::{Hash32, OrderId, OrderType, Side, TimeInForce};
+    use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::PriceLevelSnapshot;
 
     use std::str::FromStr;
@@ -396,7 +396,7 @@ mod pricelevel_snapshot_serialization_tests {
     fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
             Arc::new(OrderType::Standard {
-                id: OrderId::from_u64(1),
+                id: Id::from_u64(1),
                 price: 1000u128,
                 quantity: 10,
                 side: Side::Buy,
@@ -406,7 +406,7 @@ mod pricelevel_snapshot_serialization_tests {
                 extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
-                id: OrderId::from_u64(2),
+                id: Id::from_u64(2),
                 price: 1000u128,
                 visible_quantity: 5,
                 hidden_quantity: 15,
@@ -417,7 +417,7 @@ mod pricelevel_snapshot_serialization_tests {
                 extra_fields: (),
             }),
             Arc::new(OrderType::PostOnly {
-                id: OrderId::from_u64(3),
+                id: Id::from_u64(3),
                 price: 1000u128,
                 quantity: 8,
                 side: Side::Buy,
@@ -496,7 +496,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(1));
+                assert_eq!(id, Id::from_u64(1));
                 assert_eq!(price, 1000);
                 assert_eq!(quantity, 10);
                 assert_eq!(side, Side::Buy);
@@ -513,7 +513,7 @@ mod pricelevel_snapshot_serialization_tests {
                 side,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(2));
+                assert_eq!(id, Id::from_u64(2));
                 assert_eq!(visible_quantity, 5);
                 assert_eq!(hidden_quantity, 15);
                 assert_eq!(side, Side::Sell);
@@ -526,7 +526,7 @@ mod pricelevel_snapshot_serialization_tests {
             OrderType::<()>::PostOnly {
                 id, quantity, side, ..
             } => {
-                assert_eq!(id, OrderId::from_u64(3));
+                assert_eq!(id, Id::from_u64(3));
                 assert_eq!(quantity, 8);
                 assert_eq!(side, Side::Buy);
             }
@@ -715,7 +715,7 @@ mod pricelevel_snapshot_serialization_tests {
         snapshot.orders = vec![
             // Standard order
             Arc::new(OrderType::Standard {
-                id: OrderId::from_u64(1),
+                id: Id::from_u64(1),
                 price: 1000u128,
                 quantity: 10,
                 side: Side::Buy,
@@ -726,7 +726,7 @@ mod pricelevel_snapshot_serialization_tests {
             }),
             // Iceberg order
             Arc::new(OrderType::IcebergOrder {
-                id: OrderId::from_u64(2),
+                id: Id::from_u64(2),
                 price: 1000u128,
                 visible_quantity: 5,
                 hidden_quantity: 15,
@@ -738,7 +738,7 @@ mod pricelevel_snapshot_serialization_tests {
             }),
             // Post-only order
             Arc::new(OrderType::PostOnly {
-                id: OrderId::from_u64(3),
+                id: Id::from_u64(3),
                 price: 1000u128,
                 quantity: 8,
                 side: Side::Buy,
@@ -749,7 +749,7 @@ mod pricelevel_snapshot_serialization_tests {
             }),
             // Fill-or-kill order (as Standard with FOK time-in-force)
             Arc::new(OrderType::Standard {
-                id: OrderId::from_u64(4),
+                id: Id::from_u64(4),
                 price: 1000u128,
                 quantity: 12,
                 side: Side::Buy,
@@ -760,7 +760,7 @@ mod pricelevel_snapshot_serialization_tests {
             }),
             // Good-till-date order (as Standard with GTD time-in-force)
             Arc::new(OrderType::Standard {
-                id: OrderId::from_u64(5),
+                id: Id::from_u64(5),
                 price: 1000u128,
                 quantity: 7,
                 side: Side::Sell,
@@ -771,7 +771,7 @@ mod pricelevel_snapshot_serialization_tests {
             }),
             // Reserve order
             Arc::new(OrderType::ReserveOrder {
-                id: OrderId::from_u64(6),
+                id: Id::from_u64(6),
                 price: 1000u128,
                 visible_quantity: 3,
                 hidden_quantity: 12,

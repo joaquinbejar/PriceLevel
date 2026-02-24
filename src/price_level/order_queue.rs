@@ -1,5 +1,5 @@
 use crate::errors::PriceLevelError;
-use crate::orders::{OrderId, OrderType};
+use crate::orders::{Id, OrderType};
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use serde::de::{SeqAccess, Visitor};
@@ -15,9 +15,9 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct OrderQueue {
     /// A map of order IDs to orders for quick lookups
-    orders: DashMap<OrderId, Arc<OrderType<()>>>,
+    orders: DashMap<Id, Arc<OrderType<()>>>,
     /// A queue of order IDs to maintain FIFO order
-    order_ids: SegQueue<OrderId>,
+    order_ids: SegQueue<Id>,
 }
 
 impl OrderQueue {
@@ -52,13 +52,13 @@ impl OrderQueue {
     }
 
     /// Search for an order with the given ID. O(1) operation.
-    pub fn find(&self, order_id: OrderId) -> Option<Arc<OrderType<()>>> {
+    pub fn find(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         self.orders.get(&order_id).map(|o| o.value().clone())
     }
 
     /// Remove an order with the given ID
     /// Returns the removed order if found. O(1) for the map, but the ID remains in the queue.
-    pub fn remove(&self, order_id: OrderId) -> Option<Arc<OrderType<()>>> {
+    pub fn remove(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         self.orders.remove(&order_id).map(|(_, order)| order)
     }
 

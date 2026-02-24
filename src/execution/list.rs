@@ -1,5 +1,5 @@
 use crate::errors::PriceLevelError;
-use crate::execution::transaction::Trade;
+use crate::execution::trade::Trade;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;

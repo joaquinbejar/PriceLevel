@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::orders::time_in_force::TimeInForce;
-    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side};
+    use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side};
     use std::str::FromStr;
     use tracing::info;
 
     fn create_standard_order() -> OrderType<()> {
         OrderType::<()>::Standard {
-            id: OrderId::from_u64(123),
+            id: Id::from_u64(123),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -21,7 +21,7 @@ mod tests {
     // Helper function to create an iceberg order for testing
     fn create_iceberg_order() -> OrderType<()> {
         OrderType::<()>::IcebergOrder {
-            id: OrderId::from_u64(124),
+            id: Id::from_u64(124),
             price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
@@ -36,7 +36,7 @@ mod tests {
     // Helper function to create a post-only order for testing
     fn create_post_only_order() -> OrderType<()> {
         OrderType::<()>::PostOnly {
-            id: OrderId::from_u64(125),
+            id: Id::from_u64(125),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -50,7 +50,7 @@ mod tests {
     // Helper function to create a trailing stop order for testing
     fn create_trailing_stop_order() -> OrderType<()> {
         OrderType::<()>::TrailingStop {
-            id: OrderId::from_u64(126),
+            id: Id::from_u64(126),
             price: 10000u128,
             quantity: 5,
             side: Side::Sell,
@@ -66,7 +66,7 @@ mod tests {
     // Helper function to create a pegged order for testing
     fn create_pegged_order() -> OrderType<()> {
         OrderType::<()>::PeggedOrder {
-            id: OrderId::from_u64(127),
+            id: Id::from_u64(127),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -82,7 +82,7 @@ mod tests {
     // Helper function to create a market-to-limit order for testing
     fn create_market_to_limit_order() -> OrderType<()> {
         OrderType::<()>::MarketToLimit {
-            id: OrderId::from_u64(128),
+            id: Id::from_u64(128),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -96,7 +96,7 @@ mod tests {
     // Helper function to create a reserve order for testing
     fn create_reserve_order() -> OrderType<()> {
         OrderType::<()>::ReserveOrder {
-            id: OrderId::from_u64(129),
+            id: Id::from_u64(129),
             price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
@@ -113,13 +113,13 @@ mod tests {
 
     #[test]
     fn test_order_id() {
-        assert_eq!(create_standard_order().id(), OrderId::from_u64(123));
-        assert_eq!(create_iceberg_order().id(), OrderId::from_u64(124));
-        assert_eq!(create_post_only_order().id(), OrderId::from_u64(125));
-        assert_eq!(create_trailing_stop_order().id(), OrderId::from_u64(126));
-        assert_eq!(create_pegged_order().id(), OrderId::from_u64(127));
-        assert_eq!(create_market_to_limit_order().id(), OrderId::from_u64(128));
-        assert_eq!(create_reserve_order().id(), OrderId::from_u64(129));
+        assert_eq!(create_standard_order().id(), Id::from_u64(123));
+        assert_eq!(create_iceberg_order().id(), Id::from_u64(124));
+        assert_eq!(create_post_only_order().id(), Id::from_u64(125));
+        assert_eq!(create_trailing_stop_order().id(), Id::from_u64(126));
+        assert_eq!(create_pegged_order().id(), Id::from_u64(127));
+        assert_eq!(create_market_to_limit_order().id(), Id::from_u64(128));
+        assert_eq!(create_reserve_order().id(), Id::from_u64(129));
     }
 
     #[test]
@@ -390,7 +390,7 @@ mod tests {
             ..
         } = order
         {
-            assert_eq!(id, OrderId::from_u64(123));
+            assert_eq!(id, Id::from_u64(123));
             assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
@@ -417,7 +417,7 @@ mod tests {
             ..
         } = order
         {
-            assert_eq!(id, OrderId::from_u64(124));
+            assert_eq!(id, Id::from_u64(124));
             assert_eq!(price, 10000u128);
             assert_eq!(visible_quantity, 1);
             assert_eq!(hidden_quantity, 4);
@@ -446,7 +446,7 @@ mod tests {
             ..
         } = order
         {
-            assert_eq!(id, OrderId::from_u64(126));
+            assert_eq!(id, Id::from_u64(126));
             assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Sell);
@@ -476,7 +476,7 @@ mod tests {
             ..
         } = order
         {
-            assert_eq!(id, OrderId::from_u64(127));
+            assert_eq!(id, Id::from_u64(127));
             assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
@@ -649,7 +649,7 @@ mod tests {
     fn test_with_reduced_quantity_market_to_limit() {
         // Lines 663-664
         let order = OrderType::<()>::MarketToLimit {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -674,7 +674,7 @@ mod tests {
     fn test_with_reduced_quantity_pegged_order() {
         // Lines 720-721
         let order = OrderType::PeggedOrder {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -701,7 +701,7 @@ mod tests {
     fn test_with_reduced_quantity_trailing_stop() {
         // Line 741
         let order = OrderType::TrailingStop {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -728,7 +728,7 @@ mod tests {
     fn test_refresh_iceberg_non_iceberg_orders() {
         // Line 760
         let standard_order = OrderType::Standard {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -753,7 +753,7 @@ mod tests {
     fn test_match_against_trailing_stop_order() {
         // Line 809 (or nearby)
         let order = OrderType::TrailingStop {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -792,13 +792,13 @@ mod tests {
 #[cfg(test)]
 mod test_order_type_display {
     use crate::orders::time_in_force::TimeInForce;
-    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side};
+    use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side};
     use std::str::FromStr;
 
     #[test]
     fn test_standard_order_display() {
         let order = OrderType::Standard {
-            id: OrderId::from_u64(123),
+            id: Id::from_u64(123),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -826,7 +826,7 @@ mod test_order_type_display {
             ..
         }) = parsed
         {
-            assert_eq!(id, OrderId::from_u64(123));
+            assert_eq!(id, Id::from_u64(123));
             assert_eq!(price, 10000u128);
             assert_eq!(quantity, 5);
             assert_eq!(side, Side::Buy);
@@ -838,7 +838,7 @@ mod test_order_type_display {
     #[test]
     fn test_iceberg_order_display() {
         let order = OrderType::IcebergOrder {
-            id: OrderId::from_u64(124),
+            id: Id::from_u64(124),
             price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
@@ -868,7 +868,7 @@ mod test_order_type_display {
             ..
         }) = parsed
         {
-            assert_eq!(id, OrderId::from_u64(124));
+            assert_eq!(id, Id::from_u64(124));
             assert_eq!(price, 10000u128);
             assert_eq!(visible_quantity, 1);
             assert_eq!(hidden_quantity, 4);
@@ -881,7 +881,7 @@ mod test_order_type_display {
     #[test]
     fn test_post_only_order_display() {
         let order = OrderType::PostOnly {
-            id: OrderId::from_u64(125),
+            id: Id::from_u64(125),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -915,7 +915,7 @@ mod test_order_type_display {
     #[test]
     fn test_trailing_stop_order_display() {
         let order = OrderType::TrailingStop {
-            id: OrderId::from_u64(126),
+            id: Id::from_u64(126),
             price: 10000u128,
             quantity: 5,
             side: Side::Sell,
@@ -948,7 +948,7 @@ mod test_order_type_display {
     #[test]
     fn test_pegged_order_display() {
         let order = OrderType::PeggedOrder {
-            id: OrderId::from_u64(127),
+            id: Id::from_u64(127),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -981,7 +981,7 @@ mod test_order_type_display {
     #[test]
     fn test_market_to_limit_order_display() {
         let order = OrderType::MarketToLimit {
-            id: OrderId::from_u64(128),
+            id: Id::from_u64(128),
             price: 10000u128,
             quantity: 5,
             side: Side::Buy,
@@ -1010,7 +1010,7 @@ mod test_order_type_display {
     #[test]
     fn test_reserve_order_display() {
         let order = OrderType::ReserveOrder {
-            id: OrderId::from_u64(129),
+            id: Id::from_u64(129),
             price: 10000u128,
             visible_quantity: 1,
             hidden_quantity: 4,
@@ -1045,7 +1045,7 @@ mod test_order_type_display {
 
 #[cfg(test)]
 mod from_str_specific_tests {
-    use crate::orders::{Hash32, OrderId, OrderType, PegReferenceType, Side, TimeInForce};
+    use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side, TimeInForce};
     use std::str::FromStr;
 
     #[test]
@@ -1068,7 +1068,7 @@ mod from_str_specific_tests {
                 auto_replenish,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(129));
+                assert_eq!(id, Id::from_u64(129));
                 assert_eq!(price, 10000);
                 assert_eq!(visible_quantity, 1);
                 assert_eq!(hidden_quantity, 4);
@@ -1137,7 +1137,7 @@ mod from_str_specific_tests {
                 time_in_force,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(128));
+                assert_eq!(id, Id::from_u64(128));
                 assert_eq!(price, 10000);
                 assert_eq!(quantity, 5);
                 assert_eq!(side, Side::Buy);
@@ -1188,7 +1188,7 @@ mod from_str_specific_tests {
                 reference_price_type,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(127));
+                assert_eq!(id, Id::from_u64(127));
                 assert_eq!(price, 10000);
                 assert_eq!(quantity, 5);
                 assert_eq!(side, Side::Buy);
@@ -1320,7 +1320,7 @@ mod from_str_specific_tests {
                 reference_price_offset,
                 ..
             } => {
-                assert_eq!(id, OrderId::from_u64(u64::MAX));
+                assert_eq!(id, Id::from_u64(u64::MAX));
                 assert_eq!(price, u64::MAX.into());
                 assert_eq!(quantity, u64::MAX);
                 assert_eq!(timestamp, u64::MAX);
@@ -1352,7 +1352,7 @@ mod from_str_specific_tests {
         // Create sample orders
         let orders = vec![
             OrderType::ReserveOrder {
-                id: OrderId::from_u64(129),
+                id: Id::from_u64(129),
                 price: 10000u128,
                 visible_quantity: 1,
                 hidden_quantity: 4,
@@ -1366,7 +1366,7 @@ mod from_str_specific_tests {
                 extra_fields: (),
             },
             OrderType::MarketToLimit {
-                id: OrderId::from_u64(128),
+                id: Id::from_u64(128),
                 price: 10000u128,
                 quantity: 5,
                 side: Side::Buy,
@@ -1376,7 +1376,7 @@ mod from_str_specific_tests {
                 extra_fields: (),
             },
             OrderType::PeggedOrder {
-                id: OrderId::from_u64(127),
+                id: Id::from_u64(127),
                 price: 10000u128,
                 quantity: 5,
                 side: Side::Buy,

@@ -142,10 +142,12 @@ mod utils;
 mod errors;
 mod execution;
 
+pub mod prelude;
+
 pub use errors::PriceLevelError;
 pub use execution::{MatchResult, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
-pub use orders::{Hash32, OrderId, OrderType, OrderUpdate, Side, TimeInForce};
+pub use orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
 pub use price_level::{OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot};
 pub use utils::{UuidGenerator, setup_logger};

@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use pricelevel::{
-    Hash32, OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
+    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
     UuidGenerator,
 };
 use std::sync::{Arc, Barrier};
@@ -71,8 +71,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                                 Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
                             let transaction_id_generator = UuidGenerator::new(namespace);
                             // Use different taker order IDs for each thread/iteration
-                            let taker_id =
-                                OrderId::from_u64(thread_id as u64 * 1_000_000 + iteration);
+                            let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + iteration);
                             price_level.match_order(5, taker_id, &transaction_id_generator);
                         },
                     )
@@ -98,8 +97,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                         iters,
                         |price_level, thread_id, iteration| {
                             // Each thread cancels a different order
-                            let order_id =
-                                OrderId::from_u64(thread_id as u64 * 100 + iteration % 100);
+                            let order_id = Id::from_u64(thread_id as u64 * 100 + iteration % 100);
                             let _ = price_level.update_order(OrderUpdate::Cancel { order_id });
                         },
                     )
@@ -307,19 +305,19 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                     }
                     1 => {
                         // Match against existing orders
-                        let taker_id = OrderId::from_u64(thread_id as u64 * 1_000_000 + i);
+                        let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + i);
                         thread_price_level.match_order(5, taker_id, &thread_transaction_id_gen);
                     }
                     2 => {
                         // Cancel one of the initial orders
-                        let order_id = OrderId::from_u64(i % 200);
+                        let order_id = Id::from_u64(i % 200);
                         let _ = thread_price_level.update_order(OrderUpdate::Cancel { order_id });
                     }
                     _ => {
                         // Update quantity
                         let base_id = thread_id as u64 * 1_000_000 + (i - 1);
                         let _ = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
-                            order_id: OrderId::from_u64(base_id),
+                            order_id: Id::from_u64(base_id),
                             new_quantity: 20,
                         });
                     }
@@ -352,7 +350,7 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
 /// Create a standard limit order for testing
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -366,7 +364,7 @@ fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
 /// Create an iceberg order for testing
 fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -381,7 +379,7 @@ fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> Orde
 /// Create a post-only order for testing
 fn create_post_only_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::PostOnly {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -403,7 +401,7 @@ fn create_reserve_order(
     replenish_amount: Option<u64>,
 ) -> OrderType<()> {
     OrderType::ReserveOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         visible_quantity: visible,
         hidden_quantity: hidden,
@@ -421,7 +419,7 @@ fn create_reserve_order(
 /// Create a pegged order for testing
 fn create_pegged_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price,
         quantity,
         side: Side::Buy,
@@ -440,7 +438,7 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
 
     for i in 0..order_count {
         let order = OrderType::Standard {
-            id: OrderId::from_u64(i),
+            id: Id::from_u64(i),
             price: 10000u128,
             quantity: 10,
             side: Side::Buy,
