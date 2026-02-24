@@ -2,7 +2,7 @@
 
 use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
-use crate::execution::{MatchResult, Transaction};
+use crate::execution::{MatchResult, Trade};
 use crate::orders::{OrderId, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
@@ -142,7 +142,7 @@ impl PriceLevel {
     ///
     /// This function attempts to match the incoming order quantity against the orders present in the
     /// `OrderQueue`. It iterates through the queue, matching orders until the incoming quantity is
-    /// fully filled or the queue is exhausted.  Transactions are generated for each successful match,
+    /// fully filled or the queue is exhausted. Trades are generated for each successful match,
     /// and filled orders are removed from the queue.  The function also updates the visible and hidden
     /// quantity counters and records statistics for each execution.
     ///
@@ -150,19 +150,19 @@ impl PriceLevel {
     ///
     /// * `incoming_quantity`: The quantity of the incoming order to be matched.
     /// * `taker_order_id`: The ID of the incoming order (the "taker" order).
-    /// * `transaction_id_generator`: An atomic counter used to generate unique transaction IDs.
+    /// * `trade_id_generator`: An atomic counter used to generate unique trade IDs.
     ///
     /// # Returns
     ///
     /// A `MatchResult` object containing the results of the matching operation, including a list of
-    /// generated transactions, the remaining unmatched quantity, a flag indicating whether the
+    /// generated trades, the remaining unmatched quantity, a flag indicating whether the
     /// incoming order was completely filled, and a list of IDs of orders that were completely filled
     /// during the matching process.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
         taker_order_id: OrderId,
-        transaction_id_generator: &UuidGenerator,
+        trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
         let mut result = MatchResult::new(taker_order_id, incoming_quantity);
         let mut remaining = incoming_quantity;
@@ -177,10 +177,10 @@ impl PriceLevel {
                     self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
 
                     // Use UUID generator directly
-                    let transaction_id = transaction_id_generator.next();
+                    let trade_id = trade_id_generator.next();
 
-                    let transaction = Transaction::new(
-                        transaction_id,
+                    let trade = Trade::new(
+                        trade_id,
                         taker_order_id,
                         order_arc.id(),
                         self.price,
@@ -188,7 +188,7 @@ impl PriceLevel {
                         order_arc.side().opposite(),
                     );
 
-                    result.add_transaction(transaction);
+                    result.add_trade(trade);
 
                     // If the order was completely executed, add it to filled_order_ids
                     if updated_order.is_none() {

@@ -452,8 +452,8 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
 
-        assert_eq!(match_result.transactions.len(), 1);
-        let transaction = &match_result.transactions.as_vec()[0];
+        assert_eq!(match_result.trades.len(), 1);
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -489,8 +489,8 @@ mod tests {
         assert_eq!(price_level.order_count(), 1);
 
         // Verificar las transacciones generadas
-        assert_eq!(match_result.transactions.len(), 1);
-        let transaction = &match_result.transactions.as_vec()[0];
+        assert_eq!(match_result.trades.len(), 1);
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -523,8 +523,8 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
 
-        assert_eq!(match_result.transactions.len(), 1);
-        let transaction = &match_result.transactions.as_vec()[0];
+        assert_eq!(match_result.trades.len(), 1);
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -560,10 +560,10 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.transactions.len(), 1);
+        assert_eq!(match_result.trades.len(), 1);
 
         // Assertions about the generated transaction
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 0); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
 
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
@@ -620,10 +620,10 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.transactions.len(), 1);
+        assert_eq!(match_result.trades.len(), 1);
 
         // Assertions about the generated transaction
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
 
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
@@ -929,10 +929,10 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 20); // 100 - 80 = 20
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity unchanged (still above threshold)
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.transactions.len(), 1);
+        assert_eq!(match_result.trades.len(), 1);
 
         // Validate the transaction details
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(price_level.hidden_quantity(), 20); // 100 - 80 (replenish amount) = 20
         assert_eq!(price_level.order_count(), 1);
 
-        let transaction = &match_result.transactions.as_vec()[0];
+        let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction.price, 10000);
@@ -971,16 +971,16 @@ mod tests {
         assert_eq!(match_result.filled_order_ids[0], OrderId::from_u64(1));
 
         // Verify the correct number and sizes of transactions
-        assert_eq!(match_result.transactions.len(), 2); // One for visible, one for hidden
+        assert_eq!(match_result.trades.len(), 2); // One for visible, one for hidden
 
-        let transaction1 = &match_result.transactions.as_vec()[0];
+        let transaction1 = &match_result.trades.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
         assert_eq!(transaction1.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction1.price, 10000);
         assert_eq!(transaction1.quantity, 90); // First consumes all visible
         assert_eq!(transaction1.taker_side, Side::Buy);
 
-        let transaction2 = &match_result.transactions.as_vec()[1];
+        let transaction2 = &match_result.trades.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
         assert_eq!(transaction2.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction2.price, 10000);
@@ -1137,19 +1137,19 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 10); // 25 - (140 - 50 - 75) = 10
         assert_eq!(price_level.order_count(), 1);
 
-        assert_eq!(match_result.transactions.len(), 3);
+        assert_eq!(match_result.trades.len(), 3);
 
-        let transaction1 = &match_result.transactions.as_vec()[0];
+        let transaction1 = &match_result.trades.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
         assert_eq!(transaction1.maker_order_id, OrderId::from_u64(1));
         assert_eq!(transaction1.quantity, 50);
 
-        let transaction2 = &match_result.transactions.as_vec()[1];
+        let transaction2 = &match_result.trades.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
         assert_eq!(transaction2.maker_order_id, OrderId::from_u64(2));
         assert_eq!(transaction2.quantity, 75);
 
-        let transaction3 = &match_result.transactions.as_vec()[2];
+        let transaction3 = &match_result.trades.as_vec()[2];
         assert_eq!(transaction3.taker_order_id, taker_id);
         assert_eq!(transaction3.maker_order_id, OrderId::from_u64(3));
         assert_eq!(transaction3.quantity, 15);
