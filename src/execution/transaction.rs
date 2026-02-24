@@ -6,11 +6,11 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-/// Represents a completed transaction between two orders
+/// Represents a completed trade between two orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct Transaction {
-    /// Unique transaction ID
-    pub transaction_id: Uuid,
+pub struct Trade {
+    /// Unique trade ID
+    pub trade_id: Uuid,
 
     /// ID of the aggressive order that caused the match
     pub taker_order_id: OrderId,
@@ -18,23 +18,23 @@ pub struct Transaction {
     /// ID of the passive order that was in the book
     pub maker_order_id: OrderId,
 
-    /// Price at which the transaction occurred
+    /// Price at which the trade occurred
     pub price: u128,
 
-    /// Quantity that was traded
+    /// Quantity traded
     pub quantity: u64,
 
     /// Side of the taker order
     pub taker_side: Side,
 
-    /// Timestamp when the transaction occurred
+    /// Timestamp when the trade occurred
     pub timestamp: u64,
 }
 
-impl Transaction {
-    /// Create a new transaction
+impl Trade {
+    /// Create a new trade
     pub fn new(
-        transaction_id: Uuid,
+        trade_id: Uuid,
         taker_order_id: OrderId,
         maker_order_id: OrderId,
         price: u128,
@@ -47,7 +47,7 @@ impl Transaction {
             .as_millis() as u64;
 
         Self {
-            transaction_id,
+            trade_id,
             taker_order_id,
             maker_order_id,
             price,
@@ -65,18 +65,18 @@ impl Transaction {
         }
     }
 
-    /// Returns the total value of this transaction
+    /// Returns the total value of this trade
     pub fn total_value(&self) -> u128 {
         self.price * (self.quantity as u128)
     }
 }
 
-impl fmt::Display for Transaction {
+impl fmt::Display for Trade {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Transaction:transaction_id={};taker_order_id={};maker_order_id={};price={};quantity={};taker_side={};timestamp={}",
-            self.transaction_id,
+            "Trade:trade_id={};taker_order_id={};maker_order_id={};price={};quantity={};taker_side={};timestamp={}",
+            self.trade_id,
             self.taker_order_id,
             self.maker_order_id,
             self.price,
@@ -87,12 +87,12 @@ impl fmt::Display for Transaction {
     }
 }
 
-impl FromStr for Transaction {
+impl FromStr for Trade {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 || parts[0] != "Transaction" {
+        if parts.len() != 2 || parts[0] != "Trade" {
             return Err(PriceLevelError::InvalidFormat);
         }
 
@@ -131,14 +131,14 @@ impl FromStr for Transaction {
                 })
         };
 
-        // Parse transaction_id
-        let transaction_id_str = get_field("transaction_id")?;
-        let transaction_id = match Uuid::from_str(transaction_id_str) {
+        // Parse trade_id
+        let trade_id_str = get_field("trade_id")?;
+        let trade_id = match Uuid::from_str(trade_id_str) {
             Ok(id) => id,
             Err(_) => {
                 return Err(PriceLevelError::InvalidFieldValue {
-                    field: "transaction_id".to_string(),
-                    value: transaction_id_str.to_string(),
+                    field: "trade_id".to_string(),
+                    value: trade_id_str.to_string(),
                 });
             }
         };
@@ -181,8 +181,8 @@ impl FromStr for Transaction {
         let timestamp_str = get_field("timestamp")?;
         let timestamp = parse_u64("timestamp", timestamp_str)?;
 
-        Ok(Transaction {
-            transaction_id,
+        Ok(Trade {
+            trade_id,
             taker_order_id,
             maker_order_id,
             price,

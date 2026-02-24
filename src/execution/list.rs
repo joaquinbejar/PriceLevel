@@ -1,78 +1,81 @@
 use crate::errors::PriceLevelError;
-use crate::execution::transaction::Transaction;
+use crate::execution::transaction::Trade;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// A wrapper for a vector of transactions to implement custom serialization
+/// A wrapper for a vector of trades to implement custom serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TransactionList {
-    pub transactions: Vec<Transaction>,
+pub struct TradeList {
+    /// Ordered collection of trades.
+    pub trades: Vec<Trade>,
 }
 
-impl TransactionList {
-    /// Create a new empty transaction list
+impl TradeList {
+    /// Create a new empty trade list
     pub fn new() -> Self {
-        Self {
-            transactions: Vec::new(),
-        }
+        Self { trades: Vec::new() }
     }
 
-    /// Create a transaction list from an existing vector
-    pub fn from_vec(transactions: Vec<Transaction>) -> Self {
-        Self { transactions }
+    /// Create a trade list from an existing vector
+    pub fn from_vec(trades: Vec<Trade>) -> Self {
+        Self { trades }
     }
 
-    /// Add a transaction to the list
-    pub fn add(&mut self, transaction: Transaction) {
-        self.transactions.push(transaction);
+    /// Add a trade to the list
+    pub fn add(&mut self, trade: Trade) {
+        self.trades.push(trade);
     }
 
     /// Get a reference to the underlying vector
-    pub fn as_vec(&self) -> &Vec<Transaction> {
-        &self.transactions
+    pub fn as_vec(&self) -> &Vec<Trade> {
+        &self.trades
     }
 
-    /// Convert into a vector of transactions
-    pub fn into_vec(self) -> Vec<Transaction> {
-        self.transactions
+    /// Convert into a vector of trades
+    pub fn into_vec(self) -> Vec<Trade> {
+        self.trades
     }
 
+    /// Returns `true` when the list does not contain any trades.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.transactions.is_empty()
+        self.trades.is_empty()
     }
 
+    /// Returns the number of trades in the list.
+    #[must_use]
     pub fn len(&self) -> usize {
-        self.transactions.len()
+        self.trades.len()
     }
 }
 
-impl Default for TransactionList {
+impl Default for TradeList {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl fmt::Display for TransactionList {
+impl fmt::Display for TradeList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Transactions:[")?;
+        write!(f, "Trades:[")?;
 
-        for (i, transaction) in self.transactions.iter().enumerate() {
+        for (i, trade) in self.trades.iter().enumerate() {
             if i > 0 {
                 write!(f, ",")?;
             }
-            write!(f, "{transaction}")?;
+            write!(f, "{trade}")?;
         }
 
         write!(f, "]")
     }
 }
 
-impl FromStr for TransactionList {
+impl FromStr for TradeList {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with("Transactions:[") || !s.ends_with("]") {
+        if !s.starts_with("Trades:[") || !s.ends_with("]") {
             return Err(PriceLevelError::InvalidFormat);
         }
 
@@ -86,51 +89,51 @@ impl FromStr for TransactionList {
         let content = &s[content_start + 1..content_end];
 
         if content.is_empty() {
-            return Ok(TransactionList::new());
+            return Ok(TradeList::new());
         }
 
-        let mut transactions = Vec::new();
-        let mut current_transaction = String::new();
+        let mut trades = Vec::new();
+        let mut current_trade = String::new();
         let mut bracket_depth = 0;
 
         for c in content.chars() {
             match c {
                 ',' if bracket_depth == 0 => {
-                    if !current_transaction.is_empty() {
-                        let transaction = Transaction::from_str(&current_transaction)?;
-                        transactions.push(transaction);
-                        current_transaction.clear();
+                    if !current_trade.is_empty() {
+                        let trade = Trade::from_str(&current_trade)?;
+                        trades.push(trade);
+                        current_trade.clear();
                     }
                 }
                 '[' => {
                     bracket_depth += 1;
-                    current_transaction.push(c);
+                    current_trade.push(c);
                 }
                 ']' => {
                     bracket_depth -= 1;
-                    current_transaction.push(c);
+                    current_trade.push(c);
                 }
-                _ => current_transaction.push(c),
+                _ => current_trade.push(c),
             }
         }
 
-        if !current_transaction.is_empty() {
-            let transaction = Transaction::from_str(&current_transaction)?;
-            transactions.push(transaction);
+        if !current_trade.is_empty() {
+            let trade = Trade::from_str(&current_trade)?;
+            trades.push(trade);
         }
 
-        Ok(TransactionList { transactions })
+        Ok(TradeList { trades })
     }
 }
 
-impl From<Vec<Transaction>> for TransactionList {
-    fn from(transactions: Vec<Transaction>) -> Self {
-        Self::from_vec(transactions)
+impl From<Vec<Trade>> for TradeList {
+    fn from(trades: Vec<Trade>) -> Self {
+        Self::from_vec(trades)
     }
 }
 
-impl From<TransactionList> for Vec<Transaction> {
-    fn from(list: TransactionList) -> Self {
+impl From<TradeList> for Vec<Trade> {
+    fn from(list: TradeList) -> Self {
         list.into_vec()
     }
 }

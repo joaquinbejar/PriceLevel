@@ -1,6 +1,6 @@
 [package]
 name = "pricelevel"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Joaquin Bejar <jb@taunais.com>"]
 description = "A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns."
@@ -28,15 +28,15 @@ include = [
 ]
 
 [dependencies]
-tracing = "0.1"
-tracing-subscriber = { version = "0.3" }
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-crossbeam = "0.8"
-uuid = { version = "1.20", features = ["v4", "v5", "serde"] }
-ulid = { version = "1.2", features = ["serde"] }
-dashmap = "6.1"
-sha2 = "0.10"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+crossbeam = { workspace = true }
+uuid = { workspace = true, features = ["v4", "v5", "serde"] }
+ulid = { workspace = true, features = ["serde"] }
+dashmap = { workspace = true }
+sha2 = { workspace = true }
 
 
 [dev-dependencies]
@@ -63,4 +63,12 @@ members = [
 
 [workspace.dependencies]
 pricelevel = { path = "." }
-tracing = "0.1.41"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3" }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+crossbeam = "0.8"
+uuid = { version = "1.21", features = ["v4", "v5", "serde"] }
+ulid = { version = "1.2", features = ["serde"] }
+dashmap = "6.1"
+sha2 = "0.10"

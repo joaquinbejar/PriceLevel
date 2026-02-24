@@ -143,7 +143,7 @@ mod errors;
 mod execution;
 
 pub use errors::PriceLevelError;
-pub use execution::{MatchResult, Transaction};
+pub use execution::{MatchResult, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
 pub use orders::{Hash32, OrderId, OrderType, OrderUpdate, Side, TimeInForce};

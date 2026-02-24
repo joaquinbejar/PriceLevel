@@ -1,6 +1,6 @@
 use crate::errors::PriceLevelError;
-use crate::execution::list::TransactionList;
-use crate::execution::transaction::Transaction;
+use crate::execution::list::TradeList;
+use crate::execution::transaction::Trade;
 use crate::orders::OrderId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -12,8 +12,8 @@ pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
     pub order_id: OrderId,
 
-    /// List of transactions that resulted from the match
-    pub transactions: TransactionList,
+    /// List of trades that resulted from the match
+    pub trades: TradeList,
 
     /// Remaining quantity of the incoming order after matching
     pub remaining_quantity: u64,
@@ -30,18 +30,18 @@ impl MatchResult {
     pub fn new(order_id: OrderId, initial_quantity: u64) -> Self {
         Self {
             order_id,
-            transactions: TransactionList::new(),
+            trades: TradeList::new(),
             remaining_quantity: initial_quantity,
             is_complete: false,
             filled_order_ids: Vec::new(),
         }
     }
 
-    /// Add a transaction to this match result
-    pub fn add_transaction(&mut self, transaction: Transaction) {
-        self.remaining_quantity = self.remaining_quantity.saturating_sub(transaction.quantity);
+    /// Add a trade to this match result
+    pub fn add_trade(&mut self, trade: Trade) {
+        self.remaining_quantity = self.remaining_quantity.saturating_sub(trade.quantity);
         self.is_complete = self.remaining_quantity == 0;
-        self.transactions.add(transaction);
+        self.trades.add(trade);
     }
 
     /// Add a filled order ID to track orders removed from the book
@@ -51,12 +51,12 @@ impl MatchResult {
 
     /// Get the total executed quantity
     pub fn executed_quantity(&self) -> u64 {
-        self.transactions.as_vec().iter().map(|t| t.quantity).sum()
+        self.trades.as_vec().iter().map(|t| t.quantity).sum()
     }
 
     /// Get the total value executed
     pub fn executed_value(&self) -> u128 {
-        self.transactions
+        self.trades
             .as_vec()
             .iter()
             .map(|t| t.price * (t.quantity as u128))
@@ -81,7 +81,7 @@ impl fmt::Display for MatchResult {
             "MatchResult:order_id={};remaining_quantity={};is_complete={}",
             self.order_id, self.remaining_quantity, self.is_complete
         )?;
-        write!(f, ";transactions={}", self.transactions)?;
+        write!(f, ";trades={}", self.trades)?;
         write!(f, ";filled_order_ids=[")?;
         for (i, order_id) in self.filled_order_ids.iter().enumerate() {
             if i > 0 {
@@ -122,7 +122,7 @@ impl FromStr for MatchResult {
         let mut order_id_str = None;
         let mut remaining_quantity_str = None;
         let mut is_complete_str = None;
-        let mut transactions_str = None;
+        let mut trades_str = None;
         let mut filled_order_ids_str = None;
 
         let mut pos = "MatchResult:".len();
@@ -151,13 +151,13 @@ impl FromStr for MatchResult {
                     is_complete_str = Some(value);
                     pos = next_pos;
                 }
-                "transactions" => {
-                    if !s[pos..].starts_with("Transactions:[") {
+                "trades" => {
+                    if !s[pos..].starts_with("Trades:[") {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
                     let mut bracket_depth = 1;
-                    let mut i = pos + "Transactions:[".len();
+                    let mut i = pos + "Trades:[".len();
 
                     while i < s.len() && bracket_depth > 0 {
                         if s[i..].starts_with(']') {
@@ -178,7 +178,7 @@ impl FromStr for MatchResult {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
-                    transactions_str = Some(&s[pos..=i]);
+                    trades_str = Some(&s[pos..=i]);
                     pos = i + 1;
                     if pos < s.len() && s[pos..].starts_with(';') {
                         pos += 1;
@@ -230,8 +230,8 @@ impl FromStr for MatchResult {
             .ok_or_else(|| PriceLevelError::MissingField("remaining_quantity".to_string()))?;
         let is_complete_str = is_complete_str
             .ok_or_else(|| PriceLevelError::MissingField("is_complete".to_string()))?;
-        let transactions_str = transactions_str
-            .ok_or_else(|| PriceLevelError::MissingField("transactions".to_string()))?;
+        let trades_str =
+            trades_str.ok_or_else(|| PriceLevelError::MissingField("trades".to_string()))?;
         let filled_order_ids_str = filled_order_ids_str
             .ok_or_else(|| PriceLevelError::MissingField("filled_order_ids".to_string()))?;
 
@@ -256,7 +256,7 @@ impl FromStr for MatchResult {
                     value: is_complete_str.to_string(),
                 })?;
 
-        let transactions = TransactionList::from_str(transactions_str)?;
+        let trades = TradeList::from_str(trades_str)?;
 
         let filled_order_ids = if filled_order_ids_str == "[]" {
             Vec::new()
@@ -280,7 +280,7 @@ impl FromStr for MatchResult {
 
         Ok(MatchResult {
             order_id,
-            transactions,
+            trades,
             remaining_quantity,
             is_complete,
             filled_order_ids,
