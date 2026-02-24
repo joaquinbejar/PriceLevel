@@ -1,8 +1,7 @@
 // examples/src/bin/multi_threaded_price_level.rs
 
 use pricelevel::{
-    Hash32, OrderId, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
-    setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -66,7 +65,7 @@ fn main() {
                     thread_barrier.wait(); // Wait for all threads to be ready
 
                     for i in 0..20 {
-                        let taker_id = OrderId::from_u64(thread_id as u64 * 1000 + i);
+                        let taker_id = Id::from_u64(thread_id as u64 * 1000 + i);
                         let match_result = thread_price_level.match_order(
                             5, // Match 5 units each time
                             taker_id,
@@ -98,7 +97,7 @@ fn main() {
 
                     for i in 0..30 {
                         // Try to cancel orders created by thread 0
-                        let order_id = OrderId::from_u64(i);
+                        let order_id = Id::from_u64(i);
                         let result =
                             thread_price_level.update_order(OrderUpdate::Cancel { order_id });
 
@@ -126,7 +125,7 @@ fn main() {
 
                     for i in 0..40 {
                         // Try to update orders created by thread 0
-                        let order_id = OrderId::from_u64(100 + i);
+                        let order_id = Id::from_u64(100 + i);
                         let result = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                             order_id,
                             new_quantity: 20, // Update to quantity 20
@@ -201,7 +200,7 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     // Add 200 standard orders
     for i in 0..200 {
         let order = OrderType::Standard {
-            id: OrderId::from_u64(i),
+            id: Id::from_u64(i),
             price: 10000u128,
             quantity: 10,
             side: Side::Buy,
@@ -216,7 +215,7 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     // Add some iceberg orders
     for i in 200..220 {
         let order = OrderType::IcebergOrder {
-            id: OrderId::from_u64(i),
+            id: Id::from_u64(i),
             price: 10000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -232,7 +231,7 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     // Add some reserve orders
     for i in 220..240 {
         let order = OrderType::ReserveOrder {
-            id: OrderId::from_u64(i),
+            id: Id::from_u64(i),
             price: 10000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -259,7 +258,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
     // Create different order types based on the thread ID
     match thread_id % 4 {
         0 => OrderType::Standard {
-            id: OrderId::from_u64(order_id),
+            id: Id::from_u64(order_id),
             price: 10000u128,
             quantity: 10,
             side: Side::Buy,
@@ -269,7 +268,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
             extra_fields: (),
         },
         1 => OrderType::IcebergOrder {
-            id: OrderId::from_u64(order_id),
+            id: Id::from_u64(order_id),
             price: 10000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -280,7 +279,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
             extra_fields: (),
         },
         2 => OrderType::PostOnly {
-            id: OrderId::from_u64(order_id),
+            id: Id::from_u64(order_id),
             price: 10000u128,
             quantity: 10,
             side: Side::Buy,
@@ -290,7 +289,7 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
             extra_fields: (),
         },
         _ => OrderType::ReserveOrder {
-            id: OrderId::from_u64(order_id),
+            id: Id::from_u64(order_id),
             price: 10000u128,
             visible_quantity: 5,
             hidden_quantity: 15,

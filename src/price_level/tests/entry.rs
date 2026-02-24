@@ -2,7 +2,7 @@
 mod tests {
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
-    use crate::{Hash32, OrderId, OrderType, Side, TimeInForce};
+    use crate::{Hash32, Id, OrderType, Side, TimeInForce};
     use std::str::FromStr;
     use std::sync::Arc;
     use tracing::info;
@@ -124,7 +124,7 @@ mod tests {
 
         // Add an order to make the test more meaningful
         let order = OrderType::Standard {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -215,7 +215,7 @@ mod tests_order_book_entry {
 
         // Add some orders and check again
         let order_type = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId::from_u64(1),
+            id: crate::orders::Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: crate::orders::Side::Buy,
@@ -230,7 +230,7 @@ mod tests_order_book_entry {
 
         // Add another order
         let order_type2 = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId::from_u64(2),
+            id: crate::orders::Id::from_u64(2),
             price: 1000u128,
             quantity: 20,
             side: crate::orders::Side::Buy,
@@ -362,7 +362,7 @@ mod tests_order_book_entry {
 
         // Add an order with visible quantity
         let standard_order = crate::orders::OrderType::Standard {
-            id: crate::orders::OrderId::from_u64(1),
+            id: crate::orders::Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: crate::orders::Side::Buy,
@@ -379,7 +379,7 @@ mod tests_order_book_entry {
 
         // Add an iceberg order with hidden quantity
         let iceberg_order = crate::orders::OrderType::IcebergOrder {
-            id: crate::orders::OrderId::from_u64(2),
+            id: crate::orders::Id::from_u64(2),
             price: 1000u128,
             visible_quantity: 5,
             hidden_quantity: 15,

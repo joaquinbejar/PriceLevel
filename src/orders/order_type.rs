@@ -2,7 +2,7 @@
 
 use crate::OrderQueue;
 use crate::errors::PriceLevelError;
-use crate::orders::{Hash32, OrderId, PegReferenceType, Side, TimeInForce};
+use crate::orders::{Hash32, Id, PegReferenceType, Side, TimeInForce};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -25,7 +25,7 @@ pub enum OrderType<T> {
     /// Standard limit order
     Standard {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The quantity of the order
@@ -45,7 +45,7 @@ pub enum OrderType<T> {
     /// Iceberg order with visible and hidden quantities
     IcebergOrder {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The visible quantity of the order
@@ -67,7 +67,7 @@ pub enum OrderType<T> {
     /// Post-only order that won't match immediately
     PostOnly {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The quantity of the order
@@ -87,7 +87,7 @@ pub enum OrderType<T> {
     /// Trailing stop order that adjusts with market movement
     TrailingStop {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The quantity of the order
@@ -111,7 +111,7 @@ pub enum OrderType<T> {
     /// Pegged order that adjusts based on reference price
     PeggedOrder {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The quantity of the order
@@ -135,7 +135,7 @@ pub enum OrderType<T> {
     /// Market-to-limit order that converts to limit after initial execution
     MarketToLimit {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The quantity of the order
@@ -159,7 +159,7 @@ pub enum OrderType<T> {
     /// if `auto_replenish` is true, and replenish_threshold is 0, it will use 1
     ReserveOrder {
         /// The order ID
-        id: OrderId,
+        id: Id,
         /// The price of the order
         price: u128,
         /// The visible quantity of the order
@@ -187,7 +187,7 @@ pub enum OrderType<T> {
 
 impl<T: Clone> OrderType<T> {
     /// Get the order ID
-    pub fn id(&self) -> OrderId {
+    pub fn id(&self) -> Id {
         match self {
             Self::Standard { id, .. } => *id,
             Self::IcebergOrder { id, .. } => *id,
@@ -953,7 +953,7 @@ impl<T: Default> FromStr for OrderType<T> {
 
         // Parse common fields
         let id_str = get_field("id")?;
-        let id = OrderId::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+        let id = Id::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
             field: "id".to_string(),
             value: id_str.to_string(),
         })?;

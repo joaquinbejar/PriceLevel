@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::execution::list::TradeList;
-    use crate::execution::transaction::Trade;
-    use crate::orders::{OrderId, Side};
+    use crate::execution::trade::Trade;
+    use crate::orders::{Id, Side};
     use std::str::FromStr;
     use uuid::Uuid;
 
@@ -15,9 +15,9 @@ mod tests {
 
     fn sample_trade() -> Trade {
         Trade {
-            trade_id: parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
-            taker_order_id: OrderId::from_u64(1),
-            maker_order_id: OrderId::from_u64(2),
+            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            taker_order_id: Id::from_u64(1),
+            maker_order_id: Id::from_u64(2),
             price: 10_000,
             quantity: 5,
             taker_side: Side::Buy,

@@ -1,7 +1,7 @@
 // examples/src/bin/hft_simulation.rs
 
 use pricelevel::{
-    Hash32, OrderId, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
+    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
     UuidGenerator, setup_logger,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -133,7 +133,7 @@ fn main() {
             let mut local_counter = 0;
             while thread_running.load(Ordering::Relaxed) {
                 // Generate a unique taker order ID
-                let taker_id = OrderId::from_u64((thread_id as u64) * 1_000_000 + local_counter);
+                let taker_id = Id::from_u64((thread_id as u64) * 1_000_000 + local_counter);
 
                 // Match varying quantities
                 let quantity = (local_counter % 5) + 1; // Match 1-5 units
@@ -185,7 +185,7 @@ fn main() {
                 // Try to cancel random orders
                 // Use a combination of the thread ID, local counter, and time to generate "random" order IDs
                 let time_component = Instant::now().elapsed().as_nanos() as u64 % 1000;
-                let order_id = OrderId::from_u64(time_component + local_counter);
+                let order_id = Id::from_u64(time_component + local_counter);
 
                 let result = thread_price_level.update_order(OrderUpdate::Cancel { order_id });
 
@@ -315,7 +315,7 @@ fn setup_initial_orders(price_level: &PriceLevel, count: u64) {
 // Helper function to create a standard order
 fn create_standard_order(id: u64) -> OrderType<()> {
     OrderType::Standard {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price: PRICE,
         quantity: 10,
         side: Side::Buy,
@@ -329,7 +329,7 @@ fn create_standard_order(id: u64) -> OrderType<()> {
 // Helper function to create an iceberg order
 fn create_iceberg_order(id: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price: PRICE,
         visible_quantity: 5,
         hidden_quantity: 15,
@@ -344,7 +344,7 @@ fn create_iceberg_order(id: u64) -> OrderType<()> {
 // Helper function to create a post-only order
 fn create_post_only_order(id: u64) -> OrderType<()> {
     OrderType::PostOnly {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price: PRICE,
         quantity: 8,
         side: Side::Buy,
@@ -358,7 +358,7 @@ fn create_post_only_order(id: u64) -> OrderType<()> {
 // Helper function to create a reserve order
 fn create_reserve_order(id: u64) -> OrderType<()> {
     OrderType::ReserveOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price: PRICE,
         visible_quantity: 5,
         hidden_quantity: 15,
@@ -376,7 +376,7 @@ fn create_reserve_order(id: u64) -> OrderType<()> {
 // Helper function to create a pegged order
 fn create_pegged_order(id: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
-        id: OrderId::from_u64(id),
+        id: Id::from_u64(id),
         price: PRICE,
         quantity: 10,
         side: Side::Buy,

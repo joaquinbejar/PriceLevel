@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::orders::{Hash32, OrderId, OrderType, Side, TimeInForce};
+    use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::order_queue::OrderQueue;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -8,7 +8,7 @@ mod tests {
 
     fn create_test_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         OrderType::<()>::Standard {
-            id: OrderId::from_u64(id),
+            id: Id::from_u64(id),
             price,
             quantity,
             side: Side::Buy,
@@ -74,10 +74,10 @@ mod tests {
 
         // Verify individual orders (order might not be preserved)
         let has_order1 = orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
         });
         let has_order2 = orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
         });
 
         assert!(has_order1, "First order not found or incorrect");
@@ -94,10 +94,10 @@ mod tests {
         );
 
         let round_trip_has_order1 = round_trip_orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
         });
         let round_trip_has_order2 = round_trip_orders.iter().any(|o| {
-            o.id() == OrderId::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
         });
 
         assert!(
@@ -201,7 +201,7 @@ mod tests {
             ..
         } = **order
         {
-            assert_eq!(id, OrderId::from_u64(1));
+            assert_eq!(id, Id::from_u64(1));
             assert_eq!(price, 10000);
             assert_eq!(quantity, 100);
             assert!(matches!(time_in_force, TimeInForce::Gtd(1617000000000)));
@@ -223,7 +223,7 @@ mod tests {
     fn test_order_queue_serialization() {
         fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
             OrderType::Standard {
-                id: OrderId::from_u64(id),
+                id: Id::from_u64(id),
                 price,
                 quantity,
                 side: Side::Buy,
@@ -261,7 +261,7 @@ mod tests {
             ..
         } = **deserialized_order
         {
-            assert_eq!(id, OrderId::from_u64(1));
+            assert_eq!(id, Id::from_u64(1));
             assert_eq!(price, 10000u128);
             assert_eq!(quantity, 100);
         } else {
@@ -279,7 +279,7 @@ mod tests {
 
         // Add an order and check again
         let order = OrderType::Standard {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -307,7 +307,7 @@ mod tests {
         // Test lines 170, 178
         // Create a vector of orders
         let order1 = Arc::new(OrderType::Standard {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -318,7 +318,7 @@ mod tests {
         });
 
         let order2 = Arc::new(OrderType::Standard {
-            id: OrderId::from_u64(2),
+            id: Id::from_u64(2),
             price: 1000u128,
             quantity: 20,
             side: Side::Buy,
@@ -364,9 +364,9 @@ mod tests {
         assert_eq!(queue.to_vec().len(), 2);
 
         // Verify the parsed orders have the expected IDs
-        let order_ids: Vec<OrderId> = queue.to_vec().iter().map(|order| order.id()).collect();
-        assert!(order_ids.contains(&OrderId::from_u64(1)));
-        assert!(order_ids.contains(&OrderId::from_u64(2)));
+        let order_ids: Vec<Id> = queue.to_vec().iter().map(|order| order.id()).collect();
+        assert!(order_ids.contains(&Id::from_u64(1)));
+        assert!(order_ids.contains(&Id::from_u64(2)));
 
         // Test parsing with empty orders
         let empty_orders = "OrderQueue:orders=[]";
@@ -397,7 +397,7 @@ mod tests {
         let queue = OrderQueue::new();
 
         let order1 = OrderType::Standard {
-            id: OrderId::from_u64(1),
+            id: Id::from_u64(1),
             price: 1000u128,
             quantity: 10,
             side: Side::Buy,
@@ -408,7 +408,7 @@ mod tests {
         };
 
         let order2 = OrderType::IcebergOrder {
-            id: OrderId::from_u64(2),
+            id: Id::from_u64(2),
             price: 1000u128,
             visible_quantity: 5,
             hidden_quantity: 15,
@@ -436,12 +436,12 @@ mod tests {
         assert_eq!(deserialized.to_vec().len(), 2);
 
         // Verify the order IDs
-        let order_ids: Vec<OrderId> = deserialized
+        let order_ids: Vec<Id> = deserialized
             .to_vec()
             .iter()
             .map(|order| order.id())
             .collect();
-        assert!(order_ids.contains(&OrderId::from_u64(1)));
-        assert!(order_ids.contains(&OrderId::from_u64(2)));
+        assert!(order_ids.contains(&Id::from_u64(1)));
+        assert!(order_ids.contains(&Id::from_u64(2)));
     }
 }

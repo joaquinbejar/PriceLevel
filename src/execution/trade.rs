@@ -1,22 +1,21 @@
 use crate::errors::PriceLevelError;
-use crate::orders::{OrderId, Side};
+use crate::orders::{Id, Side};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
 
 /// Represents a completed trade between two orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Trade {
     /// Unique trade ID
-    pub trade_id: Uuid,
+    pub trade_id: Id,
 
     /// ID of the aggressive order that caused the match
-    pub taker_order_id: OrderId,
+    pub taker_order_id: Id,
 
     /// ID of the passive order that was in the book
-    pub maker_order_id: OrderId,
+    pub maker_order_id: Id,
 
     /// Price at which the trade occurred
     pub price: u128,
@@ -34,17 +33,16 @@ pub struct Trade {
 impl Trade {
     /// Create a new trade
     pub fn new(
-        trade_id: Uuid,
-        taker_order_id: OrderId,
-        maker_order_id: OrderId,
+        trade_id: Id,
+        taker_order_id: Id,
+        maker_order_id: Id,
         price: u128,
         quantity: u64,
         taker_side: Side,
     ) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64;
+            .map_or(0_u64, |duration| duration.as_millis() as u64);
 
         Self {
             trade_id,
@@ -133,33 +131,27 @@ impl FromStr for Trade {
 
         // Parse trade_id
         let trade_id_str = get_field("trade_id")?;
-        let trade_id = match Uuid::from_str(trade_id_str) {
-            Ok(id) => id,
-            Err(_) => {
-                return Err(PriceLevelError::InvalidFieldValue {
-                    field: "trade_id".to_string(),
-                    value: trade_id_str.to_string(),
-                });
-            }
-        };
+        let trade_id =
+            Id::from_str(trade_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+                field: "trade_id".to_string(),
+                value: trade_id_str.to_string(),
+            })?;
 
         // Parse taker_order_id
         let taker_order_id_str = get_field("taker_order_id")?;
-        let taker_order_id = OrderId::from_str(taker_order_id_str).map_err(|_| {
-            PriceLevelError::InvalidFieldValue {
+        let taker_order_id =
+            Id::from_str(taker_order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "taker_order_id".to_string(),
                 value: taker_order_id_str.to_string(),
-            }
-        })?;
+            })?;
 
         // Parse maker_order_id
         let maker_order_id_str = get_field("maker_order_id")?;
-        let maker_order_id = OrderId::from_str(maker_order_id_str).map_err(|_| {
-            PriceLevelError::InvalidFieldValue {
+        let maker_order_id =
+            Id::from_str(maker_order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "maker_order_id".to_string(),
                 value: maker_order_id_str.to_string(),
-            }
-        })?;
+            })?;
 
         // Parse price
         let price_str = get_field("price")?;

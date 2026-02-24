@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::execution::match_result::MatchResult;
-    use crate::execution::transaction::Trade;
-    use crate::orders::{OrderId, Side};
+    use crate::execution::trade::Trade;
+    use crate::orders::{Id, Side};
     use std::str::FromStr;
     use uuid::Uuid;
 
@@ -15,9 +15,9 @@ mod tests {
 
     fn sample_trade(quantity: u64) -> Trade {
         Trade {
-            trade_id: parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
-            taker_order_id: OrderId::from_u64(10),
-            maker_order_id: OrderId::from_u64(20),
+            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            taker_order_id: Id::from_u64(10),
+            maker_order_id: Id::from_u64(20),
             price: 1_000,
             quantity,
             taker_side: Side::Buy,
@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn add_trade_updates_remaining_and_trades() {
-        let mut result = MatchResult::new(OrderId::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), 100);
         result.add_trade(sample_trade(25));
 
         assert_eq!(result.remaining_quantity, 75);
@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn display_and_parse_use_trades_field() {
-        let mut result = MatchResult::new(OrderId::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), 100);
         result.add_trade(sample_trade(40));
 
         let rendered = result.to_string();

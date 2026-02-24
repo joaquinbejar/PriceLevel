@@ -1,5 +1,5 @@
 use crate::errors::PriceLevelError;
-use crate::orders::base::{OrderId, Side};
+use crate::orders::{Id, Side};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -9,7 +9,7 @@ pub enum OrderUpdate {
     /// Update the price of an order
     UpdatePrice {
         /// ID of the order to update
-        order_id: OrderId,
+        order_id: Id,
         /// New price for the order
         new_price: u128,
     },
@@ -17,7 +17,7 @@ pub enum OrderUpdate {
     /// Update the quantity of an order
     UpdateQuantity {
         /// ID of the order to update
-        order_id: OrderId,
+        order_id: Id,
         /// New quantity for the order
         new_quantity: u64,
     },
@@ -25,7 +25,7 @@ pub enum OrderUpdate {
     /// Update both price and quantity of an order
     UpdatePriceAndQuantity {
         /// ID of the order to update
-        order_id: OrderId,
+        order_id: Id,
         /// New price for the order
         new_price: u128,
         /// New quantity for the order
@@ -35,13 +35,13 @@ pub enum OrderUpdate {
     /// Cancel an order
     Cancel {
         /// ID of the order to cancel
-        order_id: OrderId,
+        order_id: Id,
     },
 
     /// Replace an order entirely with a new one
     Replace {
         /// ID of the order to replace
-        order_id: OrderId,
+        order_id: Id,
         /// New price for the replacement order
         price: u128,
         /// New quantity for the replacement order
@@ -99,7 +99,7 @@ impl FromStr for OrderUpdate {
         // Parse order_id field which is common to all update types
         let order_id_str = get_field("order_id")?;
         let order_id =
-            OrderId::from_str(order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+            Id::from_str(order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "order_id".to_string(),
                 value: order_id_str.to_string(),
             })?;

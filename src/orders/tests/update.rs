@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests_order_update {
     use crate::errors::PriceLevelError;
-    use crate::orders::base::{OrderId, Side};
     use crate::orders::update::OrderUpdate;
+    use crate::orders::{Id, Side};
     use std::str::FromStr;
 
     #[test]
@@ -15,7 +15,7 @@ mod tests_order_update {
                 order_id,
                 new_price,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(123));
+                assert_eq!(order_id, Id::from_u64(123));
                 assert_eq!(new_price, 1000);
             }
             _ => panic!("Expected UpdatePrice variant"),
@@ -31,7 +31,7 @@ mod tests_order_update {
                 order_id,
                 new_quantity,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(456));
+                assert_eq!(order_id, Id::from_u64(456));
                 assert_eq!(new_quantity, 50);
             }
             _ => panic!("Expected UpdateQuantity variant"),
@@ -48,7 +48,7 @@ mod tests_order_update {
                 new_price,
                 new_quantity,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(789));
+                assert_eq!(order_id, Id::from_u64(789));
                 assert_eq!(new_price, 2000);
                 assert_eq!(new_quantity, 30);
             }
@@ -63,7 +63,7 @@ mod tests_order_update {
 
         match result {
             OrderUpdate::Cancel { order_id } => {
-                assert_eq!(order_id, OrderId::from_u64(101));
+                assert_eq!(order_id, Id::from_u64(101));
             }
             _ => panic!("Expected Cancel variant"),
         }
@@ -82,7 +82,7 @@ mod tests_order_update {
                 quantity,
                 side,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(202));
+                assert_eq!(order_id, Id::from_u64(202));
                 assert_eq!(price, 3000);
                 assert_eq!(quantity, 40);
                 assert_eq!(side, Side::Buy);
@@ -103,7 +103,7 @@ mod tests_order_update {
                 quantity,
                 side,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(303));
+                assert_eq!(order_id, Id::from_u64(303));
                 assert_eq!(price, 4000);
                 assert_eq!(quantity, 60);
                 assert_eq!(side, Side::Sell);
@@ -170,7 +170,7 @@ mod tests_order_update {
     #[test]
     fn test_display_update_price() {
         let update = OrderUpdate::UpdatePrice {
-            order_id: OrderId::from_u64(123),
+            order_id: Id::from_u64(123),
             new_price: 1000,
         };
 
@@ -183,7 +183,7 @@ mod tests_order_update {
     #[test]
     fn test_display_update_quantity() {
         let update = OrderUpdate::UpdateQuantity {
-            order_id: OrderId::from_u64(456),
+            order_id: Id::from_u64(456),
             new_quantity: 50,
         };
 
@@ -196,7 +196,7 @@ mod tests_order_update {
     #[test]
     fn test_display_update_price_and_quantity() {
         let update = OrderUpdate::UpdatePriceAndQuantity {
-            order_id: OrderId::from_u64(789),
+            order_id: Id::from_u64(789),
             new_price: 2000,
             new_quantity: 30,
         };
@@ -210,7 +210,7 @@ mod tests_order_update {
     #[test]
     fn test_display_cancel() {
         let update = OrderUpdate::Cancel {
-            order_id: OrderId::from_u64(101),
+            order_id: Id::from_u64(101),
         };
 
         assert_eq!(
@@ -222,7 +222,7 @@ mod tests_order_update {
     #[test]
     fn test_display_replace() {
         let update = OrderUpdate::Replace {
-            order_id: OrderId::from_u64(202),
+            order_id: Id::from_u64(202),
             price: 3000,
             quantity: 40,
             side: Side::Buy,
@@ -239,29 +239,29 @@ mod tests_order_update {
         // Create instances of each variant
         let updates = vec![
             OrderUpdate::UpdatePrice {
-                order_id: OrderId::from_u64(123),
+                order_id: Id::from_u64(123),
                 new_price: 1000,
             },
             OrderUpdate::UpdateQuantity {
-                order_id: OrderId::from_u64(456),
+                order_id: Id::from_u64(456),
                 new_quantity: 50,
             },
             OrderUpdate::UpdatePriceAndQuantity {
-                order_id: OrderId::from_u64(789),
+                order_id: Id::from_u64(789),
                 new_price: 2000,
                 new_quantity: 30,
             },
             OrderUpdate::Cancel {
-                order_id: OrderId::from_u64(101),
+                order_id: Id::from_u64(101),
             },
             OrderUpdate::Replace {
-                order_id: OrderId::from_u64(202),
+                order_id: Id::from_u64(202),
                 price: 3000,
                 quantity: 40,
                 side: Side::Buy,
             },
             OrderUpdate::Replace {
-                order_id: OrderId::from_u64(303),
+                order_id: Id::from_u64(303),
                 price: 4000,
                 quantity: 60,
                 side: Side::Sell,
@@ -282,7 +282,7 @@ mod tests_order_update {
     fn test_order_update_display_detailed() {
         // Test display of UpdatePrice
         let update = OrderUpdate::UpdatePrice {
-            order_id: OrderId::from_u64(123),
+            order_id: Id::from_u64(123),
             new_price: 10500,
         };
         let display_string = update.to_string();
@@ -293,7 +293,7 @@ mod tests_order_update {
 
         // Test display of UpdateQuantity
         let update = OrderUpdate::UpdateQuantity {
-            order_id: OrderId::from_u64(456),
+            order_id: Id::from_u64(456),
             new_quantity: 75,
         };
         let display_string = update.to_string();
@@ -304,7 +304,7 @@ mod tests_order_update {
 
         // Test display of UpdatePriceAndQuantity
         let update = OrderUpdate::UpdatePriceAndQuantity {
-            order_id: OrderId::from_u64(789),
+            order_id: Id::from_u64(789),
             new_price: 11000,
             new_quantity: 50,
         };
@@ -316,7 +316,7 @@ mod tests_order_update {
 
         // Test display of Replace
         let update = OrderUpdate::Replace {
-            order_id: OrderId::from_u64(202),
+            order_id: Id::from_u64(202),
             price: 12000,
             quantity: 60,
             side: Side::Sell,
@@ -341,7 +341,7 @@ mod tests_order_update {
                 quantity,
                 side,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(202));
+                assert_eq!(order_id, Id::from_u64(202));
                 assert_eq!(price, 12000);
                 assert_eq!(quantity, 60);
                 assert_eq!(side, Side::Buy);
@@ -360,7 +360,7 @@ mod tests_order_update {
                 quantity,
                 side,
             } => {
-                assert_eq!(order_id, OrderId::from_u64(202));
+                assert_eq!(order_id, Id::from_u64(202));
                 assert_eq!(price, 12000);
                 assert_eq!(quantity, 60);
                 assert_eq!(side, Side::Sell);
@@ -377,7 +377,7 @@ mod tests_order_update {
     #[test]
     fn test_update_display_cancel() {
         let update = OrderUpdate::Cancel {
-            order_id: OrderId::from_u64(123),
+            order_id: Id::from_u64(123),
         };
 
         assert_eq!(
