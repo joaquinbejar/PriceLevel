@@ -134,6 +134,178 @@
 //!
 //! The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 //!
+//! ## Migration Guide (v0.6 → v0.7)
+//!
+//! Version 0.7.0 introduces several intentional breaking changes to improve type safety,
+//! correctness, and API ergonomics. This section provides a complete mapping from the old
+//! API surface to the new one.
+//!
+//! ### Execution Domain Rename
+//!
+//! The execution domain was renamed from `Transaction` to `Trade` to align with standard
+//! financial terminology.
+//!
+//! | v0.6 | v0.7 |
+//! |------|------|
+//! | `Transaction` | [`Trade`] |
+//! | `TransactionList` | [`TradeList`] |
+//! | `transaction_id` field | [`Trade::trade_id()`] accessor |
+//! | `Transaction:` parsing prefix | `Trade:` parsing prefix |
+//!
+//! ### Identifier Types
+//!
+//! Raw `Uuid` identifiers were replaced with the [`Id`] enum, which supports UUID, ULID, and
+//! sequential (`u64`) formats. Trade IDs are generated via [`UuidGenerator`].
+//!
+//! | v0.6 | v0.7 |
+//! |------|------|
+//! | `Uuid` (raw) | [`Id`] enum (`Uuid`, `Ulid`, `Sequential`) |
+//! | `Uuid::new_v4()` | [`Id::new()`] or [`Id::new_uuid()`] |
+//! | `u64` order/trade IDs | [`Id::from_u64()`] or [`Id::sequential()`] |
+//! | `AtomicU64` trade counter | [`UuidGenerator::next()`] |
+//!
+//! ### Domain Newtypes
+//!
+//! Raw numeric primitives used in the public API were replaced with validated domain
+//! newtypes. Each provides `new()`, `try_new()`, `Display`, `FromStr`, and serde support.
+//!
+//! | v0.6 | v0.7 | Inner |
+//! |------|------|-------|
+//! | `u128` (price) | [`Price`] | `u128` |
+//! | `u64` (quantity) | [`Quantity`] | `u64` |
+//! | `u64` (timestamp) | [`TimestampMs`] | `u64` |
+//!
+//! ```rust
+//! use pricelevel::{Price, Quantity, TimestampMs};
+//!
+//! let price = Price::new(10_000);
+//! let qty   = Quantity::new(100);
+//! let ts    = TimestampMs::new(1_716_000_000_000);
+//!
+//! // Convert back to primitives
+//! assert_eq!(price.as_u128(), 10_000);
+//! assert_eq!(qty.as_u64(), 100);
+//! assert_eq!(ts.as_u64(), 1_716_000_000_000);
+//! ```
+//!
+//! ### Checked Arithmetic
+//!
+//! All arithmetic in financial-critical paths now uses checked operations and returns
+//! `Result<T, PriceLevelError>` instead of raw values. No silent saturation or wrapping
+//! is performed.
+//!
+//! | Method | v0.6 Return | v0.7 Return |
+//! |--------|-------------|-------------|
+//! | [`PriceLevel::total_quantity()`] | `u64` | `Result<u64, PriceLevelError>` |
+//! | [`MatchResult::executed_quantity()`] | `u64` | `Result<u64, PriceLevelError>` |
+//! | [`MatchResult::executed_value()`] | `u128` | `Result<u128, PriceLevelError>` |
+//! | [`MatchResult::average_price()`] | `Option<f64>` | `Result<Option<f64>, PriceLevelError>` |
+//! | [`MatchResult::add_trade()`] | `()` | `Result<(), PriceLevelError>` |
+//!
+//! ```rust
+//! use pricelevel::{PriceLevel, PriceLevelError};
+//!
+//! let level = PriceLevel::new(10_000);
+//! // total_quantity() now returns Result
+//! let total: Result<u64, PriceLevelError> = level.total_quantity();
+//! assert_eq!(total.unwrap(), 0);
+//! ```
+//!
+//! ### Private Fields and Accessor Methods
+//!
+//! All struct fields in the execution and snapshot modules are now private. Use the
+//! provided accessor methods instead of direct field access.
+//!
+//! **Trade:**
+//!
+//! | v0.6 (field) | v0.7 (accessor) |
+//! |--------------|-----------------|
+//! | `trade.trade_id` | [`trade.trade_id()`](Trade::trade_id) |
+//! | `trade.taker_order_id` | [`trade.taker_order_id()`](Trade::taker_order_id) |
+//! | `trade.maker_order_id` | [`trade.maker_order_id()`](Trade::maker_order_id) |
+//! | `trade.price` | [`trade.price()`](Trade::price) |
+//! | `trade.quantity` | [`trade.quantity()`](Trade::quantity) |
+//! | `trade.taker_side` | [`trade.taker_side()`](Trade::taker_side) |
+//! | `trade.timestamp` | [`trade.timestamp()`](Trade::timestamp) |
+//!
+//! **MatchResult:**
+//!
+//! | v0.6 (field) | v0.7 (accessor) |
+//! |--------------|-----------------|
+//! | `result.order_id` | [`result.order_id()`](MatchResult::order_id) |
+//! | `result.trades` | [`result.trades()`](MatchResult::trades) |
+//! | `result.remaining_quantity` | [`result.remaining_quantity()`](MatchResult::remaining_quantity) |
+//! | `result.is_complete` | [`result.is_complete()`](MatchResult::is_complete) |
+//! | `result.filled_order_ids` | [`result.filled_order_ids()`](MatchResult::filled_order_ids) |
+//!
+//! **TradeList:**
+//!
+//! | v0.6 (field) | v0.7 (accessor) |
+//! |--------------|-----------------|
+//! | `list.trades` (direct `Vec`) | [`list.as_vec()`](TradeList::as_vec) / [`list.into_vec()`](TradeList::into_vec) |
+//! | `list.trades.push(t)` | [`list.add(t)`](TradeList::add) |
+//! | `list.trades.len()` | [`list.len()`](TradeList::len) |
+//! | `list.trades.is_empty()` | [`list.is_empty()`](TradeList::is_empty) |
+//!
+//! ### Iterator API Changes
+//!
+//! The `iter_orders()` method now returns an iterator instead of a `Vec`, reducing
+//! allocations on the hot path. Use `snapshot_orders()` when a materialized `Vec` is needed.
+//!
+//! | v0.6 | v0.7 |
+//! |------|------|
+//! | `level.iter_orders() -> Vec<Arc<OrderType<()>>>` | [`level.iter_orders()`](PriceLevel::iter_orders) `-> impl Iterator` |
+//! | (no equivalent) | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Vec<Arc<OrderType<()>>>` |
+//!
+//! ### Snapshot Persistence and Recovery
+//!
+//! Snapshots are now protected with SHA-256 checksums via [`PriceLevelSnapshotPackage`].
+//! The full persistence/recovery flow is:
+//!
+//! ```rust
+//! use pricelevel::PriceLevel;
+//!
+//! let level = PriceLevel::new(10_000);
+//!
+//! // Serialize to JSON (includes checksum)
+//! let json = level.snapshot_to_json().unwrap();
+//!
+//! // Restore from JSON (validates checksum)
+//! let restored = PriceLevel::from_snapshot_json(&json).unwrap();
+//! ```
+//!
+//! ### Compiler Attributes
+//!
+//! - **`#[must_use]`** is now applied to all pure/computed methods (`price()`, `quantity()`,
+//!   `trade_id()`, `order_count()`, `visible_quantity()`, `is_complete()`, etc.).
+//!   Ignoring a return value from these methods will produce a compiler warning.
+//! - **`#[repr(u8)]`** is applied to small enums exposed in the public API ([`Side`],
+//!   [`TimeInForce`]).
+//!
+//! ### Error Handling
+//!
+//! [`PriceLevelError`] gained new variants for the expanded error surface:
+//!
+//! | Variant | Purpose |
+//! |---------|---------|
+//! | `InvalidOperation { message }` | Checked arithmetic overflow, invalid state transitions |
+//! | `SerializationError { message }` | JSON/serde serialization failures |
+//! | `DeserializationError { message }` | JSON/serde deserialization failures |
+//! | `ChecksumMismatch { expected, actual }` | Snapshot integrity validation failure |
+//!
+//! ### Quick Migration Checklist
+//!
+//! 1. Replace `Transaction` / `TransactionList` with [`Trade`] / [`TradeList`].
+//! 2. Replace raw `Uuid` with [`Id`]; use [`UuidGenerator`] for trade IDs.
+//! 3. Wrap raw price/quantity/timestamp literals with [`Price::new()`](Price::new),
+//!    [`Quantity::new()`](Quantity::new), [`TimestampMs::new()`](TimestampMs::new).
+//! 4. Replace direct field access on `Trade`, `MatchResult`, `TradeList` with accessors.
+//! 5. Handle `Result` returns from `total_quantity()`, `executed_quantity()`,
+//!    `executed_value()`, `average_price()`, and `add_trade()`.
+//! 6. Replace `iter_orders()` collecting into `Vec` with `snapshot_orders()` if needed.
+//! 7. Update snapshot code to use [`PriceLevelSnapshotPackage`] for checksum validation.
+//! 8. Address new `#[must_use]` warnings on query methods.
+//!
 
 mod orders;
 mod price_level;
