@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
-    UuidGenerator,
+    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
+    TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -318,7 +318,7 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                         let base_id = thread_id as u64 * 1_000_000 + (i - 1);
                         let _ = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                             order_id: Id::from_u64(base_id),
-                            new_quantity: 20,
+                            new_quantity: Quantity::new(20),
                         });
                     }
                 }
@@ -351,11 +351,11 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: Id::from_u64(id),
-        price,
-        quantity,
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -365,12 +365,12 @@ fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
 fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: Id::from_u64(id),
-        price,
-        visible_quantity: visible,
-        hidden_quantity: hidden,
+        price: Price::new(price),
+        visible_quantity: Quantity::new(visible),
+        hidden_quantity: Quantity::new(hidden),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -380,11 +380,11 @@ fn create_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> Orde
 fn create_post_only_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::PostOnly {
         id: Id::from_u64(id),
-        price,
-        quantity,
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -402,15 +402,15 @@ fn create_reserve_order(
 ) -> OrderType<()> {
     OrderType::ReserveOrder {
         id: Id::from_u64(id),
-        price,
-        visible_quantity: visible,
-        hidden_quantity: hidden,
+        price: Price::new(price),
+        visible_quantity: Quantity::new(visible),
+        hidden_quantity: Quantity::new(hidden),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
-        replenish_threshold: threshold,
-        replenish_amount,
+        replenish_threshold: Quantity::new(threshold),
+        replenish_amount: replenish_amount.map(Quantity::new),
         auto_replenish,
         extra_fields: (),
     }
@@ -420,11 +420,11 @@ fn create_reserve_order(
 fn create_pegged_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
         id: Id::from_u64(id),
-        price,
-        quantity,
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         reference_price_offset: -50,
         reference_price_type: PegReferenceType::BestAsk,
@@ -439,11 +439,11 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::Standard {
             id: Id::from_u64(i),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };

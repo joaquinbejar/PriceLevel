@@ -4,6 +4,7 @@ mod tests {
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage};
+    use crate::utils::{Price, Quantity, TimestampMs};
     use serde_json::Value;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -12,22 +13,22 @@ mod tests {
         vec![
             Arc::new(OrderType::Standard {
                 id: Id::from_u64(1),
-                price: 1000u128,
-                quantity: 10,
+                price: Price::new(1000),
+                quantity: Quantity::new(10),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
                 id: Id::from_u64(2),
-                price: 1000u128,
-                visible_quantity: 5,
-                hidden_quantity: 15,
+                price: Price::new(1000),
+                visible_quantity: Quantity::new(5),
+                hidden_quantity: Quantity::new(15),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000001,
+                timestamp: TimestampMs::new(1616823000001),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
@@ -298,11 +299,11 @@ mod tests {
         fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
             OrderType::<()>::Standard {
                 id: Id::from_u64(id),
-                price,
-                quantity,
+                price: Price::new(price),
+                quantity: Quantity::new(quantity),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }
@@ -316,12 +317,12 @@ mod tests {
         ) -> OrderType<()> {
             OrderType::<()>::IcebergOrder {
                 id: Id::from_u64(id),
-                price,
-                visible_quantity,
-                hidden_quantity,
+                price: Price::new(price),
+                visible_quantity: Quantity::new(visible_quantity),
+                hidden_quantity: Quantity::new(hidden_quantity),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }
@@ -363,7 +364,7 @@ mod tests {
         // Verify order types
         if let OrderType::Standard { id, quantity, .. } = &*deserialized.orders[0] {
             assert_eq!(*id, Id::from_u64(1));
-            assert_eq!(*quantity, 100);
+            assert_eq!(*quantity, Quantity::new(100));
         } else {
             panic!("Expected Standard order");
         }
@@ -376,8 +377,8 @@ mod tests {
         } = &*deserialized.orders[1]
         {
             assert_eq!(*id, Id::from_u64(2));
-            assert_eq!(*visible_quantity, 50);
-            assert_eq!(*hidden_quantity, 250);
+            assert_eq!(*visible_quantity, Quantity::new(50));
+            assert_eq!(*hidden_quantity, Quantity::new(250));
         } else {
             panic!("Expected IcebergOrder");
         }
@@ -388,6 +389,7 @@ mod tests {
 mod pricelevel_snapshot_serialization_tests {
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::PriceLevelSnapshot;
+    use crate::utils::{Price, Quantity, TimestampMs};
 
     use std::str::FromStr;
     use std::sync::Arc;
@@ -397,32 +399,32 @@ mod pricelevel_snapshot_serialization_tests {
         vec![
             Arc::new(OrderType::Standard {
                 id: Id::from_u64(1),
-                price: 1000u128,
-                quantity: 10,
+                price: Price::new(1000),
+                quantity: Quantity::new(10),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
             Arc::new(OrderType::IcebergOrder {
                 id: Id::from_u64(2),
-                price: 1000u128,
-                visible_quantity: 5,
-                hidden_quantity: 15,
+                price: Price::new(1000),
+                visible_quantity: Quantity::new(5),
+                hidden_quantity: Quantity::new(15),
                 side: Side::Sell,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000001,
+                timestamp: TimestampMs::new(1616823000001),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
             Arc::new(OrderType::PostOnly {
                 id: Id::from_u64(3),
-                price: 1000u128,
-                quantity: 8,
+                price: Price::new(1000),
+                quantity: Quantity::new(8),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000002,
+                timestamp: TimestampMs::new(1616823000002),
                 time_in_force: TimeInForce::Ioc,
                 extra_fields: (),
             }),
@@ -497,8 +499,8 @@ mod pricelevel_snapshot_serialization_tests {
                 ..
             } => {
                 assert_eq!(id, Id::from_u64(1));
-                assert_eq!(price, 1000);
-                assert_eq!(quantity, 10);
+                assert_eq!(price, Price::new(1000));
+                assert_eq!(quantity, Quantity::new(10));
                 assert_eq!(side, Side::Buy);
             }
             _ => panic!("Expected Standard order"),
@@ -514,8 +516,8 @@ mod pricelevel_snapshot_serialization_tests {
                 ..
             } => {
                 assert_eq!(id, Id::from_u64(2));
-                assert_eq!(visible_quantity, 5);
-                assert_eq!(hidden_quantity, 15);
+                assert_eq!(visible_quantity, Quantity::new(5));
+                assert_eq!(hidden_quantity, Quantity::new(15));
                 assert_eq!(side, Side::Sell);
             }
             _ => panic!("Expected IcebergOrder"),
@@ -527,7 +529,7 @@ mod pricelevel_snapshot_serialization_tests {
                 id, quantity, side, ..
             } => {
                 assert_eq!(id, Id::from_u64(3));
-                assert_eq!(quantity, 8);
+                assert_eq!(quantity, Quantity::new(8));
                 assert_eq!(side, Side::Buy);
             }
             _ => panic!("Expected PostOnly order"),
@@ -716,71 +718,71 @@ mod pricelevel_snapshot_serialization_tests {
             // Standard order
             Arc::new(OrderType::Standard {
                 id: Id::from_u64(1),
-                price: 1000u128,
-                quantity: 10,
+                price: Price::new(1000),
+                quantity: Quantity::new(10),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
             // Iceberg order
             Arc::new(OrderType::IcebergOrder {
                 id: Id::from_u64(2),
-                price: 1000u128,
-                visible_quantity: 5,
-                hidden_quantity: 15,
+                price: Price::new(1000),
+                visible_quantity: Quantity::new(5),
+                hidden_quantity: Quantity::new(15),
                 side: Side::Sell,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000001,
+                timestamp: TimestampMs::new(1616823000001),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }),
             // Post-only order
             Arc::new(OrderType::PostOnly {
                 id: Id::from_u64(3),
-                price: 1000u128,
-                quantity: 8,
+                price: Price::new(1000),
+                quantity: Quantity::new(8),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000002,
+                timestamp: TimestampMs::new(1616823000002),
                 time_in_force: TimeInForce::Ioc,
                 extra_fields: (),
             }),
             // Fill-or-kill order (as Standard with FOK time-in-force)
             Arc::new(OrderType::Standard {
                 id: Id::from_u64(4),
-                price: 1000u128,
-                quantity: 12,
+                price: Price::new(1000),
+                quantity: Quantity::new(12),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000003,
+                timestamp: TimestampMs::new(1616823000003),
                 time_in_force: TimeInForce::Fok,
                 extra_fields: (),
             }),
             // Good-till-date order (as Standard with GTD time-in-force)
             Arc::new(OrderType::Standard {
                 id: Id::from_u64(5),
-                price: 1000u128,
-                quantity: 7,
+                price: Price::new(1000),
+                quantity: Quantity::new(7),
                 side: Side::Sell,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000004,
+                timestamp: TimestampMs::new(1616823000004),
                 time_in_force: TimeInForce::Gtd(1617000000000),
                 extra_fields: (),
             }),
             // Reserve order
             Arc::new(OrderType::ReserveOrder {
                 id: Id::from_u64(6),
-                price: 1000u128,
-                visible_quantity: 3,
-                hidden_quantity: 12,
+                price: Price::new(1000),
+                visible_quantity: Quantity::new(3),
+                hidden_quantity: Quantity::new(12),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000005,
+                timestamp: TimestampMs::new(1616823000005),
                 time_in_force: TimeInForce::Gtc,
-                replenish_threshold: 1,
-                replenish_amount: Some(2),
+                replenish_threshold: Quantity::new(1),
+                replenish_amount: Some(Quantity::new(2)),
                 auto_replenish: true,
                 extra_fields: (),
             }),
@@ -842,7 +844,7 @@ mod pricelevel_snapshot_serialization_tests {
             ..
         } = **reserve_order
         {
-            assert_eq!(replenish_threshold, 1);
+            assert_eq!(replenish_threshold, Quantity::new(1));
             assert!(auto_replenish);
         }
 

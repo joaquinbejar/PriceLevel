@@ -3,6 +3,7 @@
 use crate::OrderQueue;
 use crate::errors::PriceLevelError;
 use crate::orders::{Hash32, Id, PegReferenceType, Side, TimeInForce};
+use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -27,15 +28,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The quantity of the order
-        quantity: u64,
+        quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Additional custom fields
@@ -47,17 +48,17 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The visible quantity of the order
-        visible_quantity: u64,
+        visible_quantity: Quantity,
         /// The hidden quantity of the order
-        hidden_quantity: u64,
+        hidden_quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Additional custom fields
@@ -69,15 +70,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The quantity of the order
-        quantity: u64,
+        quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Additional custom fields
@@ -89,21 +90,21 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The quantity of the order
-        quantity: u64,
+        quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Amount to trail the market price
-        trail_amount: u64,
+        trail_amount: Quantity,
         /// Last reference price
-        last_reference_price: u128,
+        last_reference_price: Price,
         /// Additional custom fields
         extra_fields: T,
     },
@@ -113,15 +114,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The quantity of the order
-        quantity: u64,
+        quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Offset from the reference price
@@ -137,15 +138,15 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The quantity of the order
-        quantity: u64,
+        quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Additional custom fields
@@ -161,23 +162,23 @@ pub enum OrderType<T> {
         /// The order ID
         id: Id,
         /// The price of the order
-        price: u128,
+        price: Price,
         /// The visible quantity of the order
-        visible_quantity: u64,
+        visible_quantity: Quantity,
         /// The hidden quantity of the order
-        hidden_quantity: u64,
+        hidden_quantity: Quantity,
         /// The side of the order (buy or sell)
         side: Side,
         /// Owner identifier for fast lookup (32 bytes)
         user_id: Hash32,
         /// When the order was created
-        timestamp: u64,
+        timestamp: TimestampMs,
         /// Time-in-force policy
         time_in_force: TimeInForce,
         /// Threshold at which to replenish
-        replenish_threshold: u64,
+        replenish_threshold: Quantity,
         /// Optional amount to replenish by. If None, uses DEFAULT_RESERVE_REPLENISH_AMOUNT
-        replenish_amount: Option<u64>,
+        replenish_amount: Option<Quantity>,
         /// Whether to replenish automatically when below threshold. If false, only replenish on next match
         auto_replenish: bool,
         /// Additional custom fields
@@ -213,7 +214,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the price
-    pub fn price(&self) -> u128 {
+    pub fn price(&self) -> Price {
         match self {
             Self::Standard { price, .. } => *price,
             Self::IcebergOrder { price, .. } => *price,
@@ -228,17 +229,17 @@ impl<T: Clone> OrderType<T> {
     /// Get the visible quantity
     pub fn visible_quantity(&self) -> u64 {
         match self {
-            Self::Standard { quantity, .. } => *quantity,
+            Self::Standard { quantity, .. } => quantity.as_u64(),
             Self::IcebergOrder {
                 visible_quantity, ..
-            } => *visible_quantity,
-            Self::PostOnly { quantity, .. } => *quantity,
-            Self::TrailingStop { quantity, .. } => *quantity,
-            Self::PeggedOrder { quantity, .. } => *quantity,
-            Self::MarketToLimit { quantity, .. } => *quantity,
+            } => visible_quantity.as_u64(),
+            Self::PostOnly { quantity, .. } => quantity.as_u64(),
+            Self::TrailingStop { quantity, .. } => quantity.as_u64(),
+            Self::PeggedOrder { quantity, .. } => quantity.as_u64(),
+            Self::MarketToLimit { quantity, .. } => quantity.as_u64(),
             Self::ReserveOrder {
                 visible_quantity, ..
-            } => *visible_quantity,
+            } => visible_quantity.as_u64(),
         }
     }
 
@@ -247,10 +248,10 @@ impl<T: Clone> OrderType<T> {
         match self {
             Self::IcebergOrder {
                 hidden_quantity, ..
-            } => *hidden_quantity,
+            } => hidden_quantity.as_u64(),
             Self::ReserveOrder {
                 hidden_quantity, ..
-            } => *hidden_quantity,
+            } => hidden_quantity.as_u64(),
             _ => 0,
         }
     }
@@ -284,13 +285,13 @@ impl<T: Clone> OrderType<T> {
     /// Get the timestamp
     pub fn timestamp(&self) -> u64 {
         match self {
-            Self::Standard { timestamp, .. } => *timestamp,
-            Self::IcebergOrder { timestamp, .. } => *timestamp,
-            Self::PostOnly { timestamp, .. } => *timestamp,
-            Self::TrailingStop { timestamp, .. } => *timestamp,
-            Self::PeggedOrder { timestamp, .. } => *timestamp,
-            Self::MarketToLimit { timestamp, .. } => *timestamp,
-            Self::ReserveOrder { timestamp, .. } => *timestamp,
+            Self::Standard { timestamp, .. } => timestamp.as_u64(),
+            Self::IcebergOrder { timestamp, .. } => timestamp.as_u64(),
+            Self::PostOnly { timestamp, .. } => timestamp.as_u64(),
+            Self::TrailingStop { timestamp, .. } => timestamp.as_u64(),
+            Self::PeggedOrder { timestamp, .. } => timestamp.as_u64(),
+            Self::MarketToLimit { timestamp, .. } => timestamp.as_u64(),
+            Self::ReserveOrder { timestamp, .. } => timestamp.as_u64(),
         }
     }
 
@@ -311,6 +312,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Create a new standard order with reduced quantity
     pub fn with_reduced_quantity(&self, new_quantity: u64) -> Self {
+        let new_quantity = Quantity::new(new_quantity);
         match self {
             Self::Standard {
                 id,
@@ -393,15 +395,15 @@ impl<T: Clone> OrderType<T> {
                 time_in_force,
                 extra_fields,
             } => {
-                let used_hidden = refresh_amount.min(*hidden_quantity);
-                let new_hidden = *hidden_quantity - used_hidden;
+                let used_hidden = refresh_amount.min(hidden_quantity.as_u64());
+                let new_hidden = hidden_quantity.as_u64() - used_hidden;
 
                 (
                     Self::IcebergOrder {
                         id: *id,
                         price: *price,
-                        visible_quantity: used_hidden,
-                        hidden_quantity: new_hidden,
+                        visible_quantity: Quantity::new(used_hidden),
+                        hidden_quantity: Quantity::new(new_hidden),
                         side: *side,
                         user_id: *user_id,
                         timestamp: *timestamp,
@@ -425,15 +427,15 @@ impl<T: Clone> OrderType<T> {
                 auto_replenish,
                 extra_fields,
             } => {
-                let used_hidden = refresh_amount.min(*hidden_quantity);
-                let new_hidden = *hidden_quantity - used_hidden;
+                let used_hidden = refresh_amount.min(hidden_quantity.as_u64());
+                let new_hidden = hidden_quantity.as_u64() - used_hidden;
 
                 (
                     Self::ReserveOrder {
                         id: *id,
                         price: *price,
-                        visible_quantity: used_hidden,
-                        hidden_quantity: new_hidden,
+                        visible_quantity: Quantity::new(used_hidden),
+                        hidden_quantity: Quantity::new(new_hidden),
                         side: *side,
                         user_id: *user_id,
                         timestamp: *timestamp,
@@ -471,13 +473,13 @@ impl<T: Clone> OrderType<T> {
                 time_in_force,
                 extra_fields,
             } => {
-                if *quantity <= incoming_quantity {
+                if quantity.as_u64() <= incoming_quantity {
                     // Full match
                     (
-                        *quantity,                     // consumed = full order quantity
-                        None,                          // no updated order (fully matched)
-                        0,                             // no hidden quantity reduced
-                        incoming_quantity - *quantity, // remaining = incoming - consumed
+                        quantity.as_u64(),                     // consumed = full order quantity
+                        None,                                  // no updated order (fully matched)
+                        0,                                     // no hidden quantity reduced
+                        incoming_quantity - quantity.as_u64(), // remaining = incoming - consumed
                     )
                 } else {
                     // Partial match
@@ -486,7 +488,7 @@ impl<T: Clone> OrderType<T> {
                         Some(Self::Standard {
                             id: *id,
                             price: *price,
-                            quantity: *quantity - incoming_quantity, // reduce quantity
+                            quantity: Quantity::new(quantity.as_u64() - incoming_quantity),
                             side: *side,
                             user_id: *user_id,
                             timestamp: *timestamp,
@@ -511,15 +513,16 @@ impl<T: Clone> OrderType<T> {
                 time_in_force,
                 extra_fields,
             } => {
-                if *visible_quantity <= incoming_quantity {
+                if visible_quantity.as_u64() <= incoming_quantity {
                     // Fully match the visible portion
-                    let consumed = *visible_quantity;
+                    let consumed = visible_quantity.as_u64();
                     let remaining = incoming_quantity - consumed;
 
-                    if *hidden_quantity > 0 {
+                    if hidden_quantity.as_u64() > 0 {
                         // Refresh visible portion from hidden
-                        let refresh_qty = std::cmp::min(*hidden_quantity, *visible_quantity);
-                        let new_hidden = *hidden_quantity - refresh_qty;
+                        let refresh_qty =
+                            std::cmp::min(hidden_quantity.as_u64(), visible_quantity.as_u64());
+                        let new_hidden = hidden_quantity.as_u64() - refresh_qty;
 
                         // Create updated order with refreshed quantities
                         (
@@ -527,8 +530,8 @@ impl<T: Clone> OrderType<T> {
                             Some(Self::IcebergOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: refresh_qty,
-                                hidden_quantity: new_hidden,
+                                visible_quantity: Quantity::new(refresh_qty),
+                                hidden_quantity: Quantity::new(new_hidden),
                                 side: *side,
                                 user_id: *user_id,
                                 timestamp: *timestamp,
@@ -551,7 +554,7 @@ impl<T: Clone> OrderType<T> {
                         Some(Self::IcebergOrder {
                             id: *id,
                             price: *price,
-                            visible_quantity: *visible_quantity - executed,
+                            visible_quantity: Quantity::new(visible_quantity.as_u64() - executed),
                             hidden_quantity: *hidden_quantity,
                             side: *side,
                             user_id: *user_id,
@@ -580,33 +583,34 @@ impl<T: Clone> OrderType<T> {
                 extra_fields,
             } => {
                 // Ensure the threshold is never 0 if auto_replenish is true
-                let safe_threshold = if *auto_replenish && *replenish_threshold == 0 {
+                let safe_threshold = if *auto_replenish && replenish_threshold.as_u64() == 0 {
                     1
                 } else {
-                    *replenish_threshold
+                    replenish_threshold.as_u64()
                 };
 
                 let replenish_qty = replenish_amount
-                    .unwrap_or(DEFAULT_RESERVE_REPLENISH_AMOUNT)
-                    .min(*hidden_quantity);
+                    .unwrap_or(Quantity::new(DEFAULT_RESERVE_REPLENISH_AMOUNT))
+                    .as_u64()
+                    .min(hidden_quantity.as_u64());
 
-                if *visible_quantity <= incoming_quantity {
+                if visible_quantity.as_u64() <= incoming_quantity {
                     // Full match of the visible part
-                    let consumed = *visible_quantity;
+                    let consumed = visible_quantity.as_u64();
                     let remaining = incoming_quantity - consumed;
 
                     // Verify if we need and can replenish
-                    if *hidden_quantity > 0 && *auto_replenish {
+                    if hidden_quantity.as_u64() > 0 && *auto_replenish {
                         // Restore from the hidden quantity
-                        let new_hidden = *hidden_quantity - replenish_qty;
+                        let new_hidden = hidden_quantity.as_u64() - replenish_qty;
 
                         (
                             consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: replenish_qty,
-                                hidden_quantity: new_hidden,
+                                visible_quantity: Quantity::new(replenish_qty),
+                                hidden_quantity: Quantity::new(new_hidden),
                                 side: *side,
                                 user_id: *user_id,
                                 timestamp: *timestamp,
@@ -626,20 +630,23 @@ impl<T: Clone> OrderType<T> {
                 } else {
                     // Partial match of the visible part
                     let consumed = incoming_quantity;
-                    let new_visible = *visible_quantity - consumed;
+                    let new_visible = visible_quantity.as_u64() - consumed;
 
                     // Check if we need to replenish (we fell below the threshold)
-                    if new_visible < safe_threshold && *hidden_quantity > 0 && *auto_replenish {
+                    if new_visible < safe_threshold
+                        && hidden_quantity.as_u64() > 0
+                        && *auto_replenish
+                    {
                         // Restore from the hidden quantity
-                        let new_hidden = *hidden_quantity - replenish_qty;
+                        let new_hidden = hidden_quantity.as_u64() - replenish_qty;
 
                         (
                             consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: new_visible + replenish_qty,
-                                hidden_quantity: new_hidden,
+                                visible_quantity: Quantity::new(new_visible + replenish_qty),
+                                hidden_quantity: Quantity::new(new_hidden),
                                 side: *side,
                                 user_id: *user_id,
                                 timestamp: *timestamp,
@@ -659,7 +666,7 @@ impl<T: Clone> OrderType<T> {
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: new_visible,
+                                visible_quantity: Quantity::new(new_visible),
                                 hidden_quantity: *hidden_quantity,
                                 side: *side,
                                 user_id: *user_id,
@@ -924,22 +931,25 @@ impl<T: Default> FromStr for OrderType<T> {
             }
         };
 
-        let parse_u64 = |field: &str, value: &str| -> Result<u64, PriceLevelError> {
-            value
-                .parse::<u64>()
-                .map_err(|_| PriceLevelError::InvalidFieldValue {
-                    field: field.to_string(),
-                    value: value.to_string(),
-                })
+        let parse_quantity = |field: &str, value: &str| -> Result<Quantity, PriceLevelError> {
+            Quantity::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
+                field: field.to_string(),
+                value: value.to_string(),
+            })
         };
 
-        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
-            value
-                .parse::<u128>()
-                .map_err(|_| PriceLevelError::InvalidFieldValue {
-                    field: field.to_string(),
-                    value: value.to_string(),
-                })
+        let parse_price = |field: &str, value: &str| -> Result<Price, PriceLevelError> {
+            Price::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
+                field: field.to_string(),
+                value: value.to_string(),
+            })
+        };
+
+        let parse_timestamp = |field: &str, value: &str| -> Result<TimestampMs, PriceLevelError> {
+            TimestampMs::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
+                field: field.to_string(),
+                value: value.to_string(),
+            })
         };
 
         let parse_i64 = |field: &str, value: &str| -> Result<i64, PriceLevelError> {
@@ -959,13 +969,13 @@ impl<T: Default> FromStr for OrderType<T> {
         })?;
 
         let price_str = get_field("price")?;
-        let price = parse_u128("price", price_str)?;
+        let price = parse_price("price", price_str)?;
 
         let side_str = get_field("side")?;
         let side: Side = Side::from_str(side_str)?;
 
         let timestamp_str = get_field("timestamp")?;
-        let timestamp = parse_u64("timestamp", timestamp_str)?;
+        let timestamp = parse_timestamp("timestamp", timestamp_str)?;
 
         let tif_str = get_field("time_in_force")?;
         let time_in_force = TimeInForce::from_str(tif_str)?;
@@ -979,7 +989,7 @@ impl<T: Default> FromStr for OrderType<T> {
         match order_type {
             "Standard" => {
                 let quantity_str = get_field("quantity")?;
-                let quantity = parse_u64("quantity", quantity_str)?;
+                let quantity = parse_quantity("quantity", quantity_str)?;
 
                 Ok(OrderType::Standard {
                     id,
@@ -994,10 +1004,10 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "IcebergOrder" => {
                 let visible_quantity_str = get_field("visible_quantity")?;
-                let visible_quantity = parse_u64("visible_quantity", visible_quantity_str)?;
+                let visible_quantity = parse_quantity("visible_quantity", visible_quantity_str)?;
 
                 let hidden_quantity_str = get_field("hidden_quantity")?;
-                let hidden_quantity = parse_u64("hidden_quantity", hidden_quantity_str)?;
+                let hidden_quantity = parse_quantity("hidden_quantity", hidden_quantity_str)?;
 
                 Ok(OrderType::IcebergOrder {
                     id,
@@ -1013,7 +1023,7 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "PostOnly" => {
                 let quantity_str = get_field("quantity")?;
-                let quantity = parse_u64("quantity", quantity_str)?;
+                let quantity = parse_quantity("quantity", quantity_str)?;
 
                 Ok(OrderType::PostOnly {
                     id,
@@ -1028,14 +1038,14 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "TrailingStop" => {
                 let quantity_str = get_field("quantity")?;
-                let quantity = parse_u64("quantity", quantity_str)?;
+                let quantity = parse_quantity("quantity", quantity_str)?;
 
                 let trail_amount_str = get_field("trail_amount")?;
-                let trail_amount = parse_u64("trail_amount", trail_amount_str)?;
+                let trail_amount = parse_quantity("trail_amount", trail_amount_str)?;
 
                 let last_reference_price_str = get_field("last_reference_price")?;
                 let last_reference_price =
-                    parse_u128("last_reference_price", last_reference_price_str)?;
+                    parse_price("last_reference_price", last_reference_price_str)?;
 
                 Ok(OrderType::TrailingStop {
                     id,
@@ -1052,7 +1062,7 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "PeggedOrder" => {
                 let quantity_str = get_field("quantity")?;
-                let quantity = parse_u64("quantity", quantity_str)?;
+                let quantity = parse_quantity("quantity", quantity_str)?;
 
                 let reference_price_offset_str = get_field("reference_price_offset")?;
                 let reference_price_offset =
@@ -1087,7 +1097,7 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "MarketToLimit" => {
                 let quantity_str = get_field("quantity")?;
-                let quantity = parse_u64("quantity", quantity_str)?;
+                let quantity = parse_quantity("quantity", quantity_str)?;
 
                 Ok(OrderType::MarketToLimit {
                     id,
@@ -1102,19 +1112,19 @@ impl<T: Default> FromStr for OrderType<T> {
             }
             "ReserveOrder" => {
                 let visible_quantity_str = get_field("visible_quantity")?;
-                let visible_quantity = parse_u64("visible_quantity", visible_quantity_str)?;
+                let visible_quantity = parse_quantity("visible_quantity", visible_quantity_str)?;
 
                 let hidden_quantity_str = get_field("hidden_quantity")?;
-                let hidden_quantity = parse_u64("hidden_quantity", hidden_quantity_str)?;
+                let hidden_quantity = parse_quantity("hidden_quantity", hidden_quantity_str)?;
 
                 let replenish_threshold_str = get_field("replenish_threshold")?;
                 let replenish_threshold =
-                    parse_u64("replenish_threshold", replenish_threshold_str)?;
+                    parse_quantity("replenish_threshold", replenish_threshold_str)?;
                 let replenish_amount_str = get_field("replenish_amount")?;
                 let replenish_amount = if replenish_amount_str == "None" {
                     None
                 } else {
-                    Some(parse_u64("replenish_amount", replenish_amount_str)?)
+                    Some(parse_quantity("replenish_amount", replenish_amount_str)?)
                 };
                 let auto_replenish_str = get_field("auto_replenish")?;
                 let auto_replenish = match auto_replenish_str {

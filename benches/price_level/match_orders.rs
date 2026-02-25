@@ -1,5 +1,8 @@
 use criterion::{BenchmarkId, Criterion};
-use pricelevel::{Hash32, Id, OrderType, PriceLevel, Side, TimeInForce, UuidGenerator};
+use pricelevel::{
+    Hash32, Id, OrderType, Price, PriceLevel, Quantity, Side, TimeInForce, TimestampMs,
+    UuidGenerator,
+};
 use std::hint::black_box;
 use uuid::Uuid;
 
@@ -102,11 +105,11 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::Standard {
             id: Id::from_u64(i),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -123,12 +126,12 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::IcebergOrder {
             id: Id::from_u64(i),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -145,15 +148,15 @@ fn setup_reserve_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::ReserveOrder {
             id: Id::from_u64(i),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
-            replenish_threshold: 2,
-            replenish_amount: Some(5),
+            replenish_threshold: Quantity::new(2),
+            replenish_amount: Some(Quantity::new(5)),
             auto_replenish: true,
             extra_fields: (),
         };
@@ -171,36 +174,36 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
         let order = match i % 3 {
             0 => OrderType::Standard {
                 id: Id::from_u64(i),
-                price: 10000u128,
-                quantity: 10,
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000 + i,
+                timestamp: TimestampMs::new(1616823000000 + i),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             },
             1 => OrderType::IcebergOrder {
                 id: Id::from_u64(i),
-                price: 10000u128,
-                visible_quantity: 5,
-                hidden_quantity: 15,
+                price: Price::new(10000),
+                visible_quantity: Quantity::new(5),
+                hidden_quantity: Quantity::new(15),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000 + i,
+                timestamp: TimestampMs::new(1616823000000 + i),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             },
             _ => OrderType::ReserveOrder {
                 id: Id::from_u64(i),
-                price: 10000u128,
-                visible_quantity: 5,
-                hidden_quantity: 15,
+                price: Price::new(10000),
+                visible_quantity: Quantity::new(5),
+                hidden_quantity: Quantity::new(15),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000 + i,
+                timestamp: TimestampMs::new(1616823000000 + i),
                 time_in_force: TimeInForce::Gtc,
-                replenish_threshold: 2,
-                replenish_amount: Some(5),
+                replenish_threshold: Quantity::new(2),
+                replenish_amount: Some(Quantity::new(5)),
                 auto_replenish: true,
                 extra_fields: (),
             },

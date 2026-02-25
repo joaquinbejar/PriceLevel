@@ -4,6 +4,7 @@ mod tests {
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::{PriceLevel, PriceLevelData};
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
+    use crate::utils::{Price, Quantity, TimestampMs};
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,11 +20,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: order_id,
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
@@ -156,12 +157,12 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::IcebergOrder {
             id: Id::from_u64(id),
-            price,
-            visible_quantity: visible,
-            hidden_quantity: hidden,
+            price: Price::new(price),
+            visible_quantity: Quantity::new(visible),
+            hidden_quantity: Quantity::new(hidden),
             side: Side::Sell,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
@@ -171,11 +172,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PostOnly {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
@@ -185,14 +186,14 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::TrailingStop {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Sell,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
-            trail_amount: 100,
-            last_reference_price: price + 100u128,
+            trail_amount: Quantity::new(100),
+            last_reference_price: Price::new(price + 100u128),
             extra_fields: (),
         }
     }
@@ -201,11 +202,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::PeggedOrder {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             reference_price_offset: -50,
             reference_price_type: PegReferenceType::BestAsk,
@@ -217,11 +218,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::MarketToLimit {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
@@ -239,15 +240,15 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::ReserveOrder {
             id: Id::from_u64(id),
-            price,
-            visible_quantity: visible,
-            hidden_quantity: hidden,
+            price: Price::new(price),
+            visible_quantity: Quantity::new(visible),
+            hidden_quantity: Quantity::new(hidden),
             side: Side::Sell,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
-            replenish_threshold: threshold,
-            replenish_amount,
+            replenish_threshold: Quantity::new(threshold),
+            replenish_amount: replenish_amount.map(Quantity::new),
             auto_replenish,
             extra_fields: (),
         }
@@ -257,11 +258,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Fok,
             extra_fields: (),
         }
@@ -271,11 +272,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Ioc,
             extra_fields: (),
         }
@@ -290,11 +291,11 @@ mod tests {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp,
+            timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtd(expiry),
             extra_fields: (),
         }
@@ -331,7 +332,7 @@ mod tests {
 
         // Verify the returned Arc contains the expected order
         assert_eq!(order_arc.id(), Id::from_u64(1));
-        assert_eq!(order_arc.price(), 10000);
+        assert_eq!(order_arc.price(), Price::new(10000));
         assert_eq!(order_arc.visible_quantity(), 100);
 
         // Verify stats
@@ -454,8 +455,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 100);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(100));
         assert_eq!(transaction.taker_side, Side::Sell); // Taker is a market order, so it's a sell side opposite of maker
 
         assert_eq!(match_result.filled_order_ids.len(), 1);
@@ -491,8 +492,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 60);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(60));
         assert_eq!(transaction.taker_side, Side::Sell);
 
         // Verificar que no hay órdenes completadas
@@ -525,8 +526,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 100);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(100));
 
         assert_eq!(match_result.filled_order_ids.len(), 1);
         assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
@@ -564,8 +565,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 50);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(50));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -581,8 +582,8 @@ mod tests {
 
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 50);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(50));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -624,8 +625,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 50);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(50));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -641,8 +642,8 @@ mod tests {
 
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 50);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(50));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -933,8 +934,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 80);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(80));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -951,8 +952,8 @@ mod tests {
         let transaction = &match_result.trades.as_vec()[0];
         assert_eq!(transaction.taker_order_id, taker_id);
         assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 10);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(10));
         assert_eq!(transaction.taker_side, Side::Buy);
         assert_eq!(match_result.filled_order_ids.len(), 0);
 
@@ -974,15 +975,15 @@ mod tests {
         let transaction1 = &match_result.trades.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
         assert_eq!(transaction1.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction1.price, 10000);
-        assert_eq!(transaction1.quantity, 90); // First consumes all visible
+        assert_eq!(transaction1.price, Price::new(10000));
+        assert_eq!(transaction1.quantity, Quantity::new(90)); // First consumes all visible
         assert_eq!(transaction1.taker_side, Side::Buy);
 
         let transaction2 = &match_result.trades.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
         assert_eq!(transaction2.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction2.price, 10000);
-        assert_eq!(transaction2.quantity, 20); // Then consumes all hidden
+        assert_eq!(transaction2.price, Price::new(10000));
+        assert_eq!(transaction2.quantity, Quantity::new(20)); // Then consumes all hidden
         assert_eq!(transaction2.taker_side, Side::Buy);
     }
 
@@ -1140,17 +1141,17 @@ mod tests {
         let transaction1 = &match_result.trades.as_vec()[0];
         assert_eq!(transaction1.taker_order_id, taker_id);
         assert_eq!(transaction1.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction1.quantity, 50);
+        assert_eq!(transaction1.quantity, Quantity::new(50));
 
         let transaction2 = &match_result.trades.as_vec()[1];
         assert_eq!(transaction2.taker_order_id, taker_id);
         assert_eq!(transaction2.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction2.quantity, 75);
+        assert_eq!(transaction2.quantity, Quantity::new(75));
 
         let transaction3 = &match_result.trades.as_vec()[2];
         assert_eq!(transaction3.taker_order_id, taker_id);
         assert_eq!(transaction3.maker_order_id, Id::from_u64(3));
-        assert_eq!(transaction3.quantity, 15);
+        assert_eq!(transaction3.quantity, Quantity::new(15));
 
         assert_eq!(match_result.filled_order_ids.len(), 2);
         assert!(match_result.filled_order_ids.contains(&Id::from_u64(1)));
@@ -1203,7 +1204,7 @@ mod tests {
         // Update the price to a different value
         let update = OrderUpdate::UpdatePrice {
             order_id: Id::from_u64(1),
-            new_price: 11000,
+            new_price: Price::new(11000),
         };
 
         let result = price_level.update_order(update);
@@ -1224,7 +1225,7 @@ mod tests {
 
         let same_price_update = OrderUpdate::UpdatePrice {
             order_id: Id::from_u64(2),
-            new_price: 10000,
+            new_price: Price::new(10000),
         };
 
         let result = price_level.update_order(same_price_update);
@@ -1246,7 +1247,7 @@ mod tests {
         // Update to increase quantity
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(1),
-            new_quantity: 150,
+            new_quantity: Quantity::new(150),
         };
 
         let result = price_level.update_order(update);
@@ -1264,7 +1265,7 @@ mod tests {
         // Update to decrease quantity
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(1),
-            new_quantity: 50,
+            new_quantity: Quantity::new(50),
         };
 
         let result = price_level.update_order(update);
@@ -1282,7 +1283,7 @@ mod tests {
         // Test updating non-existent order
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(999),
-            new_quantity: 50,
+            new_quantity: Quantity::new(50),
         };
 
         let result = price_level.update_order(update);
@@ -1301,8 +1302,8 @@ mod tests {
         // Update both price and quantity with different price
         let update = OrderUpdate::UpdatePriceAndQuantity {
             order_id: Id::from_u64(1),
-            new_price: 11000,
-            new_quantity: 150,
+            new_price: Price::new(11000),
+            new_quantity: Quantity::new(150),
         };
 
         let result = price_level.update_order(update);
@@ -1323,8 +1324,8 @@ mod tests {
 
         let update = OrderUpdate::UpdatePriceAndQuantity {
             order_id: Id::from_u64(2),
-            new_price: 10000,
-            new_quantity: 150,
+            new_price: Price::new(10000),
+            new_quantity: Quantity::new(150),
         };
 
         let result = price_level.update_order(update);
@@ -1351,8 +1352,8 @@ mod tests {
         // Replace with different price
         let update = OrderUpdate::Replace {
             order_id: Id::from_u64(1),
-            price: 11000,
-            quantity: 150,
+            price: Price::new(11000),
+            quantity: Quantity::new(150),
             side: Side::Buy,
         };
 
@@ -1374,8 +1375,8 @@ mod tests {
 
         let update = OrderUpdate::Replace {
             order_id: Id::from_u64(2),
-            price: 10000,
-            quantity: 150,
+            price: Price::new(10000),
+            quantity: Quantity::new(150),
             side: Side::Buy,
         };
 
@@ -1501,7 +1502,7 @@ mod tests {
         let orders = price_level.iter_orders();
         assert_eq!(orders.len(), 5);
         assert_eq!(orders[0].id(), Id::from_u64(1));
-        assert_eq!(orders[0].price(), 10000);
+        assert_eq!(orders[0].price(), Price::new(10000));
         assert_eq!(orders[0].visible_quantity(), 50);
     }
 
@@ -1534,7 +1535,7 @@ mod tests {
         let orders = deserialized.iter_orders();
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(1));
-        assert_eq!(orders[0].price(), 10000);
+        assert_eq!(orders[0].price(), Price::new(10000));
         assert_eq!(orders[0].visible_quantity(), 100);
     }
 
@@ -1569,7 +1570,7 @@ mod tests {
         // Update to a different price (should remove from this level)
         let result = price_level.update_order(OrderUpdate::UpdatePrice {
             order_id: Id::from_u64(1),
-            new_price: 10100, // Different price
+            new_price: Price::new(10100), // Different price
         });
 
         assert!(result.is_ok());
@@ -1588,8 +1589,8 @@ mod tests {
         // Update the quantity but keep the same price
         let result = price_level.update_order(OrderUpdate::UpdatePriceAndQuantity {
             order_id: Id::from_u64(1),
-            new_price: 10000, // Same price
-            new_quantity: 150,
+            new_price: Price::new(10000), // Same price
+            new_quantity: Quantity::new(150),
         });
 
         assert!(result.is_ok());
@@ -1632,11 +1633,11 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let order = OrderType::<()>::Standard {
             id: Id::from_u64(1),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1645,7 +1646,7 @@ mod tests {
         // Try to update price to the same value
         let update = OrderUpdate::UpdatePrice {
             order_id: Id::from_u64(1),
-            new_price: 10000,
+            new_price: Price::new(10000),
         };
 
         // This should return an error
@@ -1668,7 +1669,7 @@ mod tests {
         // Try to update quantity of a non-existent order
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(123),
-            new_quantity: 20,
+            new_quantity: Quantity::new(20),
         };
 
         let result = price_level.update_order(update);
@@ -1685,11 +1686,11 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: Id::from_u64(1),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1715,7 +1716,7 @@ mod tests {
         // Now try to update it after it's been removed
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(1),
-            new_quantity: 20,
+            new_quantity: Quantity::new(20),
         };
 
         let result = price_level.update_order(update);
@@ -1731,11 +1732,11 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: Id::from_u64(1),
-            price: 10000u128,
-            quantity: 50,
+            price: Price::new(10000),
+            quantity: Quantity::new(50),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1744,7 +1745,7 @@ mod tests {
         // Update to increase quantity (old visible < new visible)
         let update = OrderUpdate::UpdateQuantity {
             order_id: Id::from_u64(1),
-            new_quantity: 100,
+            new_quantity: Quantity::new(100),
         };
 
         let result = price_level.update_order(update);
@@ -1763,12 +1764,12 @@ mod tests {
         // Add an iceberg order with visible and hidden quantities
         let order = OrderType::IcebergOrder {
             id: Id::from_u64(1),
-            price: 10000u128,
-            visible_quantity: 50,
-            hidden_quantity: 150,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(50),
+            hidden_quantity: Quantity::new(150),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1781,12 +1782,12 @@ mod tests {
         // Create a new iceberg order with different quantities
         let new_order = OrderType::IcebergOrder {
             id: Id::from_u64(1),
-            price: 10000u128,
-            visible_quantity: 40,
-            hidden_quantity: 200,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(40),
+            hidden_quantity: Quantity::new(200),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1811,11 +1812,11 @@ mod tests {
         // Add an order
         let order = OrderType::<()>::Standard {
             id: Id::from_u64(1),
-            price: 10000u128,
-            quantity: 50,
+            price: Price::new(10000),
+            quantity: Quantity::new(50),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1824,8 +1825,8 @@ mod tests {
         // Update both price and quantity with same price
         let update = OrderUpdate::UpdatePriceAndQuantity {
             order_id: Id::from_u64(1),
-            new_price: 10000, // Same price
-            new_quantity: 100,
+            new_price: Price::new(10000), // Same price
+            new_quantity: Quantity::new(100),
         };
 
         let result = price_level.update_order(update);
@@ -1847,11 +1848,11 @@ mod tests {
         // Add some orders
         let order1 = OrderType::<()>::Standard {
             id: Id::from_u64(1),
-            price: 10000u128,
-            quantity: 50,
+            price: Price::new(10000),
+            quantity: Quantity::new(50),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -1859,12 +1860,12 @@ mod tests {
 
         let order2 = OrderType::<()>::IcebergOrder {
             id: Id::from_u64(2),
-            price: 10000u128,
-            visible_quantity: 30,
-            hidden_quantity: 70,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(30),
+            hidden_quantity: Quantity::new(70),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000001,
+            timestamp: TimestampMs::new(1616823000001),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };

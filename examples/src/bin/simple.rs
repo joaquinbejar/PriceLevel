@@ -1,7 +1,8 @@
 // examples/src/bin/multi_threaded_price_level.rs
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    TimestampMs, UuidGenerator, setup_logger,
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -128,7 +129,7 @@ fn main() {
                         let order_id = Id::from_u64(100 + i);
                         let result = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                             order_id,
-                            new_quantity: 20, // Update to quantity 20
+                            new_quantity: Quantity::new(20), // Update to quantity 20
                         });
 
                         if i % 10 == 0 {
@@ -201,11 +202,11 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     for i in 0..200 {
         let order = OrderType::Standard {
             id: Id::from_u64(i),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -216,12 +217,12 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     for i in 200..220 {
         let order = OrderType::IcebergOrder {
             id: Id::from_u64(i),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -232,15 +233,15 @@ fn setup_initial_orders(price_level: &PriceLevel) {
     for i in 220..240 {
         let order = OrderType::ReserveOrder {
             id: Id::from_u64(i),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
-            replenish_threshold: 2,
-            replenish_amount: Some(5),
+            replenish_threshold: Quantity::new(2),
+            replenish_amount: Some(Quantity::new(5)),
             auto_replenish: true,
             extra_fields: (),
         };
@@ -259,46 +260,46 @@ fn create_order(thread_id: usize, order_id: u64) -> OrderType<()> {
     match thread_id % 4 {
         0 => OrderType::Standard {
             id: Id::from_u64(order_id),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: current_time,
+            timestamp: TimestampMs::new(current_time),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         },
         1 => OrderType::IcebergOrder {
             id: Id::from_u64(order_id),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: current_time,
+            timestamp: TimestampMs::new(current_time),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         },
         2 => OrderType::PostOnly {
             id: Id::from_u64(order_id),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: current_time,
+            timestamp: TimestampMs::new(current_time),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         },
         _ => OrderType::ReserveOrder {
             id: Id::from_u64(order_id),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: current_time,
+            timestamp: TimestampMs::new(current_time),
             time_in_force: TimeInForce::Gtc,
-            replenish_threshold: 2,
-            replenish_amount: Some(5),
+            replenish_threshold: Quantity::new(2),
+            replenish_amount: Some(Quantity::new(5)),
             auto_replenish: true,
             extra_fields: (),
         },

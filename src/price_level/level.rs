@@ -6,6 +6,7 @@ use crate::execution::{MatchResult, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
+use crate::utils::{Price, Quantity};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -187,8 +188,8 @@ impl PriceLevel {
                         trade_id,
                         taker_order_id,
                         order_arc.id(),
-                        self.price,
-                        consumed,
+                        Price::new(self.price),
+                        Quantity::new(consumed),
                         order_arc.side().opposite(),
                     );
 
@@ -206,9 +207,11 @@ impl PriceLevel {
                 remaining = new_remaining;
 
                 // update statistics
-                let _ =
-                    self.stats
-                        .record_execution(consumed, order_arc.price(), order_arc.timestamp());
+                let _ = self.stats.record_execution(
+                    consumed,
+                    order_arc.price().as_u128(),
+                    order_arc.timestamp(),
+                );
 
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {
@@ -225,17 +228,17 @@ impl PriceLevel {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
                         } => {
-                            if *hidden_quantity > 0 && hidden_reduced == 0 {
+                            if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 {
                                 self.hidden_quantity
-                                    .fetch_sub(*hidden_quantity, Ordering::AcqRel);
+                                    .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
                             }
                         }
                         OrderType::ReserveOrder {
                             hidden_quantity, ..
                         } => {
-                            if *hidden_quantity > 0 && hidden_reduced == 0 {
+                            if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 {
                                 self.hidden_quantity
-                                    .fetch_sub(*hidden_quantity, Ordering::AcqRel);
+                                    .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
                             }
                         }
                         _ => {}
@@ -291,7 +294,7 @@ impl PriceLevel {
             } => {
                 // If price changes, this order needs to be moved to a different price level
                 // So we remove it from this level and return it for re-insertion elsewhere
-                if new_price != self.price {
+                if new_price != Price::new(self.price) {
                     let order = self.orders.remove(order_id);
 
                     if let Some(ref order_arc) = order {
@@ -335,7 +338,7 @@ impl PriceLevel {
                     };
 
                     // Create updated order with new quantity
-                    let new_order = old_order.with_reduced_quantity(new_quantity);
+                    let new_order = old_order.with_reduced_quantity(new_quantity.as_u64());
 
                     // Calculate the new quantities
                     let new_visible = new_order.visible_quantity();
@@ -378,7 +381,7 @@ impl PriceLevel {
                 new_quantity,
             } => {
                 // If price changes, remove the order and let the order book handle re-insertion
-                if new_price != self.price {
+                if new_price != Price::new(self.price) {
                     let order = self.orders.remove(order_id);
 
                     if let Some(ref order_arc) = order {
@@ -432,7 +435,7 @@ impl PriceLevel {
                 side: _,
             } => {
                 // For replacement, check if the price is changing
-                if price != self.price {
+                if price != Price::new(self.price) {
                     // If price is different, remove the order and let order book handle re-insertion
                     let order = self.orders.remove(order_id);
 

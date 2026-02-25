@@ -41,11 +41,12 @@ impl MatchResult {
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
         self.remaining_quantity = self
             .remaining_quantity
-            .checked_sub(trade.quantity)
+            .checked_sub(trade.quantity.as_u64())
             .ok_or_else(|| PriceLevelError::InvalidOperation {
                 message: format!(
                     "trade quantity {} exceeds remaining quantity {}",
-                    trade.quantity, self.remaining_quantity
+                    trade.quantity.as_u64(),
+                    self.remaining_quantity
                 ),
             })?;
         self.is_complete = self.remaining_quantity == 0;
@@ -61,10 +62,11 @@ impl MatchResult {
     /// Get the total executed quantity
     pub fn executed_quantity(&self) -> Result<u64, PriceLevelError> {
         self.trades.as_vec().iter().try_fold(0u64, |acc, trade| {
-            acc.checked_add(trade.quantity)
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
+            acc.checked_add(trade.quantity.as_u64()).ok_or_else(|| {
+                PriceLevelError::InvalidOperation {
                     message: "executed quantity overflow".to_string(),
-                })
+                }
+            })
         })
     }
 
@@ -73,7 +75,8 @@ impl MatchResult {
         self.trades.as_vec().iter().try_fold(0u128, |acc, trade| {
             let trade_value = trade
                 .price
-                .checked_mul(u128::from(trade.quantity))
+                .as_u128()
+                .checked_mul(u128::from(trade.quantity.as_u64()))
                 .ok_or_else(|| PriceLevelError::InvalidOperation {
                     message: "executed value multiplication overflow".to_string(),
                 })?;
