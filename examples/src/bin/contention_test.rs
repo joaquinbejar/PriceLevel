@@ -1,7 +1,8 @@
 // examples/src/bin/contention_test.rs
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator, setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    TimestampMs, UuidGenerator, setup_logger,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -194,14 +195,16 @@ fn setup_orders_for_read_write_test(price_level: &PriceLevel) {
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: Id::from_u64(id),
-        price,
-        quantity,
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
+        timestamp: TimestampMs::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        ),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -299,7 +302,7 @@ fn test_hot_spot_contention() {
                             let _result =
                                 thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                                     order_id: Id::from_u64(order_idx),
-                                    new_quantity: 15,
+                                    new_quantity: Quantity::new(15),
                                 });
                         }
                     }

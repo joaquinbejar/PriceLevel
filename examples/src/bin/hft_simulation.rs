@@ -1,8 +1,8 @@
 // examples/src/bin/hft_simulation.rs
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, PriceLevel, Side, TimeInForce,
-    UuidGenerator, setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
+    TimeInForce, TimestampMs, UuidGenerator, setup_logger,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -316,11 +316,11 @@ fn setup_initial_orders(price_level: &PriceLevel, count: u64) {
 fn create_standard_order(id: u64) -> OrderType<()> {
     OrderType::Standard {
         id: Id::from_u64(id),
-        price: PRICE,
-        quantity: 10,
+        price: Price::new(PRICE),
+        quantity: Quantity::new(10),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: get_current_timestamp(),
+        timestamp: TimestampMs::new(get_current_timestamp()),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -330,12 +330,12 @@ fn create_standard_order(id: u64) -> OrderType<()> {
 fn create_iceberg_order(id: u64) -> OrderType<()> {
     OrderType::IcebergOrder {
         id: Id::from_u64(id),
-        price: PRICE,
-        visible_quantity: 5,
-        hidden_quantity: 15,
+        price: Price::new(PRICE),
+        visible_quantity: Quantity::new(5),
+        hidden_quantity: Quantity::new(15),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: get_current_timestamp(),
+        timestamp: TimestampMs::new(get_current_timestamp()),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -345,11 +345,11 @@ fn create_iceberg_order(id: u64) -> OrderType<()> {
 fn create_post_only_order(id: u64) -> OrderType<()> {
     OrderType::PostOnly {
         id: Id::from_u64(id),
-        price: PRICE,
-        quantity: 8,
+        price: Price::new(PRICE),
+        quantity: Quantity::new(8),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: get_current_timestamp(),
+        timestamp: TimestampMs::new(get_current_timestamp()),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
@@ -359,15 +359,15 @@ fn create_post_only_order(id: u64) -> OrderType<()> {
 fn create_reserve_order(id: u64) -> OrderType<()> {
     OrderType::ReserveOrder {
         id: Id::from_u64(id),
-        price: PRICE,
-        visible_quantity: 5,
-        hidden_quantity: 15,
+        price: Price::new(PRICE),
+        visible_quantity: Quantity::new(5),
+        hidden_quantity: Quantity::new(15),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: get_current_timestamp(),
+        timestamp: TimestampMs::new(get_current_timestamp()),
         time_in_force: TimeInForce::Gtc,
-        replenish_threshold: 2,
-        replenish_amount: Some(5),
+        replenish_threshold: Quantity::new(2),
+        replenish_amount: Some(Quantity::new(5)),
         auto_replenish: true,
         extra_fields: (),
     }
@@ -377,11 +377,11 @@ fn create_reserve_order(id: u64) -> OrderType<()> {
 fn create_pegged_order(id: u64) -> OrderType<()> {
     OrderType::PeggedOrder {
         id: Id::from_u64(id),
-        price: PRICE,
-        quantity: 10,
+        price: Price::new(PRICE),
+        quantity: Quantity::new(10),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: get_current_timestamp(),
+        timestamp: TimestampMs::new(get_current_timestamp()),
         time_in_force: TimeInForce::Gtc,
         reference_price_offset: -50,
         reference_price_type: PegReferenceType::BestAsk,
