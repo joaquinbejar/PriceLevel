@@ -60,16 +60,23 @@ impl PriceLevelStatistics {
     }
 
     #[inline]
-    fn current_timestamp_milliseconds() -> u64 {
+    fn current_timestamp_milliseconds() -> Result<u64, PriceLevelError> {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
+            .map_err(|error| PriceLevelError::InvalidOperation {
+                message: format!("system clock error while reading unix time: {error}"),
+            })
+            .map(|duration| duration.as_millis() as u64)
+    }
+
+    #[inline]
+    fn current_timestamp_milliseconds_or_zero() -> u64 {
+        Self::current_timestamp_milliseconds().unwrap_or(0)
     }
 
     /// Create new empty statistics
     pub fn new() -> Self {
-        let current_time = Self::current_timestamp_milliseconds();
+        let current_time = Self::current_timestamp_milliseconds_or_zero();
 
         Self {
             orders_added: AtomicUsize::new(0),
@@ -100,7 +107,7 @@ impl PriceLevelStatistics {
         price: u128,
         order_timestamp: u64,
     ) -> Result<(), PriceLevelError> {
-        let current_time = Self::current_timestamp_milliseconds();
+        let current_time = Self::current_timestamp_milliseconds()?;
 
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
         Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;
@@ -192,14 +199,14 @@ impl PriceLevelStatistics {
         if last == 0 {
             None
         } else {
-            let current_time = Self::current_timestamp_milliseconds();
+            let current_time = Self::current_timestamp_milliseconds_or_zero();
             current_time.checked_sub(last)
         }
     }
 
     /// Reset all statistics
     pub fn reset(&self) {
-        let current_time = Self::current_timestamp_milliseconds();
+        let current_time = Self::current_timestamp_milliseconds_or_zero();
 
         self.orders_added.store(0, Ordering::Relaxed);
         self.orders_removed.store(0, Ordering::Relaxed);
@@ -494,10 +501,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                 let last_execution_time = last_execution_time.unwrap_or(0);
 
                 let first_arrival_time = first_arrival_time.unwrap_or_else(|| {
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64
+                    PriceLevelStatistics::current_timestamp_milliseconds_or_zero()
                 });
 
                 let sum_waiting_time = sum_waiting_time.unwrap_or(0);
