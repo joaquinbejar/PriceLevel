@@ -20,7 +20,7 @@ const CANCELLER_THREAD_COUNT: usize = 10;
 const TOTAL_THREAD_COUNT: usize = MAKER_THREAD_COUNT + TAKER_THREAD_COUNT + CANCELLER_THREAD_COUNT;
 
 fn main() {
-    setup_logger();
+    setup_logger().expect("Failed to initialize logger");
     info!("High-Frequency Trading Simulation");
     info!("=================================");
     info!("Simulating price level at {}", PRICE);

@@ -149,5 +149,7 @@ pub use execution::{MatchResult, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
 pub use orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
-pub use price_level::{OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot};
+pub use price_level::{
+    OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot, PriceLevelSnapshotPackage,
+};
 pub use utils::{Price, Quantity, TimestampMs, UuidGenerator, setup_logger};

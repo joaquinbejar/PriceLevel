@@ -183,6 +183,15 @@ workflow-test:
 .PHONY: workflow
 workflow: workflow-build workflow-lint workflow-test workflow-coverage
 
+.PHONY: integration-examples
+integration-examples:
+	cargo run --package examples --bin integration_basic_lifecycle
+	cargo run --package examples --bin integration_trade_roundtrip
+	cargo run --package examples --bin integration_newtypes_contract
+	cargo run --package examples --bin integration_special_orders
+	cargo run --package examples --bin integration_snapshot_recovery
+	cargo run --package examples --bin integration_checked_arithmetic
+
 .PHONY: tree
 tree: 
 	tree -I 'target|.idea|.run|.DS_Store|Cargo.lock|*.md|*.toml|*.zip|*.html|*.xml|*.json|*.txt|*.sh|*.yml|*.yaml|*.gitignore|*.gitattributes|*.gitmodules|*.git|*.gitkeep|*.gitlab-ci.yml' -a -L 3

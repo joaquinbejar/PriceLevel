@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 pricelevel = { path = ".." }
+serde_json = "1"
 tracing = "0.1"
 uuid = { version = "1.17", features = ["v4"] }

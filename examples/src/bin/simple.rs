@@ -11,7 +11,7 @@ use tracing::info;
 use uuid::Uuid;
 
 fn main() {
-    setup_logger();
+    setup_logger().expect("Failed to initialize logger");
     info!("Multi-threaded Price Level Example");
 
     // Number of threads to use

@@ -17,7 +17,7 @@ const THREAD_COUNT: usize = 16;
 const TEST_DURATION_MS: u64 = 3000; // 3 seconds per test
 
 fn main() {
-    setup_logger();
+    setup_logger().expect("Failed to initialize logger");
     info!("PriceLevel Contention Pattern Test");
     info!("=================================");
 
