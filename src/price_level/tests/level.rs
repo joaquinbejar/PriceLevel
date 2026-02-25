@@ -55,13 +55,13 @@ mod tests {
         assert_eq!(restored.order_count(), price_level.order_count());
 
         let original_ids: Vec<Id> = price_level
-            .iter_orders()
-            .into_iter()
+            .snapshot_orders()
+            .iter()
             .map(|order| order.id())
             .collect();
         let restored_ids: Vec<Id> = restored
-            .iter_orders()
-            .into_iter()
+            .snapshot_orders()
+            .iter()
             .map(|order| order.id())
             .collect();
         assert_eq!(restored_ids, original_ids);
@@ -97,8 +97,8 @@ mod tests {
         let snapshot = price_level.snapshot();
         let restored = PriceLevel::from(&snapshot);
 
-        let original_orders = price_level.iter_orders();
-        let restored_orders = restored.iter_orders();
+        let original_orders = price_level.snapshot_orders();
+        let restored_orders = restored.snapshot_orders();
 
         assert_eq!(restored_orders.len(), original_orders.len());
         assert_eq!(restored.order_count(), price_level.order_count());
@@ -133,8 +133,8 @@ mod tests {
         let restored = PriceLevel::from_snapshot_package(package)
             .expect("Failed to restore price level from snapshot package");
 
-        let original_orders = price_level.iter_orders();
-        let restored_orders = restored.iter_orders();
+        let original_orders = price_level.snapshot_orders();
+        let restored_orders = restored.snapshot_orders();
 
         assert_eq!(restored_orders.len(), original_orders.len());
         assert_eq!(restored.order_count(), price_level.order_count());
@@ -423,7 +423,7 @@ mod tests {
         price_level.add_order(create_standard_order(1, 10000, 100));
         price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
 
-        let orders = price_level.iter_orders();
+        let orders = price_level.snapshot_orders();
 
         assert_eq!(orders.len(), 2);
         assert_eq!(orders[0].id(), Id::from_u64(1));
@@ -1157,7 +1157,7 @@ mod tests {
         assert!(match_result.filled_order_ids.contains(&Id::from_u64(1)));
         assert!(match_result.filled_order_ids.contains(&Id::from_u64(2)));
 
-        let orders = price_level.iter_orders();
+        let orders = price_level.snapshot_orders();
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(3));
         assert_eq!(orders[0].visible_quantity(), 10);
@@ -1183,7 +1183,7 @@ mod tests {
         assert_eq!(snapshot.orders.len(), 2);
 
         // Verify that orders in the snapshot match those in the price level
-        let orders_from_level = price_level.iter_orders();
+        let orders_from_level = price_level.snapshot_orders();
         assert_eq!(snapshot.orders.len(), orders_from_level.len());
 
         // Check that all orders from the price level are in the snapshot
@@ -1446,7 +1446,7 @@ mod tests {
         assert_eq!(price_level.order_count(), 2);
 
         // Verify orders
-        let orders = price_level.iter_orders();
+        let orders = price_level.snapshot_orders();
         assert_eq!(orders.len(), 2);
 
         let order_ids: Vec<Id> = orders.iter().map(|o| o.id()).collect();
@@ -1499,7 +1499,7 @@ mod tests {
         assert_eq!(price_level.order_count(), 5);
 
         // Verify the order
-        let orders = price_level.iter_orders();
+        let orders = price_level.snapshot_orders();
         assert_eq!(orders.len(), 5);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
@@ -1532,7 +1532,7 @@ mod tests {
         assert_eq!(deserialized.order_count(), 1);
 
         // Verify the order in the deserialized price level
-        let orders = deserialized.iter_orders();
+        let orders = deserialized.snapshot_orders();
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
