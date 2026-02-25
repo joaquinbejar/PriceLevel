@@ -6,6 +6,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Represents the side of an order
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     /// Buy side (bids)
@@ -33,6 +34,7 @@ impl Side {
     /// let buy_side = sell_side.opposite();
     /// assert_eq!(buy_side, Side::Buy);
     /// ```
+    #[must_use]
     pub fn opposite(&self) -> Self {
         match self {
             Side::Buy => Side::Sell,
@@ -91,6 +93,7 @@ impl Hash32 {
     }
 
     /// Returns the inner byte array as a mutable reference.
+    #[must_use]
     pub fn as_bytes_mut(&mut self) -> &mut [u8; 32] {
         &mut self.0
     }

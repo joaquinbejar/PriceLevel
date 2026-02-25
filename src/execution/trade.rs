@@ -33,6 +33,7 @@ pub struct Trade {
 
 impl Trade {
     /// Create a new trade
+    #[must_use]
     pub fn new(
         trade_id: Id,
         taker_order_id: Id,
@@ -58,6 +59,7 @@ impl Trade {
     }
 
     /// Returns the side of the maker order
+    #[must_use]
     pub fn maker_side(&self) -> Side {
         match self.taker_side {
             Side::Buy => Side::Sell,
@@ -66,6 +68,7 @@ impl Trade {
     }
 
     /// Returns the total value of this trade
+    #[must_use]
     pub fn total_value(&self) -> u128 {
         self.price.as_u128() * (self.quantity.as_u64() as u128)
     }

@@ -75,6 +75,7 @@ impl PriceLevelStatistics {
     }
 
     /// Create new empty statistics
+    #[must_use]
     pub fn new() -> Self {
         let current_time = Self::current_timestamp_milliseconds_or_zero();
 
@@ -145,31 +146,37 @@ impl PriceLevelStatistics {
     }
 
     /// Get total number of orders added
+    #[must_use]
     pub fn orders_added(&self) -> usize {
         self.orders_added.load(Ordering::Relaxed)
     }
 
     /// Get total number of orders removed
+    #[must_use]
     pub fn orders_removed(&self) -> usize {
         self.orders_removed.load(Ordering::Relaxed)
     }
 
     /// Get total number of orders executed
+    #[must_use]
     pub fn orders_executed(&self) -> usize {
         self.orders_executed.load(Ordering::Relaxed)
     }
 
     /// Get total quantity executed
+    #[must_use]
     pub fn quantity_executed(&self) -> u64 {
         self.quantity_executed.load(Ordering::Relaxed)
     }
 
     /// Get total value executed
+    #[must_use]
     pub fn value_executed(&self) -> u64 {
         self.value_executed.load(Ordering::Relaxed)
     }
 
     /// Get average execution price
+    #[must_use]
     pub fn average_execution_price(&self) -> Option<f64> {
         let qty = self.quantity_executed.load(Ordering::Relaxed);
         let value = self.value_executed.load(Ordering::Relaxed);
@@ -182,6 +189,7 @@ impl PriceLevelStatistics {
     }
 
     /// Get average waiting time for executed orders (in milliseconds)
+    #[must_use]
     pub fn average_waiting_time(&self) -> Option<f64> {
         let count = self.orders_executed.load(Ordering::Relaxed);
         let sum = self.sum_waiting_time.load(Ordering::Relaxed);
@@ -194,6 +202,7 @@ impl PriceLevelStatistics {
     }
 
     /// Get time since last execution (in milliseconds)
+    #[must_use]
     pub fn time_since_last_execution(&self) -> Option<u64> {
         let last = self.last_execution_time.load(Ordering::Relaxed);
         if last == 0 {

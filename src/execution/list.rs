@@ -13,11 +13,13 @@ pub struct TradeList {
 
 impl TradeList {
     /// Create a new empty trade list
+    #[must_use]
     pub fn new() -> Self {
         Self { trades: Vec::new() }
     }
 
     /// Create a trade list from an existing vector
+    #[must_use]
     pub fn from_vec(trades: Vec<Trade>) -> Self {
         Self { trades }
     }
@@ -28,11 +30,13 @@ impl TradeList {
     }
 
     /// Get a reference to the underlying vector
+    #[must_use]
     pub fn as_vec(&self) -> &Vec<Trade> {
         &self.trades
     }
 
     /// Convert into a vector of trades
+    #[must_use]
     pub fn into_vec(self) -> Vec<Trade> {
         self.trades
     }

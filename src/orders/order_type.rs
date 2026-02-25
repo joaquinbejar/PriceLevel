@@ -188,6 +188,7 @@ pub enum OrderType<T> {
 
 impl<T: Clone> OrderType<T> {
     /// Get the order ID
+    #[must_use]
     pub fn id(&self) -> Id {
         match self {
             Self::Standard { id, .. } => *id,
@@ -201,6 +202,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the user ID associated with this order
+    #[must_use]
     pub fn user_id(&self) -> Hash32 {
         match self {
             Self::Standard { user_id, .. }
@@ -214,6 +216,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the price
+    #[must_use]
     pub fn price(&self) -> Price {
         match self {
             Self::Standard { price, .. } => *price,
@@ -227,6 +230,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the visible quantity
+    #[must_use]
     pub fn visible_quantity(&self) -> u64 {
         match self {
             Self::Standard { quantity, .. } => quantity.as_u64(),
@@ -244,6 +248,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the hidden quantity
+    #[must_use]
     pub fn hidden_quantity(&self) -> u64 {
         match self {
             Self::IcebergOrder {
@@ -257,6 +262,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the order side
+    #[must_use]
     pub fn side(&self) -> Side {
         match self {
             Self::Standard { side, .. } => *side,
@@ -270,6 +276,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the time in force
+    #[must_use]
     pub fn time_in_force(&self) -> TimeInForce {
         match self {
             Self::Standard { time_in_force, .. } => *time_in_force,
@@ -283,6 +290,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Get the timestamp
+    #[must_use]
     pub fn timestamp(&self) -> u64 {
         match self {
             Self::Standard { timestamp, .. } => timestamp.as_u64(),
@@ -296,21 +304,25 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Check if the order is immediate-or-cancel
+    #[must_use]
     pub fn is_immediate(&self) -> bool {
         self.time_in_force().is_immediate()
     }
 
     /// Check if the order is fill-or-kill
+    #[must_use]
     pub fn is_fill_or_kill(&self) -> bool {
         matches!(self.time_in_force(), TimeInForce::Fok)
     }
 
     /// Check if this is a post-only order
+    #[must_use]
     pub fn is_post_only(&self) -> bool {
         matches!(self, Self::PostOnly { .. })
     }
 
     /// Create a new standard order with reduced quantity
+    #[must_use]
     pub fn with_reduced_quantity(&self, new_quantity: u64) -> Self {
         let new_quantity = Quantity::new(new_quantity);
         match self {
@@ -382,6 +394,7 @@ impl<T: Clone> OrderType<T> {
     }
 
     /// Update an iceberg order, refreshing visible part from hidden
+    #[must_use]
     pub fn refresh_iceberg(&self, refresh_amount: u64) -> (Self, u64) {
         match self {
             Self::IcebergOrder {
@@ -461,6 +474,7 @@ impl<T: Clone> OrderType<T> {
     /// - Optionally, an updated version of this order (if partially filled)
     /// - The quantity that was reduced from hidden portion (for iceberg/reserve orders)
     /// - The remaining quantity of the incoming order
+    #[must_use]
     pub fn match_against(&self, incoming_quantity: u64) -> (u64, Option<Self>, u64, u64) {
         match self {
             Self::Standard {
@@ -712,6 +726,7 @@ impl<T: Clone> OrderType<T> {
 
 impl<T> OrderType<T> {
     /// Get the extra fields
+    #[must_use]
     pub fn extra_fields(&self) -> &T {
         match self {
             Self::Standard { extra_fields, .. } => extra_fields,
@@ -738,6 +753,7 @@ impl<T> OrderType<T> {
     }
 
     /// Transform the extra fields type using a function
+    #[must_use]
     pub fn map_extra_fields<U, F>(self, f: F) -> OrderType<U>
     where
         F: FnOnce(T) -> U,

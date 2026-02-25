@@ -18,16 +18,19 @@ pub struct OrderBookEntry {
 impl OrderBookEntry {
     /// Create a new order book entry
     #[allow(dead_code)]
+    #[must_use]
     pub fn new(level: Arc<PriceLevel>, index: usize) -> Self {
         Self { level, index }
     }
 
     /// Get the price of this entry
+    #[must_use]
     pub fn price(&self) -> u128 {
         self.level.price()
     }
 
     /// Get the visible quantity at this entry
+    #[must_use]
     pub fn visible_quantity(&self) -> u64 {
         self.level.visible_quantity()
     }
@@ -39,6 +42,7 @@ impl OrderBookEntry {
 
     /// Get the order count at this entry
     #[allow(dead_code)]
+    #[must_use]
     pub fn order_count(&self) -> usize {
         self.level.order_count()
     }
