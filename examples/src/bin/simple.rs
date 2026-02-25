@@ -77,9 +77,9 @@ fn main() {
                             info!(
                                 "Thread {} match result: executed={}, remaining={}, complete={}",
                                 thread_id,
-                                match_result.executed_quantity(),
-                                match_result.remaining_quantity,
-                                match_result.is_complete
+                                match_result.executed_quantity().unwrap_or(0),
+                                match_result.remaining_quantity(),
+                                match_result.is_complete()
                             );
                         }
 
@@ -311,6 +311,6 @@ fn print_price_level_info(price_level: &PriceLevel) {
     info!("Price: {}", price_level.price());
     info!("Visible quantity: {}", price_level.visible_quantity());
     info!("Hidden quantity: {}", price_level.hidden_quantity());
-    info!("Total quantity: {}", price_level.total_quantity());
+    info!("Total quantity: {:?}", price_level.total_quantity());
     info!("Order count: {}", price_level.order_count());
 }

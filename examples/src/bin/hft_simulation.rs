@@ -140,7 +140,7 @@ fn main() {
                 let result = thread_price_level.match_order(quantity, taker_id, &thread_tx_id_gen);
 
                 // Count successful matches
-                if result.executed_quantity() > 0 {
+                if result.executed_quantity().unwrap_or(0) > 0 {
                     local_counter += 1;
                 }
 
@@ -402,7 +402,7 @@ fn print_price_level_info(price_level: &PriceLevel) {
     info!("Price: {}", price_level.price());
     info!("Visible quantity: {}", price_level.visible_quantity());
     info!("Hidden quantity: {}", price_level.hidden_quantity());
-    info!("Total quantity: {}", price_level.total_quantity());
+    info!("Total quantity: {:?}", price_level.total_quantity());
     info!("Order count: {}", price_level.order_count());
     info!("Statistics: {}", price_level.stats());
 }
