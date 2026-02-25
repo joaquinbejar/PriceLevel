@@ -144,10 +144,18 @@ impl PriceLevel {
         order_arc
     }
 
-    /// Creates an iterator over the orders in the price level.
+    /// Creates a non-allocating iterator over current orders in this level.
+    ///
+    /// The iteration order is not guaranteed to be stable. Use [`Self::snapshot_orders`]
+    /// when deterministic ordering is required.
+    pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
+        self.orders.iter_orders()
+    }
+
+    /// Materializes a deterministic snapshot of orders sorted by timestamp.
     #[must_use]
-    pub fn iter_orders(&self) -> Vec<Arc<OrderType<()>>> {
-        self.orders.to_vec()
+    pub fn snapshot_orders(&self) -> Vec<Arc<OrderType<()>>> {
+        self.orders.snapshot_vec()
     }
 
     /// Matches an incoming order against existing orders at this price level.
@@ -274,7 +282,7 @@ impl PriceLevel {
             visible_quantity: self.visible_quantity(),
             hidden_quantity: self.hidden_quantity(),
             order_count: self.order_count(),
-            orders: self.iter_orders(),
+            orders: self.snapshot_orders(),
         }
     }
 
@@ -498,7 +506,6 @@ impl From<&PriceLevel> for PriceLevelData {
             order_count: price_level.order_count(),
             orders: price_level
                 .iter_orders()
-                .into_iter()
                 .map(|order_arc| *order_arc)
                 .collect(),
         }
@@ -676,15 +683,24 @@ impl Ord for PriceLevel {
 
 impl Display for PriceLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let orders_str: Vec<String> = self.iter_orders().iter().map(|o| o.to_string()).collect();
         write!(
             f,
-            "PriceLevel:price={};visible_quantity={};hidden_quantity={};order_count={};orders=[{}]",
+            "PriceLevel:price={};visible_quantity={};hidden_quantity={};order_count={};orders=[",
             self.price(),
             self.visible_quantity(),
             self.hidden_quantity(),
-            self.order_count(),
-            orders_str.join(",")
-        )
+            self.order_count()
+        )?;
+
+        let mut first = true;
+        for order in self.snapshot_orders() {
+            if !first {
+                write!(f, ",")?;
+            }
+            write!(f, "{order}")?;
+            first = false;
+        }
+
+        write!(f, "]")
     }
 }

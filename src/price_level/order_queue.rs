@@ -66,13 +66,24 @@ impl OrderQueue {
         self.orders.remove(&order_id).map(|(_, order)| order)
     }
 
-    /// Convert the queue to a vector (for snapshots)
+    /// Iterate through current orders without materializing an intermediate vector.
+    pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
+        self.orders.iter().map(|entry| entry.value().clone())
+    }
+
+    /// Materialize a stable snapshot vector sorted by timestamp.
     #[must_use]
-    pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
+    pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
         let mut orders: Vec<Arc<OrderType<()>>> =
             self.orders.iter().map(|o| o.value().clone()).collect();
         orders.sort_by_key(|o| o.timestamp());
         orders
+    }
+
+    /// Convert the queue to a vector (for compatibility and snapshots).
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
+        self.snapshot_vec()
     }
 
     /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
@@ -166,8 +177,16 @@ impl FromStr for OrderQueue {
 
 impl Display for OrderQueue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let orders_str: Vec<String> = self.to_vec().iter().map(|o| o.to_string()).collect();
-        write!(f, "OrderQueue:orders=[{}]", orders_str.join(","))
+        write!(f, "OrderQueue:orders=[")?;
+        let mut first = true;
+        for order in self.snapshot_vec() {
+            if !first {
+                write!(f, ",")?;
+            }
+            write!(f, "{order}")?;
+            first = false;
+        }
+        write!(f, "]")
     }
 }
 
