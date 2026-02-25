@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
-        assert_eq!(price_level.total_quantity(), 0);
+        assert!(matches!(price_level.total_quantity(), Ok(0)));
 
         // Test the statistics are properly initialized
         let stats = price_level.stats();
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 100);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(price_level.total_quantity(), 100);
+        assert!(matches!(price_level.total_quantity(), Ok(100)));
 
         // Verify the returned Arc contains the expected order
         assert_eq!(order_arc.id(), Id::from_u64(1));
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 200);
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(price_level.total_quantity(), 250);
+        assert!(matches!(price_level.total_quantity(), Ok(250)));
     }
 
     #[test]
@@ -365,7 +365,7 @@ mod tests {
         assert_eq!(price_level.visible_quantity(), 250); // 100 + 50 + 75 + 25
         assert_eq!(price_level.hidden_quantity(), 300); // 0 + 200 + 0 + 100
         assert_eq!(price_level.order_count(), 4);
-        assert_eq!(price_level.total_quantity(), 550);
+        assert!(matches!(price_level.total_quantity(), Ok(550)));
 
         // Verify stats
         assert_eq!(price_level.stats().orders_added(), 4);

@@ -39,7 +39,7 @@ mod tests {
     fn test_snapshot_package_roundtrip() {
         let mut snapshot = PriceLevelSnapshot::new(42);
         snapshot.orders = create_sample_orders();
-        snapshot.refresh_aggregates();
+        assert!(snapshot.refresh_aggregates().is_ok());
 
         let package =
             PriceLevelSnapshotPackage::new(snapshot.clone()).expect("Failed to create package");
@@ -73,7 +73,7 @@ mod tests {
     fn test_snapshot_package_checksum_mismatch() {
         let mut snapshot = PriceLevelSnapshot::new(99);
         snapshot.orders = create_sample_orders();
-        snapshot.refresh_aggregates();
+        assert!(snapshot.refresh_aggregates().is_ok());
 
         let package = PriceLevelSnapshotPackage::new(snapshot).expect("Failed to create package");
         let json = package.to_json().expect("Failed to serialize package");
@@ -122,7 +122,7 @@ mod tests {
         let mut snapshot = PriceLevelSnapshot::new(1000);
         snapshot.visible_quantity = 50;
         snapshot.hidden_quantity = 150;
-        assert_eq!(snapshot.total_quantity(), 200);
+        assert!(matches!(snapshot.total_quantity(), Ok(200)));
     }
 
     #[test]

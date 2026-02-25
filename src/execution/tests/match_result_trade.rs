@@ -29,7 +29,7 @@ mod tests {
     #[test]
     fn add_trade_updates_remaining_and_trades() {
         let mut result = MatchResult::new(Id::from_u64(10), 100);
-        result.add_trade(sample_trade(25));
+        assert!(result.add_trade(sample_trade(25)).is_ok());
 
         assert_eq!(result.remaining_quantity, 75);
         assert_eq!(result.trades.len(), 1);
@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn display_and_parse_use_trades_field() {
         let mut result = MatchResult::new(Id::from_u64(10), 100);
-        result.add_trade(sample_trade(40));
+        assert!(result.add_trade(sample_trade(40)).is_ok());
 
         let rendered = result.to_string();
         assert!(rendered.contains(";trades=Trades:[Trade:"));
@@ -58,5 +58,32 @@ mod tests {
         let old_payload = "MatchResult:order_id=1;remaining_quantity=1;is_complete=false;transactions=Transactions:[];filled_order_ids=[]";
         let parsed = MatchResult::from_str(old_payload);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn add_trade_rejects_underflow() {
+        let mut result = MatchResult::new(Id::from_u64(10), 10);
+        let error = result.add_trade(sample_trade(11));
+        assert!(error.is_err());
+        assert_eq!(result.remaining_quantity, 10);
+        assert_eq!(result.trades.len(), 0);
+    }
+
+    #[test]
+    fn executed_value_rejects_overflow() {
+        let mut result = MatchResult::new(Id::from_u64(10), 4);
+
+        let trade = Trade {
+            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            taker_order_id: Id::from_u64(10),
+            maker_order_id: Id::from_u64(20),
+            price: Price::new(u128::MAX),
+            quantity: Quantity::new(2),
+            taker_side: Side::Buy,
+            timestamp: TimestampMs::new(1_616_823_000_000),
+        };
+
+        assert!(result.add_trade(trade).is_ok());
+        assert!(result.executed_value().is_err());
     }
 }
