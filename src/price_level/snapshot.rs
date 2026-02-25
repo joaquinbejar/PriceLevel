@@ -38,8 +38,12 @@ impl PriceLevelSnapshot {
     }
 
     /// Get the total quantity (visible + hidden) at this price level
-    pub fn total_quantity(&self) -> u64 {
-        self.visible_quantity + self.hidden_quantity
+    pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
+        self.visible_quantity
+            .checked_add(self.hidden_quantity)
+            .ok_or_else(|| PriceLevelError::InvalidOperation {
+                message: "snapshot total quantity overflow".to_string(),
+            })
     }
 
     /// Get an iterator over the orders in this snapshot
@@ -48,19 +52,30 @@ impl PriceLevelSnapshot {
     }
 
     /// Recomputes aggregate fields (`visible_quantity`, `hidden_quantity`, and `order_count`) based on current orders.
-    pub fn refresh_aggregates(&mut self) {
+    pub fn refresh_aggregates(&mut self) -> Result<(), PriceLevelError> {
         self.order_count = self.orders.len();
 
         let mut visible_total: u64 = 0;
         let mut hidden_total: u64 = 0;
 
         for order in &self.orders {
-            visible_total = visible_total.saturating_add(order.visible_quantity());
-            hidden_total = hidden_total.saturating_add(order.hidden_quantity());
+            visible_total = visible_total
+                .checked_add(order.visible_quantity())
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "snapshot visible quantity overflow".to_string(),
+                })?;
+
+            hidden_total = hidden_total
+                .checked_add(order.hidden_quantity())
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "snapshot hidden quantity overflow".to_string(),
+                })?;
         }
 
         self.visible_quantity = visible_total;
         self.hidden_quantity = hidden_total;
+
+        Ok(())
     }
 }
 
@@ -81,7 +96,7 @@ pub struct PriceLevelSnapshotPackage {
 impl PriceLevelSnapshotPackage {
     /// Creates a new snapshot package computing the checksum for the provided snapshot.
     pub fn new(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
-        snapshot.refresh_aggregates();
+        snapshot.refresh_aggregates()?;
 
         let checksum = Self::compute_checksum(&snapshot)?;
 

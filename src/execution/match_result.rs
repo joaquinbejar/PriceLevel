@@ -37,11 +37,20 @@ impl MatchResult {
         }
     }
 
-    /// Add a trade to this match result
-    pub fn add_trade(&mut self, trade: Trade) {
-        self.remaining_quantity = self.remaining_quantity.saturating_sub(trade.quantity);
+    /// Add a trade to this match result.
+    pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
+        self.remaining_quantity = self
+            .remaining_quantity
+            .checked_sub(trade.quantity)
+            .ok_or_else(|| PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade quantity {} exceeds remaining quantity {}",
+                    trade.quantity, self.remaining_quantity
+                ),
+            })?;
         self.is_complete = self.remaining_quantity == 0;
         self.trades.add(trade);
+        Ok(())
     }
 
     /// Add a filled order ID to track orders removed from the book
@@ -50,26 +59,39 @@ impl MatchResult {
     }
 
     /// Get the total executed quantity
-    pub fn executed_quantity(&self) -> u64 {
-        self.trades.as_vec().iter().map(|t| t.quantity).sum()
+    pub fn executed_quantity(&self) -> Result<u64, PriceLevelError> {
+        self.trades.as_vec().iter().try_fold(0u64, |acc, trade| {
+            acc.checked_add(trade.quantity)
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "executed quantity overflow".to_string(),
+                })
+        })
     }
 
     /// Get the total value executed
-    pub fn executed_value(&self) -> u128 {
-        self.trades
-            .as_vec()
-            .iter()
-            .map(|t| t.price * (t.quantity as u128))
-            .sum()
+    pub fn executed_value(&self) -> Result<u128, PriceLevelError> {
+        self.trades.as_vec().iter().try_fold(0u128, |acc, trade| {
+            let trade_value = trade
+                .price
+                .checked_mul(u128::from(trade.quantity))
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "executed value multiplication overflow".to_string(),
+                })?;
+
+            acc.checked_add(trade_value)
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "executed value accumulation overflow".to_string(),
+                })
+        })
     }
 
     /// Calculate the average execution price
-    pub fn average_price(&self) -> Option<f64> {
-        let executed_qty = self.executed_quantity();
+    pub fn average_price(&self) -> Result<Option<f64>, PriceLevelError> {
+        let executed_qty = self.executed_quantity()?;
         if executed_qty == 0 {
-            None
+            Ok(None)
         } else {
-            Some(self.executed_value() as f64 / executed_qty as f64)
+            Ok(Some(self.executed_value()? as f64 / executed_qty as f64))
         }
     }
 }

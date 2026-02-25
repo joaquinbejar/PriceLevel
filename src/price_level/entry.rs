@@ -33,7 +33,7 @@ impl OrderBookEntry {
     }
 
     /// Get the total quantity at this entry
-    pub fn total_quantity(&self) -> u64 {
+    pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
         self.level.total_quantity()
     }
 
@@ -75,7 +75,8 @@ impl Serialize for OrderBookEntry {
         let mut state = serializer.serialize_struct("OrderBookEntry", 3)?;
         state.serialize_field("price", &self.price())?;
         state.serialize_field("visible_quantity", &self.visible_quantity())?;
-        state.serialize_field("total_quantity", &self.total_quantity())?;
+        let total_quantity = self.total_quantity().map_err(serde::ser::Error::custom)?;
+        state.serialize_field("total_quantity", &total_quantity)?;
         state.serialize_field("index", &self.index)?;
         state.end()
     }
@@ -109,12 +110,13 @@ impl<'de> Deserialize<'de> for OrderBookEntry {
 // Implement Display
 impl fmt::Display for OrderBookEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let total_quantity = self.total_quantity().map_err(|_| fmt::Error)?;
         write!(
             f,
             "OrderBookEntry:price={};visible_quantity={};total_quantity={};index={}",
             self.price(),
             self.visible_quantity(),
-            self.total_quantity(),
+            total_quantity,
             self.index
         )
     }

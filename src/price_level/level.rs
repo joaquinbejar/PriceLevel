@@ -38,7 +38,7 @@ pub struct PriceLevel {
 impl PriceLevel {
     /// Reconstructs a price level directly from a snapshot.
     pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
-        snapshot.refresh_aggregates();
+        snapshot.refresh_aggregates()?;
 
         let order_count = snapshot.orders.len();
         let queue = OrderQueue::from(snapshot.orders.clone());
@@ -97,8 +97,12 @@ impl PriceLevel {
     }
 
     /// Get the total quantity (visible + hidden)
-    pub fn total_quantity(&self) -> u64 {
-        self.visible_quantity() + self.hidden_quantity()
+    pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
+        self.visible_quantity()
+            .checked_add(self.hidden_quantity())
+            .ok_or_else(|| PriceLevelError::InvalidOperation {
+                message: "price level total quantity overflow".to_string(),
+            })
     }
 
     /// Get the number of orders
@@ -188,7 +192,10 @@ impl PriceLevel {
                         order_arc.side().opposite(),
                     );
 
-                    result.add_trade(trade);
+                    if result.add_trade(trade).is_err() {
+                        remaining = new_remaining;
+                        break;
+                    }
 
                     // If the order was completely executed, add it to filled_order_ids
                     if updated_order.is_none() {
@@ -199,8 +206,9 @@ impl PriceLevel {
                 remaining = new_remaining;
 
                 // update statistics
-                self.stats
-                    .record_execution(consumed, order_arc.price(), order_arc.timestamp());
+                let _ =
+                    self.stats
+                        .record_execution(consumed, order_arc.price(), order_arc.timestamp());
 
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {
@@ -489,7 +497,7 @@ impl From<&PriceLevel> for PriceLevelData {
 impl From<&PriceLevelSnapshot> for PriceLevel {
     fn from(value: &PriceLevelSnapshot) -> Self {
         let mut snapshot = value.clone();
-        snapshot.refresh_aggregates();
+        let _ = snapshot.refresh_aggregates();
 
         let order_count = snapshot.orders.len();
         let queue = OrderQueue::from(snapshot.orders.clone());

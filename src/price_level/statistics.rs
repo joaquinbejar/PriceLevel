@@ -36,12 +36,40 @@ pub struct PriceLevelStatistics {
 }
 
 impl PriceLevelStatistics {
+    fn checked_fetch_add_u64(
+        target: &AtomicU64,
+        value: u64,
+        field: &str,
+    ) -> Result<(), PriceLevelError> {
+        let mut current = target.load(Ordering::Relaxed);
+
+        loop {
+            let next =
+                current
+                    .checked_add(value)
+                    .ok_or_else(|| PriceLevelError::InvalidOperation {
+                        message: format!("{field} overflow"),
+                    })?;
+
+            match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn current_timestamp_milliseconds() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
     /// Create new empty statistics
     pub fn new() -> Self {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let current_time = Self::current_timestamp_milliseconds();
 
         Self {
             orders_added: AtomicUsize::new(0),
@@ -66,28 +94,47 @@ impl PriceLevelStatistics {
     }
 
     /// Record an order execution
-    pub fn record_execution(&self, quantity: u64, price: u128, order_timestamp: u64) {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+    pub fn record_execution(
+        &self,
+        quantity: u64,
+        price: u128,
+        order_timestamp: u64,
+    ) -> Result<(), PriceLevelError> {
+        let current_time = Self::current_timestamp_milliseconds();
 
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
-        self.quantity_executed
-            .fetch_add(quantity, Ordering::Relaxed);
-        // Saturating multiplication to avoid overflow, then truncate to u64 for atomic storage
-        let value = (quantity as u128).saturating_mul(price);
-        self.value_executed
-            .fetch_add(value.min(u64::MAX as u128) as u64, Ordering::Relaxed);
+        Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;
+
+        let value_u128 = u128::from(quantity).checked_mul(price).ok_or_else(|| {
+            PriceLevelError::InvalidOperation {
+                message: "value_executed multiplication overflow".to_string(),
+            }
+        })?;
+
+        let value_u64 =
+            u64::try_from(value_u128).map_err(|_| PriceLevelError::InvalidOperation {
+                message: "value_executed exceeds u64 storage".to_string(),
+            })?;
+
+        Self::checked_fetch_add_u64(&self.value_executed, value_u64, "value_executed")?;
         self.last_execution_time
             .store(current_time, Ordering::Relaxed);
 
         // Calculate waiting time for this order
         if order_timestamp > 0 {
-            let waiting_time = current_time.saturating_sub(order_timestamp);
-            self.sum_waiting_time
-                .fetch_add(waiting_time, Ordering::Relaxed);
+            let waiting_time = current_time.checked_sub(order_timestamp).ok_or_else(|| {
+                PriceLevelError::InvalidOperation {
+                    message: format!(
+                        "order timestamp {} is in the future of current time {}",
+                        order_timestamp, current_time
+                    ),
+                }
+            })?;
+
+            Self::checked_fetch_add_u64(&self.sum_waiting_time, waiting_time, "sum_waiting_time")?;
         }
+
+        Ok(())
     }
 
     /// Get total number of orders added
@@ -145,21 +192,14 @@ impl PriceLevelStatistics {
         if last == 0 {
             None
         } else {
-            let current_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_millis() as u64;
-
-            Some(current_time.saturating_sub(last))
+            let current_time = Self::current_timestamp_milliseconds();
+            current_time.checked_sub(last)
         }
     }
 
     /// Reset all statistics
     pub fn reset(&self) {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64;
+        let current_time = Self::current_timestamp_milliseconds();
 
         self.orders_added.store(0, Ordering::Relaxed);
         self.orders_removed.store(0, Ordering::Relaxed);

@@ -358,7 +358,7 @@ mod tests_order_book_entry {
 
         // Initially quantities should be zero
         assert_eq!(entry.visible_quantity(), 0);
-        assert_eq!(entry.total_quantity(), 0);
+        assert!(matches!(entry.total_quantity(), Ok(0)));
 
         // Add an order with visible quantity
         let standard_order = crate::orders::OrderType::Standard {
@@ -375,7 +375,7 @@ mod tests_order_book_entry {
 
         // Check quantities after adding order
         assert_eq!(entry.visible_quantity(), 10);
-        assert_eq!(entry.total_quantity(), 10);
+        assert!(matches!(entry.total_quantity(), Ok(10)));
 
         // Add an iceberg order with hidden quantity
         let iceberg_order = crate::orders::OrderType::IcebergOrder {
@@ -393,7 +393,7 @@ mod tests_order_book_entry {
 
         // Check quantities after adding iceberg order
         assert_eq!(entry.visible_quantity(), 15); // 10 + 5
-        assert_eq!(entry.total_quantity(), 30); // 10 + 5 + 15
+        assert!(matches!(entry.total_quantity(), Ok(30))); // 10 + 5 + 15
     }
 }
 

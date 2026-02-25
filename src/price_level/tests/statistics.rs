@@ -21,6 +21,22 @@ mod tests {
     }
 
     #[test]
+    fn test_record_execution_error_paths() {
+        let stats = PriceLevelStatistics::new();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Future timestamps should return an explicit error.
+        assert!(stats.record_execution(1, 100, now + 1_000).is_err());
+
+        // Multiplication overflow should return an explicit error.
+        assert!(stats.record_execution(u64::MAX, u128::MAX, 0).is_err());
+    }
+
+    #[test]
     fn test_default() {
         let stats = PriceLevelStatistics::default();
         assert_eq!(stats.orders_added(), 0);
@@ -45,7 +61,7 @@ mod tests {
         assert_eq!(stats.orders_removed(), 3);
 
         // Test recording executed orders
-        stats.record_execution(10, 100, 0); // qty=10, price=100, no timestamp
+        assert!(stats.record_execution(10, 100, 0).is_ok()); // qty=10, price=100, no timestamp
         assert_eq!(stats.orders_executed(), 1);
         assert_eq!(stats.quantity_executed(), 10);
         assert_eq!(stats.value_executed(), 1000); // 10 * 100
@@ -61,7 +77,7 @@ mod tests {
         // Sleep to ensure waiting time is measurable
         thread::sleep(Duration::from_millis(10));
 
-        stats.record_execution(5, 200, timestamp);
+        assert!(stats.record_execution(5, 200, timestamp).is_ok());
         assert_eq!(stats.orders_executed(), 2);
         assert_eq!(stats.quantity_executed(), 15); // 10 + 5
         assert_eq!(stats.value_executed(), 2000); // 1000 + (5 * 200)
@@ -76,8 +92,8 @@ mod tests {
         assert_eq!(stats.average_execution_price(), None);
 
         // Test with executions
-        stats.record_execution(10, 100, 0); // Total value: 1000
-        stats.record_execution(20, 150, 0); // Total value: 3000 + 1000 = 4000
+        assert!(stats.record_execution(10, 100, 0).is_ok()); // Total value: 1000
+        assert!(stats.record_execution(20, 150, 0).is_ok()); // Total value: 3000 + 1000 = 4000
 
         // Average price should be 4000 / 30 = 133.33...
         let avg_price = stats.average_execution_price().unwrap();
@@ -97,8 +113,8 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
-        stats.record_execution(10, 100, now - 1000); // 1 second ago
-        stats.record_execution(20, 150, now - 3000); // 3 seconds ago
+        assert!(stats.record_execution(10, 100, now - 1000).is_ok()); // 1 second ago
+        assert!(stats.record_execution(20, 150, now - 3000).is_ok()); // 3 seconds ago
 
         // Total waiting time: 1000 + 3000 = 4000ms, average = 2000ms
         let avg_wait = stats.average_waiting_time().unwrap();
@@ -113,7 +129,7 @@ mod tests {
         assert_eq!(stats.time_since_last_execution(), None);
 
         // Record an execution
-        stats.record_execution(10, 100, 0);
+        assert!(stats.record_execution(10, 100, 0).is_ok());
 
         // Sleep a bit to ensure time passes
         thread::sleep(Duration::from_millis(10));
@@ -130,7 +146,7 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        stats.record_execution(10, 100, 0);
+        assert!(stats.record_execution(10, 100, 0).is_ok());
 
         // Verify data was recorded
         assert_eq!(stats.orders_added(), 1);
@@ -158,7 +174,7 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        stats.record_execution(10, 100, 0);
+        assert!(stats.record_execution(10, 100, 0).is_ok());
 
         // Get display string
         let display_str = stats.to_string();
@@ -224,7 +240,7 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        stats.record_execution(10, 100, 0);
+        assert!(stats.record_execution(10, 100, 0).is_ok());
 
         // Serialize to JSON
         let json = serde_json::to_string(&stats).unwrap();
@@ -311,7 +327,9 @@ mod tests {
                 for _ in 0..100 {
                     stats_clone.record_order_added();
                     stats_clone.record_order_removed();
-                    stats_clone.record_execution(1, 100, 0);
+                    if let Err(error) = stats_clone.record_execution(1, 100, 0) {
+                        panic!("record_execution failed in thread: {error}");
+                    }
                 }
             });
             handles.push(handle);
@@ -338,7 +356,7 @@ mod tests {
         stats.record_order_added();
         stats.record_order_added();
         stats.record_order_removed();
-        stats.record_execution(10, 100, 0);
+        assert!(stats.record_execution(10, 100, 0).is_ok());
 
         // Verify stats were recorded
         assert_eq!(stats.orders_added(), 2);
