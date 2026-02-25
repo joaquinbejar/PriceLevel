@@ -1,5 +1,7 @@
 use criterion::{BenchmarkId, Criterion};
-use pricelevel::{Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce};
+use pricelevel::{
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce, TimestampMs,
+};
 use std::hint::black_box;
 
 /// Register all benchmarks for updating orders at a price level
@@ -26,7 +28,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
                     order_id: Id::from_u64(i),
-                    new_quantity: 200,
+                    new_quantity: Quantity::new(200),
                 }));
             }
         })
@@ -39,8 +41,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::Replace {
                     order_id: Id::from_u64(i),
-                    price: 10000, // Same price
-                    quantity: 150,
+                    price: Price::new(10000), // Same price
+                    quantity: Quantity::new(150),
                     side: Side::Buy,
                 }));
             }
@@ -54,8 +56,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for i in 25..75 {
                 let _ = black_box(price_level.update_order(OrderUpdate::Replace {
                     order_id: Id::from_u64(i),
-                    price: 10100, // Different price
-                    quantity: 150,
+                    price: Price::new(10100), // Different price
+                    quantity: Quantity::new(150),
                     side: Side::Buy,
                 }));
             }
@@ -71,7 +73,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // but for benchmark we're just using the UpdateQuantity which works on visible
                 let _ = black_box(price_level.update_order(OrderUpdate::UpdateQuantity {
                     order_id: Id::from_u64(i),
-                    new_quantity: 15,
+                    new_quantity: Quantity::new(15),
                 }));
             }
         })
@@ -109,11 +111,11 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::Standard {
             id: Id::from_u64(i),
-            price: 10000u128,
-            quantity: 10,
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -130,12 +132,12 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
     for i in 0..order_count {
         let order = OrderType::IcebergOrder {
             id: Id::from_u64(i),
-            price: 10000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000 + i,
+            timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };

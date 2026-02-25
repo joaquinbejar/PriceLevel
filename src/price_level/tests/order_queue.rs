@@ -2,6 +2,7 @@
 mod tests {
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
     use crate::price_level::order_queue::OrderQueue;
+    use crate::utils::{Price, Quantity, TimestampMs};
     use std::str::FromStr;
     use std::sync::Arc;
     use tracing::info;
@@ -9,11 +10,11 @@ mod tests {
     fn create_test_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         OrderType::<()>::Standard {
             id: Id::from_u64(id),
-            price,
-            quantity,
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         }
@@ -74,10 +75,10 @@ mod tests {
 
         // Verify individual orders (order might not be preserved)
         let has_order1 = orders.iter().any(|o| {
-            o.id() == Id::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1) && o.price() == Price::new(1000) && o.visible_quantity() == 10
         });
         let has_order2 = orders.iter().any(|o| {
-            o.id() == Id::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2) && o.price() == Price::new(1100) && o.visible_quantity() == 20
         });
 
         assert!(has_order1, "First order not found or incorrect");
@@ -94,10 +95,10 @@ mod tests {
         );
 
         let round_trip_has_order1 = round_trip_orders.iter().any(|o| {
-            o.id() == Id::from_u64(1) && o.price() == 1000u128 && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1) && o.price() == Price::new(1000) && o.visible_quantity() == 10
         });
         let round_trip_has_order2 = round_trip_orders.iter().any(|o| {
-            o.id() == Id::from_u64(2) && o.price() == 1100u128 && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2) && o.price() == Price::new(1100) && o.visible_quantity() == 20
         });
 
         assert!(
@@ -202,8 +203,8 @@ mod tests {
         } = **order
         {
             assert_eq!(id, Id::from_u64(1));
-            assert_eq!(price, 10000);
-            assert_eq!(quantity, 100);
+            assert_eq!(price, Price::new(10000));
+            assert_eq!(quantity, Quantity::new(100));
             assert!(matches!(time_in_force, TimeInForce::Gtd(1617000000000)));
         } else {
             panic!("Expected Standard order");
@@ -224,11 +225,11 @@ mod tests {
         fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
             OrderType::Standard {
                 id: Id::from_u64(id),
-                price,
-                quantity,
+                price: Price::new(price),
+                quantity: Quantity::new(quantity),
                 side: Side::Buy,
                 user_id: Hash32::zero(),
-                timestamp: 1616823000000,
+                timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 extra_fields: (),
             }
@@ -262,8 +263,8 @@ mod tests {
         } = **deserialized_order
         {
             assert_eq!(id, Id::from_u64(1));
-            assert_eq!(price, 10000u128);
-            assert_eq!(quantity, 100);
+            assert_eq!(price, Price::new(10000));
+            assert_eq!(quantity, Quantity::new(100));
         } else {
             panic!("Expected Standard order");
         }
@@ -280,11 +281,11 @@ mod tests {
         // Add an order and check again
         let order = OrderType::Standard {
             id: Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -308,22 +309,22 @@ mod tests {
         // Create a vector of orders
         let order1 = Arc::new(OrderType::Standard {
             id: Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         });
 
         let order2 = Arc::new(OrderType::Standard {
             id: Id::from_u64(2),
-            price: 1000u128,
-            quantity: 20,
+            price: Price::new(1000),
+            quantity: Quantity::new(20),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000001,
+            timestamp: TimestampMs::new(1616823000001),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         });
@@ -398,23 +399,23 @@ mod tests {
 
         let order1 = OrderType::Standard {
             id: Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
 
         let order2 = OrderType::IcebergOrder {
             id: Id::from_u64(2),
-            price: 1000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(1000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: Side::Sell,
             user_id: Hash32::zero(),
-            timestamp: 1616823000001,
+            timestamp: TimestampMs::new(1616823000001),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };

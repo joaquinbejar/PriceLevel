@@ -2,6 +2,7 @@
 mod tests {
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
+    use crate::utils::{Price, Quantity, TimestampMs};
     use crate::{Hash32, Id, OrderType, Side, TimeInForce};
     use std::str::FromStr;
     use std::sync::Arc;
@@ -125,11 +126,11 @@ mod tests {
         // Add an order to make the test more meaningful
         let order = OrderType::Standard {
             id: Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -194,6 +195,7 @@ mod tests_order_book_entry {
     use crate::orders::Hash32;
     use crate::price_level::entry::OrderBookEntry;
     use crate::price_level::level::PriceLevel;
+    use crate::utils::{Price, Quantity, TimestampMs};
     use std::cmp::Ordering;
     use std::sync::Arc;
 
@@ -216,11 +218,11 @@ mod tests_order_book_entry {
         // Add some orders and check again
         let order_type = crate::orders::OrderType::Standard {
             id: crate::orders::Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: crate::orders::Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -231,11 +233,11 @@ mod tests_order_book_entry {
         // Add another order
         let order_type2 = crate::orders::OrderType::Standard {
             id: crate::orders::Id::from_u64(2),
-            price: 1000u128,
-            quantity: 20,
+            price: Price::new(1000),
+            quantity: Quantity::new(20),
             side: crate::orders::Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000001,
+            timestamp: TimestampMs::new(1616823000001),
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -363,11 +365,11 @@ mod tests_order_book_entry {
         // Add an order with visible quantity
         let standard_order = crate::orders::OrderType::Standard {
             id: crate::orders::Id::from_u64(1),
-            price: 1000u128,
-            quantity: 10,
+            price: Price::new(1000),
+            quantity: Quantity::new(10),
             side: crate::orders::Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };
@@ -380,12 +382,12 @@ mod tests_order_book_entry {
         // Add an iceberg order with hidden quantity
         let iceberg_order = crate::orders::OrderType::IcebergOrder {
             id: crate::orders::Id::from_u64(2),
-            price: 1000u128,
-            visible_quantity: 5,
-            hidden_quantity: 15,
+            price: Price::new(1000),
+            visible_quantity: Quantity::new(5),
+            hidden_quantity: Quantity::new(15),
             side: crate::orders::Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: 1616823000001,
+            timestamp: TimestampMs::new(1616823000001),
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };

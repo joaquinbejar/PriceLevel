@@ -3,6 +3,7 @@ mod tests {
     use crate::execution::list::TradeList;
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
+    use crate::utils::{Price, Quantity, TimestampMs};
     use std::str::FromStr;
     use uuid::Uuid;
 
@@ -18,10 +19,10 @@ mod tests {
             trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
             taker_order_id: Id::from_u64(1),
             maker_order_id: Id::from_u64(2),
-            price: 10_000,
-            quantity: 5,
+            price: Price::new(10_000),
+            quantity: Quantity::new(5),
             taker_side: Side::Buy,
-            timestamp: 1_616_823_000_000,
+            timestamp: TimestampMs::new(1_616_823_000_000),
         }
     }
 

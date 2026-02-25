@@ -1,6 +1,7 @@
 use criterion::{BenchmarkId, Criterion};
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PriceLevel, Side, TimeInForce, UuidGenerator,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    TimestampMs, UuidGenerator,
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -210,7 +211,7 @@ fn measure_hot_spot_contention(
                         // Update quantity
                         let _ = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                             order_id: Id::from_u64(order_idx),
-                            new_quantity: 15,
+                            new_quantity: Quantity::new(15),
                         });
                     }
                     _ => {
@@ -247,11 +248,11 @@ fn measure_hot_spot_contention(
 fn create_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
     OrderType::Standard {
         id: Id::from_u64(id),
-        price,
-        quantity,
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
         side: Side::Buy,
         user_id: Hash32::zero(),
-        timestamp: 1616823000000,
+        timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         extra_fields: (),
     }
