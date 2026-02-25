@@ -62,14 +62,15 @@
 //! - **General Utilities:** Built with error handling, edge case scenarios, and performance in mind.
 //!
 
-use std::sync::Once;
+use crate::errors::PriceLevelError;
+use std::sync::OnceLock;
 
 use tracing_subscriber::FmtSubscriber;
 
 use {std::env, tracing::Level};
 
 #[allow(dead_code)]
-static INIT: Once = Once::new();
+static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// Sets up a logger for the application
 ///
@@ -84,11 +85,11 @@ static INIT: Once = Once::new();
 /// **Behavior:**
 /// - Concurrent calls to this function result in the logger being initialized only once.
 ///
-/// # Panics
-/// This function panics if setting the default subscriber fails.
+/// # Errors
+/// Returns an error if initializing the global subscriber fails.
 #[allow(dead_code)]
-pub fn setup_logger() {
-    INIT.call_once(|| {
+pub fn setup_logger() -> Result<(), PriceLevelError> {
+    let result = LOGGER_INIT_RESULT.get_or_init(|| {
         let log_level = env::var("LOGLEVEL")
             .unwrap_or_else(|_| "INFO".to_string())
             .to_uppercase();
@@ -104,10 +105,16 @@ pub fn setup_logger() {
         let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
 
         tracing::subscriber::set_global_default(subscriber)
-            .expect("Error setting default subscriber");
+            .map_err(|error| format!("failed to set global logging subscriber: {error}"))?;
 
         tracing::debug!("Log level set to: {}", level);
+
+        Ok(())
     });
+
+    result
+        .clone()
+        .map_err(|message| PriceLevelError::InvalidOperation { message })
 }
 
 #[cfg(test)]
@@ -123,7 +130,7 @@ mod tests_setup_logger {
         unsafe {
             env::set_var("LOGLEVEL", "INFO");
         }
-        setup_logger();
+        assert!(setup_logger().is_ok());
 
         assert!(
             set_global_default(FmtSubscriber::builder().finish()).is_err(),
@@ -137,7 +144,7 @@ mod tests_setup_logger {
         unsafe {
             env::set_var("LOGLEVEL", "DEBUG");
         }
-        setup_logger();
+        assert!(setup_logger().is_ok());
 
         assert!(
             set_global_default(FmtSubscriber::builder().finish()).is_err(),
@@ -151,7 +158,7 @@ mod tests_setup_logger {
         unsafe {
             env::remove_var("LOGLEVEL");
         }
-        setup_logger();
+        assert!(setup_logger().is_ok());
 
         assert!(
             set_global_default(FmtSubscriber::builder().finish()).is_err(),
@@ -166,8 +173,8 @@ mod tests_setup_logger {
             env::set_var("LOGLEVEL", "INFO");
         }
 
-        setup_logger(); // First call should set up the logger
-        setup_logger(); // Second call should not re-initialize
+        assert!(setup_logger().is_ok()); // First call should set up the logger
+        assert!(setup_logger().is_ok()); // Second call should not re-initialize
 
         assert!(
             set_global_default(FmtSubscriber::builder().finish()).is_err(),
@@ -224,7 +231,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::info!("Test log");
         });
 
@@ -243,7 +250,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::debug!("Test log");
         });
 
@@ -265,7 +272,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::error!("Test log");
         });
 
@@ -286,7 +293,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::warn!("Test log");
         });
 
@@ -308,7 +315,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::trace!("Test log");
         });
 
@@ -331,7 +338,7 @@ mod tests_setup_logger_bis {
         let subscriber = registry().with(layer);
 
         with_default(subscriber, || {
-            setup_logger();
+            assert!(setup_logger().is_ok());
             tracing::info!("Test log");
         });
 
