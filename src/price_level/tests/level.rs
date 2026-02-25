@@ -2,6 +2,7 @@
 mod tests {
     use crate::errors::PriceLevelError;
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
+    use crate::price_level::PriceLevelSnapshotPackage;
     use crate::price_level::level::{PriceLevel, PriceLevelData};
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::utils::{Price, Quantity, TimestampMs};
@@ -40,7 +41,7 @@ mod tests {
             .snapshot_package()
             .expect("Failed to create snapshot package");
 
-        assert_eq!(package.version, SNAPSHOT_FORMAT_VERSION);
+        assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
         package.validate().expect("Snapshot validation failed");
 
         let json = package
@@ -72,15 +73,27 @@ mod tests {
         let price_level = PriceLevel::new(20000);
         price_level.add_order(create_standard_order(1, 20000, 100));
 
-        let mut package = price_level
+        let package = price_level
             .snapshot_package()
             .expect("Failed to create snapshot package");
 
         package.validate().expect("Snapshot validation should pass");
 
-        // Corrupt the checksum and ensure validation fails
-        package.checksum = "deadbeef".to_string();
-        let err = PriceLevel::from_snapshot_package(package)
+        // Corrupt the checksum via JSON manipulation and ensure validation fails
+        let json = package.to_json().expect("Failed to serialize package");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&json).expect("JSON parsing failed");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "checksum".to_string(),
+                serde_json::Value::String("deadbeef".to_string()),
+            );
+        }
+        let tampered_json = serde_json::to_string(&value).expect("JSON serialization failed");
+        let tampered_package = PriceLevelSnapshotPackage::from_json(&tampered_json)
+            .expect("Deserialization should still succeed");
+
+        let err = PriceLevel::from_snapshot_package(tampered_package)
             .expect_err("Restoration should fail due to checksum mismatch");
 
         assert!(matches!(err, PriceLevelError::ChecksumMismatch { .. }));
@@ -445,22 +458,22 @@ mod tests {
         let taker_id = Id::from_u64(999); // market order ID
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
 
-        assert_eq!(match_result.trades.len(), 1);
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(100));
-        assert_eq!(transaction.taker_side, Side::Sell); // Taker is a market order, so it's a sell side opposite of maker
+        assert_eq!(match_result.trades().len(), 1);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(100));
+        assert_eq!(transaction.taker_side(), Side::Sell); // Taker is a market order, so it's a sell side opposite of maker
 
-        assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
+        assert_eq!(match_result.filled_order_ids().len(), 1);
+        assert_eq!(match_result.filled_order_ids()[0], Id::from_u64(1));
 
         // Verify stats
         assert_eq!(price_level.stats().orders_executed(), 1);
@@ -481,23 +494,23 @@ mod tests {
         let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
 
         // Verificar el resultado de matching
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.order_count(), 1);
 
         // Verificar las transacciones generadas
-        assert_eq!(match_result.trades.len(), 1);
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(60));
-        assert_eq!(transaction.taker_side, Side::Sell);
+        assert_eq!(match_result.trades().len(), 1);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(60));
+        assert_eq!(transaction.taker_side(), Side::Sell);
 
         // Verificar que no hay órdenes completadas
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Verify stats
         assert_eq!(price_level.stats().orders_executed(), 1);
@@ -516,21 +529,21 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 50); // 150 - 100 = 50 remaining
-        assert!(!match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 50); // 150 - 100 = 50 remaining
+        assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
 
-        assert_eq!(match_result.trades.len(), 1);
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(100));
+        assert_eq!(match_result.trades().len(), 1);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(100));
 
-        assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
+        assert_eq!(match_result.filled_order_ids().len(), 1);
+        assert_eq!(match_result.filled_order_ids()[0], Id::from_u64(1));
     }
 
     // ------------------------------------------- ICEBERG ORDERS -------------------------------------------
@@ -553,50 +566,50 @@ mod tests {
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         // Assertions to validate the match result.
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.trades.len(), 1);
+        assert_eq!(match_result.trades().len(), 1);
 
         // Assertions about the generated transaction
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(50));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(50));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
         let taker_id = Id::from_u64(1000);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 0); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        let transaction = &match_result.trades.as_vec()[0];
+        let transaction = &match_result.trades().as_vec()[0];
 
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(50));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(50));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match the remaining 50 units (50 visible + 0 hidden).
         let taker_id = Id::from_u64(1001);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
-        assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
+        assert_eq!(match_result.filled_order_ids().len(), 1);
+        assert_eq!(match_result.filled_order_ids()[0], Id::from_u64(1));
     }
 
     #[test]
@@ -613,52 +626,52 @@ mod tests {
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
         // Assertions to validate the match result.
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.trades.len(), 1);
+        assert_eq!(match_result.trades().len(), 1);
 
         // Assertions about the generated transaction
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(50));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(50));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
         let taker_id = Id::from_u64(1000);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
         assert_eq!(price_level.order_count(), 1);
-        let transaction = &match_result.trades.as_vec()[0];
+        let transaction = &match_result.trades().as_vec()[0];
 
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(50));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(50));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match the remaining 50 units (50 visible + 0 hidden).
         let taker_id = Id::from_u64(1001);
 
         // This should match the remaining visible quantity and deplete the hidden quantity.
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
-        assert_eq!(match_result.remaining_quantity, 50);
-        assert!(!match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 50);
+        assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
-        assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
+        assert_eq!(match_result.filled_order_ids().len(), 1);
+        assert_eq!(match_result.filled_order_ids()[0], Id::from_u64(1));
     }
 
     #[test]
@@ -673,8 +686,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(30, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 20);
         assert_eq!(price_level.hidden_quantity(), 150); // Hidden unchanged
         assert_eq!(price_level.order_count(), 1);
@@ -698,8 +711,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // The order should be removed since the visible quantity reached 0 and auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -722,8 +735,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // The order should be replenished with the default amount
         assert_eq!(
             price_level.visible_quantity(),
@@ -752,8 +765,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 25); // 50 - 25 = 25
         assert_eq!(price_level.hidden_quantity(), 150); // No change to hidden quantity
 
@@ -761,8 +774,8 @@ mod tests {
         let taker_id = Id::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // No automatic replenishment because auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 15); // 25 - 10 = 15, no replenishment
         assert_eq!(price_level.hidden_quantity(), 150); // No change to hidden quantity
@@ -793,8 +806,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // The order should be replenished with the custom amount
         assert_eq!(price_level.visible_quantity(), custom_amount);
         assert_eq!(price_level.hidden_quantity(), 150 - custom_amount);
@@ -817,8 +830,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(49, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // 1 visible unit will remain, which equals the safe threshold (1), so no replenishment occurs
         assert_eq!(price_level.visible_quantity(), 1);
         assert_eq!(price_level.hidden_quantity(), 150);
@@ -840,8 +853,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // The order should be removed from the price level
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -863,8 +876,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // The order should be removed from the price level
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -886,8 +899,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 25); // 50 - 25 = 25
         assert_eq!(price_level.hidden_quantity(), 150); // No replenishment yet
 
@@ -895,8 +908,8 @@ mod tests {
         let taker_id = Id::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         // No automatic replenishment because auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 15); // 25 - 10 = 15
         assert_eq!(price_level.hidden_quantity(), 150); // No change to hidden quantity
@@ -922,69 +935,69 @@ mod tests {
         let match_result = price_level.match_order(80, taker_id, &transaction_id_generator);
 
         // Validate the match result
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 20); // 100 - 80 = 20
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity unchanged (still above threshold)
         assert_eq!(price_level.order_count(), 1);
-        assert_eq!(match_result.trades.len(), 1);
+        assert_eq!(match_result.trades().len(), 1);
 
         // Validate the transaction details
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(80));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(80));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match 10 more units, which will take us below the replenish threshold
         let taker_id = Id::from_u64(1000);
         let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 90); // 20 - 10 = 10, then replenished to 90 (10 + 80)
         assert_eq!(price_level.hidden_quantity(), 20); // 100 - 80 (replenish amount) = 20
         assert_eq!(price_level.order_count(), 1);
 
-        let transaction = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction.taker_order_id, taker_id);
-        assert_eq!(transaction.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(10));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(match_result.filled_order_ids.len(), 0);
+        let transaction = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction.taker_order_id(), taker_id);
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(10));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(match_result.filled_order_ids().len(), 0);
 
         // Match with a larger amount than what's available
         let taker_id = Id::from_u64(1001);
         let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 40); // 150 - 90 - 20 = 40
-        assert!(!match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 40); // 150 - 90 - 20 = 40
+        assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
-        assert_eq!(match_result.filled_order_ids.len(), 1);
-        assert_eq!(match_result.filled_order_ids[0], Id::from_u64(1));
+        assert_eq!(match_result.filled_order_ids().len(), 1);
+        assert_eq!(match_result.filled_order_ids()[0], Id::from_u64(1));
 
         // Verify the correct number and sizes of transactions
-        assert_eq!(match_result.trades.len(), 2); // One for visible, one for hidden
+        assert_eq!(match_result.trades().len(), 2); // One for visible, one for hidden
 
-        let transaction1 = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction1.taker_order_id, taker_id);
-        assert_eq!(transaction1.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction1.price, Price::new(10000));
-        assert_eq!(transaction1.quantity, Quantity::new(90)); // First consumes all visible
-        assert_eq!(transaction1.taker_side, Side::Buy);
+        let transaction1 = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction1.taker_order_id(), taker_id);
+        assert_eq!(transaction1.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction1.price(), Price::new(10000));
+        assert_eq!(transaction1.quantity(), Quantity::new(90)); // First consumes all visible
+        assert_eq!(transaction1.taker_side(), Side::Buy);
 
-        let transaction2 = &match_result.trades.as_vec()[1];
-        assert_eq!(transaction2.taker_order_id, taker_id);
-        assert_eq!(transaction2.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction2.price, Price::new(10000));
-        assert_eq!(transaction2.quantity, Quantity::new(20)); // Then consumes all hidden
-        assert_eq!(transaction2.taker_side, Side::Buy);
+        let transaction2 = &match_result.trades().as_vec()[1];
+        assert_eq!(transaction2.taker_order_id(), taker_id);
+        assert_eq!(transaction2.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction2.price(), Price::new(10000));
+        assert_eq!(transaction2.quantity(), Quantity::new(20)); // Then consumes all hidden
+        assert_eq!(transaction2.taker_side(), Side::Buy);
     }
 
     // ------------------------------------------- POST-ONLY, TRAILING STOP, PEGGED, MARKET TO LIMIT, FOK, IOC, GTD ORDERS -------------------------------------------
@@ -1001,8 +1014,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.order_count(), 1);
     }
@@ -1019,8 +1032,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -1037,8 +1050,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.order_count(), 1);
     }
@@ -1055,8 +1068,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -1073,8 +1086,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -1091,8 +1104,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.order_count(), 1);
     }
@@ -1109,8 +1122,8 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -1130,32 +1143,32 @@ mod tests {
         let match_result = price_level.match_order(140, taker_id, &transaction_id_generator);
 
         // Verificar el resultado de matching
-        assert_eq!(match_result.order_id, taker_id);
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.order_id(), taker_id);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 10); // 25 - (140 - 50 - 75) = 10
         assert_eq!(price_level.order_count(), 1);
 
-        assert_eq!(match_result.trades.len(), 3);
+        assert_eq!(match_result.trades().len(), 3);
 
-        let transaction1 = &match_result.trades.as_vec()[0];
-        assert_eq!(transaction1.taker_order_id, taker_id);
-        assert_eq!(transaction1.maker_order_id, Id::from_u64(1));
-        assert_eq!(transaction1.quantity, Quantity::new(50));
+        let transaction1 = &match_result.trades().as_vec()[0];
+        assert_eq!(transaction1.taker_order_id(), taker_id);
+        assert_eq!(transaction1.maker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction1.quantity(), Quantity::new(50));
 
-        let transaction2 = &match_result.trades.as_vec()[1];
-        assert_eq!(transaction2.taker_order_id, taker_id);
-        assert_eq!(transaction2.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction2.quantity, Quantity::new(75));
+        let transaction2 = &match_result.trades().as_vec()[1];
+        assert_eq!(transaction2.taker_order_id(), taker_id);
+        assert_eq!(transaction2.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction2.quantity(), Quantity::new(75));
 
-        let transaction3 = &match_result.trades.as_vec()[2];
-        assert_eq!(transaction3.taker_order_id, taker_id);
-        assert_eq!(transaction3.maker_order_id, Id::from_u64(3));
-        assert_eq!(transaction3.quantity, Quantity::new(15));
+        let transaction3 = &match_result.trades().as_vec()[2];
+        assert_eq!(transaction3.taker_order_id(), taker_id);
+        assert_eq!(transaction3.maker_order_id(), Id::from_u64(3));
+        assert_eq!(transaction3.quantity(), Quantity::new(15));
 
-        assert_eq!(match_result.filled_order_ids.len(), 2);
-        assert!(match_result.filled_order_ids.contains(&Id::from_u64(1)));
-        assert!(match_result.filled_order_ids.contains(&Id::from_u64(2)));
+        assert_eq!(match_result.filled_order_ids().len(), 2);
+        assert!(match_result.filled_order_ids().contains(&Id::from_u64(1)));
+        assert!(match_result.filled_order_ids().contains(&Id::from_u64(2)));
 
         let orders = price_level.snapshot_orders();
         assert_eq!(orders.len(), 1);
@@ -1176,19 +1189,19 @@ mod tests {
         let snapshot = price_level.snapshot();
 
         // Verify snapshot data
-        assert_eq!(snapshot.price, 10000);
-        assert_eq!(snapshot.visible_quantity, 150); // 100 + 50
-        assert_eq!(snapshot.hidden_quantity, 0);
-        assert_eq!(snapshot.order_count, 2);
-        assert_eq!(snapshot.orders.len(), 2);
+        assert_eq!(snapshot.price(), 10000);
+        assert_eq!(snapshot.visible_quantity(), 150); // 100 + 50
+        assert_eq!(snapshot.hidden_quantity(), 0);
+        assert_eq!(snapshot.order_count(), 2);
+        assert_eq!(snapshot.orders().len(), 2);
 
         // Verify that orders in the snapshot match those in the price level
         let orders_from_level = price_level.snapshot_orders();
-        assert_eq!(snapshot.orders.len(), orders_from_level.len());
+        assert_eq!(snapshot.orders().len(), orders_from_level.len());
 
         // Check that all orders from the price level are in the snapshot
         for order in orders_from_level {
-            let found = snapshot.orders.iter().any(|o| o.id() == order.id());
+            let found = snapshot.orders().iter().any(|o| o.id() == order.id());
             assert!(found, "Order with ID {} not found in snapshot", order.id());
         }
     }
@@ -1554,8 +1567,8 @@ mod tests {
         let match_result =
             price_level.match_order(100, Id::from_u64(999), &transaction_id_generator);
 
-        assert_eq!(match_result.remaining_quantity, 0);
-        assert!(match_result.is_complete);
+        assert_eq!(match_result.remaining_quantity(), 0);
+        assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 100); // 200 - 100 = 100
         assert_eq!(price_level.order_count(), 1);
     }

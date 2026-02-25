@@ -6,23 +6,27 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// Represents the result of a matching operation
+/// Represents the result of a matching operation.
+///
+/// Fields are private to enforce invariant consistency between
+/// `remaining_quantity`, `is_complete`, and `trades`.
+/// Use the provided accessor methods and mutation helpers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
-    pub order_id: Id,
+    order_id: Id,
 
     /// List of trades that resulted from the match
-    pub trades: TradeList,
+    trades: TradeList,
 
     /// Remaining quantity of the incoming order after matching
-    pub remaining_quantity: u64,
+    remaining_quantity: u64,
 
     /// Whether the order was completely filled
-    pub is_complete: bool,
+    is_complete: bool,
 
     /// Any orders that were completely filled and removed from the book
-    pub filled_order_ids: Vec<Id>,
+    filled_order_ids: Vec<Id>,
 }
 
 impl MatchResult {
@@ -42,11 +46,11 @@ impl MatchResult {
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
         self.remaining_quantity = self
             .remaining_quantity
-            .checked_sub(trade.quantity.as_u64())
+            .checked_sub(trade.quantity().as_u64())
             .ok_or_else(|| PriceLevelError::InvalidOperation {
                 message: format!(
                     "trade quantity {} exceeds remaining quantity {}",
-                    trade.quantity.as_u64(),
+                    trade.quantity().as_u64(),
                     self.remaining_quantity
                 ),
             })?;
@@ -60,10 +64,48 @@ impl MatchResult {
         self.filled_order_ids.push(order_id);
     }
 
+    /// Returns the ID of the incoming order that initiated the match.
+    #[must_use]
+    pub fn order_id(&self) -> Id {
+        self.order_id
+    }
+
+    /// Returns a reference to the list of trades.
+    #[must_use]
+    pub fn trades(&self) -> &TradeList {
+        &self.trades
+    }
+
+    /// Returns the remaining quantity of the incoming order after matching.
+    #[must_use]
+    pub fn remaining_quantity(&self) -> u64 {
+        self.remaining_quantity
+    }
+
+    /// Returns whether the order was completely filled.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.is_complete
+    }
+
+    /// Returns the IDs of orders that were completely filled during matching.
+    #[must_use]
+    pub fn filled_order_ids(&self) -> &[Id] {
+        &self.filled_order_ids
+    }
+
+    /// Sets the final remaining quantity and completion flag.
+    ///
+    /// This is used internally by the matching engine after the matching loop.
+    pub(crate) fn finalize(&mut self, remaining_quantity: u64) {
+        self.remaining_quantity = remaining_quantity;
+        self.is_complete = remaining_quantity == 0;
+    }
+
     /// Get the total executed quantity
     pub fn executed_quantity(&self) -> Result<u64, PriceLevelError> {
         self.trades.as_vec().iter().try_fold(0u64, |acc, trade| {
-            acc.checked_add(trade.quantity.as_u64()).ok_or_else(|| {
+            acc.checked_add(trade.quantity().as_u64()).ok_or_else(|| {
                 PriceLevelError::InvalidOperation {
                     message: "executed quantity overflow".to_string(),
                 }
@@ -75,9 +117,9 @@ impl MatchResult {
     pub fn executed_value(&self) -> Result<u128, PriceLevelError> {
         self.trades.as_vec().iter().try_fold(0u128, |acc, trade| {
             let trade_value = trade
-                .price
+                .price()
                 .as_u128()
-                .checked_mul(u128::from(trade.quantity.as_u64()))
+                .checked_mul(u128::from(trade.quantity().as_u64()))
                 .ok_or_else(|| PriceLevelError::InvalidOperation {
                     message: "executed value multiplication overflow".to_string(),
                 })?;

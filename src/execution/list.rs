@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// A wrapper for a vector of trades to implement custom serialization
+/// A wrapper for a vector of trades to implement custom serialization.
+///
+/// The inner collection is private to enforce append-only semantics
+/// during matching. Use [`Self::add`] to append and [`Self::as_vec`]
+/// or [`Self::into_vec`] to read.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TradeList {
     /// Ordered collection of trades.
-    pub trades: Vec<Trade>,
+    trades: Vec<Trade>,
 }
 
 impl TradeList {

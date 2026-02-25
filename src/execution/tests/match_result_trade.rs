@@ -15,15 +15,15 @@ mod tests {
     }
 
     fn sample_trade(quantity: u64) -> Trade {
-        Trade {
-            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
-            taker_order_id: Id::from_u64(10),
-            maker_order_id: Id::from_u64(20),
-            price: Price::new(1_000),
-            quantity: Quantity::new(quantity),
-            taker_side: Side::Buy,
-            timestamp: TimestampMs::new(1_616_823_000_000),
-        }
+        Trade::with_timestamp(
+            Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            Id::from_u64(10),
+            Id::from_u64(20),
+            Price::new(1_000),
+            Quantity::new(quantity),
+            Side::Buy,
+            TimestampMs::new(1_616_823_000_000),
+        )
     }
 
     #[test]
@@ -31,9 +31,9 @@ mod tests {
         let mut result = MatchResult::new(Id::from_u64(10), 100);
         assert!(result.add_trade(sample_trade(25)).is_ok());
 
-        assert_eq!(result.remaining_quantity, 75);
-        assert_eq!(result.trades.len(), 1);
-        assert!(!result.is_complete);
+        assert_eq!(result.remaining_quantity(), 75);
+        assert_eq!(result.trades().len(), 1);
+        assert!(!result.is_complete());
     }
 
     #[test]
@@ -49,8 +49,8 @@ mod tests {
             Err(error) => panic!("failed to parse match result: {error:?}"),
         };
 
-        assert_eq!(parsed.trades.len(), 1);
-        assert_eq!(parsed.remaining_quantity, 60);
+        assert_eq!(parsed.trades().len(), 1);
+        assert_eq!(parsed.remaining_quantity(), 60);
     }
 
     #[test]
@@ -65,23 +65,23 @@ mod tests {
         let mut result = MatchResult::new(Id::from_u64(10), 10);
         let error = result.add_trade(sample_trade(11));
         assert!(error.is_err());
-        assert_eq!(result.remaining_quantity, 10);
-        assert_eq!(result.trades.len(), 0);
+        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.trades().len(), 0);
     }
 
     #[test]
     fn executed_value_rejects_overflow() {
         let mut result = MatchResult::new(Id::from_u64(10), 4);
 
-        let trade = Trade {
-            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
-            taker_order_id: Id::from_u64(10),
-            maker_order_id: Id::from_u64(20),
-            price: Price::new(u128::MAX),
-            quantity: Quantity::new(2),
-            taker_side: Side::Buy,
-            timestamp: TimestampMs::new(1_616_823_000_000),
-        };
+        let trade = Trade::with_timestamp(
+            Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            Id::from_u64(10),
+            Id::from_u64(20),
+            Price::new(u128::MAX),
+            Quantity::new(2),
+            Side::Buy,
+            TimestampMs::new(1_616_823_000_000),
+        );
 
         assert!(result.add_trade(trade).is_ok());
         assert!(result.executed_value().is_err());

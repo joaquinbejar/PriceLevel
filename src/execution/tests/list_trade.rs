@@ -15,15 +15,15 @@ mod tests {
     }
 
     fn sample_trade() -> Trade {
-        Trade {
-            trade_id: Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
-            taker_order_id: Id::from_u64(1),
-            maker_order_id: Id::from_u64(2),
-            price: Price::new(10_000),
-            quantity: Quantity::new(5),
-            taker_side: Side::Buy,
-            timestamp: TimestampMs::new(1_616_823_000_000),
-        }
+        Trade::with_timestamp(
+            Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(10_000),
+            Quantity::new(5),
+            Side::Buy,
+            TimestampMs::new(1_616_823_000_000),
+        )
     }
 
     #[test]
@@ -41,7 +41,7 @@ mod tests {
         };
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed.as_vec()[0].trade_id, list.as_vec()[0].trade_id);
+        assert_eq!(parsed.as_vec()[0].trade_id(), list.as_vec()[0].trade_id());
     }
 
     #[test]

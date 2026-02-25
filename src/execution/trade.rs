@@ -6,29 +6,32 @@ use std::fmt;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Represents a completed trade between two orders
+/// Represents a completed trade between two orders.
+///
+/// All fields are private to enforce immutability after construction.
+/// Use the provided accessor methods to read trade data.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Trade {
     /// Unique trade ID
-    pub trade_id: Id,
+    trade_id: Id,
 
     /// ID of the aggressive order that caused the match
-    pub taker_order_id: Id,
+    taker_order_id: Id,
 
     /// ID of the passive order that was in the book
-    pub maker_order_id: Id,
+    maker_order_id: Id,
 
     /// Price at which the trade occurred
-    pub price: Price,
+    price: Price,
 
     /// Quantity traded
-    pub quantity: Quantity,
+    quantity: Quantity,
 
     /// Side of the taker order
-    pub taker_side: Side,
+    taker_side: Side,
 
-    /// Timestamp when the trade occurred
-    pub timestamp: TimestampMs,
+    /// Timestamp when the trade occurred in milliseconds since epoch
+    timestamp: TimestampMs,
 }
 
 impl Trade {
@@ -58,7 +61,73 @@ impl Trade {
         }
     }
 
-    /// Returns the side of the maker order
+    /// Returns the unique trade identifier.
+    #[must_use]
+    pub fn trade_id(&self) -> Id {
+        self.trade_id
+    }
+
+    /// Returns the taker (aggressive) order identifier.
+    #[must_use]
+    pub fn taker_order_id(&self) -> Id {
+        self.taker_order_id
+    }
+
+    /// Returns the maker (passive) order identifier.
+    #[must_use]
+    pub fn maker_order_id(&self) -> Id {
+        self.maker_order_id
+    }
+
+    /// Returns the trade price.
+    #[must_use]
+    pub fn price(&self) -> Price {
+        self.price
+    }
+
+    /// Returns the traded quantity.
+    #[must_use]
+    pub fn quantity(&self) -> Quantity {
+        self.quantity
+    }
+
+    /// Returns the side of the taker order.
+    #[must_use]
+    pub fn taker_side(&self) -> Side {
+        self.taker_side
+    }
+
+    /// Returns the trade timestamp in milliseconds since epoch.
+    #[must_use]
+    pub fn timestamp(&self) -> TimestampMs {
+        self.timestamp
+    }
+
+    /// Creates a trade with an explicit timestamp.
+    ///
+    /// Intended for deserialization and testing where the timestamp is already known.
+    #[must_use]
+    pub fn with_timestamp(
+        trade_id: Id,
+        taker_order_id: Id,
+        maker_order_id: Id,
+        price: Price,
+        quantity: Quantity,
+        taker_side: Side,
+        timestamp: TimestampMs,
+    ) -> Self {
+        Self {
+            trade_id,
+            taker_order_id,
+            maker_order_id,
+            price,
+            quantity,
+            taker_side,
+            timestamp,
+        }
+    }
+
+    /// Returns the side of the maker order.
     #[must_use]
     pub fn maker_side(&self) -> Side {
         match self.taker_side {
