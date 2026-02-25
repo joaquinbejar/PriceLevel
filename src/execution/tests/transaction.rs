@@ -3,6 +3,7 @@ mod tests {
     use crate::errors::PriceLevelError;
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
+    use crate::utils::{Price, Quantity, TimestampMs};
     use std::str::FromStr;
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
@@ -14,10 +15,10 @@ mod tests {
             trade_id: Id::from_uuid(uuid),
             taker_order_id: Id::from_u64(1),
             maker_order_id: Id::from_u64(2),
-            price: 10000,
-            quantity: 5,
+            price: Price::new(10000),
+            quantity: Quantity::new(5),
             taker_side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
         }
     }
 
@@ -44,10 +45,10 @@ mod tests {
         assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id, Id::from_u64(1));
         assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(5));
         assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, 1616823000000);
+        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -132,14 +133,14 @@ mod tests {
     #[test]
     fn test_total_value() {
         let mut transaction = create_test_trade();
-        transaction.price = 10000;
-        transaction.quantity = 5;
+        transaction.price = Price::new(10000);
+        transaction.quantity = Quantity::new(5);
 
         assert_eq!(transaction.total_value(), 50000);
 
         // Test with larger values
-        transaction.price = 123456;
-        transaction.quantity = 789;
+        transaction.price = Price::new(123456);
+        transaction.quantity = Quantity::new(789);
         assert_eq!(transaction.total_value(), 97406784);
     }
 
@@ -155,20 +156,20 @@ mod tests {
             Id::from_uuid(uuid),
             Id::from_u64(1),
             Id::from_u64(2),
-            10000,
-            5,
+            Price::new(10000),
+            Quantity::new(5),
             Side::Buy,
         );
 
         assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id, Id::from_u64(1));
         assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(5));
         assert_eq!(transaction.taker_side, Side::Buy);
 
         // The timestamp should be approximately now
-        let timestamp_diff = transaction.timestamp.abs_diff(now);
+        let timestamp_diff = transaction.timestamp.as_u64().abs_diff(now);
 
         // Timestamp should be within 100ms of current time
         assert!(
@@ -189,10 +190,10 @@ mod tests {
         assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id, Id::from_u64(1));
         assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(5));
         assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, 1616823000000);
+        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -257,6 +258,7 @@ mod tests {
 mod transaction_serialization_tests {
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
+    use crate::utils::{Price, Quantity, TimestampMs};
     use std::str::FromStr;
     use uuid::Uuid;
 
@@ -266,10 +268,10 @@ mod transaction_serialization_tests {
             trade_id: Id::from_uuid(uuid),
             taker_order_id: Id::from_u64(1),
             maker_order_id: Id::from_u64(2),
-            price: 10000,
-            quantity: 5,
+            price: Price::new(10000),
+            quantity: Quantity::new(5),
             taker_side: Side::Buy,
-            timestamp: 1616823000000,
+            timestamp: TimestampMs::new(1616823000000),
         }
     }
 
@@ -303,10 +305,10 @@ mod transaction_serialization_tests {
         assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id, Id::from_u64(1));
         assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(5));
         assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, 1616823000000);
+        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -349,10 +351,10 @@ mod transaction_serialization_tests {
         assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id, Id::from_u64(1));
         assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, 10000);
-        assert_eq!(transaction.quantity, 5);
+        assert_eq!(transaction.price, Price::new(10000));
+        assert_eq!(transaction.quantity, Quantity::new(5));
         assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, 1616823000000);
+        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -426,13 +428,13 @@ mod transaction_serialization_tests {
     #[test]
     fn test_total_value_calculation() {
         let mut transaction = create_test_trade();
-        transaction.price = 10000;
-        transaction.quantity = 5;
+        transaction.price = Price::new(10000);
+        transaction.quantity = Quantity::new(5);
 
         assert_eq!(transaction.total_value(), 50000);
 
-        transaction.price = 12345;
-        transaction.quantity = 67;
+        transaction.price = Price::new(12345);
+        transaction.quantity = Quantity::new(67);
 
         assert_eq!(transaction.total_value(), 827115);
     }

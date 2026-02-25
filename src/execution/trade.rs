@@ -1,5 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, Side};
+use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -18,16 +19,16 @@ pub struct Trade {
     pub maker_order_id: Id,
 
     /// Price at which the trade occurred
-    pub price: u128,
+    pub price: Price,
 
     /// Quantity traded
-    pub quantity: u64,
+    pub quantity: Quantity,
 
     /// Side of the taker order
     pub taker_side: Side,
 
     /// Timestamp when the trade occurred
-    pub timestamp: u64,
+    pub timestamp: TimestampMs,
 }
 
 impl Trade {
@@ -36,13 +37,14 @@ impl Trade {
         trade_id: Id,
         taker_order_id: Id,
         maker_order_id: Id,
-        price: u128,
-        quantity: u64,
+        price: Price,
+        quantity: Quantity,
         taker_side: Side,
     ) -> Self {
-        let timestamp = SystemTime::now()
+        let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0_u64, |duration| duration.as_millis() as u64);
+        let timestamp = TimestampMs::new(timestamp_ms);
 
         Self {
             trade_id,
@@ -65,7 +67,7 @@ impl Trade {
 
     /// Returns the total value of this trade
     pub fn total_value(&self) -> u128 {
-        self.price * (self.quantity as u128)
+        self.price.as_u128() * (self.quantity.as_u64() as u128)
     }
 }
 
@@ -111,24 +113,6 @@ impl FromStr for Trade {
             }
         };
 
-        let parse_u64 = |field: &str, value: &str| -> Result<u64, PriceLevelError> {
-            value
-                .parse::<u64>()
-                .map_err(|_| PriceLevelError::InvalidFieldValue {
-                    field: field.to_string(),
-                    value: value.to_string(),
-                })
-        };
-
-        let parse_u128 = |field: &str, value: &str| -> Result<u128, PriceLevelError> {
-            value
-                .parse::<u128>()
-                .map_err(|_| PriceLevelError::InvalidFieldValue {
-                    field: field.to_string(),
-                    value: value.to_string(),
-                })
-        };
-
         // Parse trade_id
         let trade_id_str = get_field("trade_id")?;
         let trade_id =
@@ -155,11 +139,18 @@ impl FromStr for Trade {
 
         // Parse price
         let price_str = get_field("price")?;
-        let price = parse_u128("price", price_str)?;
+        let price = Price::from_str(price_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+            field: "price".to_string(),
+            value: price_str.to_string(),
+        })?;
 
         // Parse quantity
         let quantity_str = get_field("quantity")?;
-        let quantity = parse_u64("quantity", quantity_str)?;
+        let quantity =
+            Quantity::from_str(quantity_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+                field: "quantity".to_string(),
+                value: quantity_str.to_string(),
+            })?;
 
         // Parse taker_side
         let taker_side_str = get_field("taker_side")?;
@@ -171,7 +162,12 @@ impl FromStr for Trade {
 
         // Parse timestamp
         let timestamp_str = get_field("timestamp")?;
-        let timestamp = parse_u64("timestamp", timestamp_str)?;
+        let timestamp = TimestampMs::from_str(timestamp_str).map_err(|_| {
+            PriceLevelError::InvalidFieldValue {
+                field: "timestamp".to_string(),
+                value: timestamp_str.to_string(),
+            }
+        })?;
 
         Ok(Trade {
             trade_id,

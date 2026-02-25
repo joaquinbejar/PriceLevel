@@ -39,7 +39,9 @@ impl MatchResult {
 
     /// Add a trade to this match result
     pub fn add_trade(&mut self, trade: Trade) {
-        self.remaining_quantity = self.remaining_quantity.saturating_sub(trade.quantity);
+        self.remaining_quantity = self
+            .remaining_quantity
+            .saturating_sub(trade.quantity.as_u64());
         self.is_complete = self.remaining_quantity == 0;
         self.trades.add(trade);
     }
@@ -51,7 +53,11 @@ impl MatchResult {
 
     /// Get the total executed quantity
     pub fn executed_quantity(&self) -> u64 {
-        self.trades.as_vec().iter().map(|t| t.quantity).sum()
+        self.trades
+            .as_vec()
+            .iter()
+            .map(|t| t.quantity.as_u64())
+            .sum()
     }
 
     /// Get the total value executed
@@ -59,7 +65,7 @@ impl MatchResult {
         self.trades
             .as_vec()
             .iter()
-            .map(|t| t.price * (t.quantity as u128))
+            .map(|t| t.price.as_u128() * (t.quantity.as_u64() as u128))
             .sum()
     }
 
