@@ -4,6 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Reference price type for pegged orders
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PegReferenceType {
     /// Pegged to best bid price

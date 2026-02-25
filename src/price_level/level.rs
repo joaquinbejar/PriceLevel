@@ -71,6 +71,7 @@ impl PriceLevel {
 
 impl PriceLevel {
     /// Create a new price level
+    #[must_use]
     pub fn new(price: u128) -> Self {
         Self {
             price,
@@ -83,16 +84,19 @@ impl PriceLevel {
     }
 
     /// Get the price of this level
+    #[must_use]
     pub fn price(&self) -> u128 {
         self.price
     }
 
     /// Get the visible quantity
+    #[must_use]
     pub fn visible_quantity(&self) -> u64 {
         self.visible_quantity.load(Ordering::Acquire)
     }
 
     /// Get the hidden quantity
+    #[must_use]
     pub fn hidden_quantity(&self) -> u64 {
         self.hidden_quantity.load(Ordering::Acquire)
     }
@@ -107,11 +111,13 @@ impl PriceLevel {
     }
 
     /// Get the number of orders
+    #[must_use]
     pub fn order_count(&self) -> usize {
         self.order_count.load(Ordering::Acquire)
     }
 
     /// Get the statistics for this price level
+    #[must_use]
     pub fn stats(&self) -> Arc<PriceLevelStatistics> {
         self.stats.clone()
     }
@@ -139,6 +145,7 @@ impl PriceLevel {
     }
 
     /// Creates an iterator over the orders in the price level.
+    #[must_use]
     pub fn iter_orders(&self) -> Vec<Arc<OrderType<()>>> {
         self.orders.to_vec()
     }
@@ -260,6 +267,7 @@ impl PriceLevel {
     }
 
     /// Create a snapshot of the current price level state
+    #[must_use]
     pub fn snapshot(&self) -> PriceLevelSnapshot {
         PriceLevelSnapshot {
             price: self.price,

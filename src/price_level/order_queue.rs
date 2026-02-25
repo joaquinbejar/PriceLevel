@@ -22,6 +22,7 @@ pub struct OrderQueue {
 
 impl OrderQueue {
     /// Create a new empty order queue
+    #[must_use]
     pub fn new() -> Self {
         Self {
             orders: DashMap::new(),
@@ -37,6 +38,7 @@ impl OrderQueue {
     }
 
     /// Attempt to pop an order from the queue
+    #[must_use]
     pub fn pop(&self) -> Option<Arc<OrderType<()>>> {
         loop {
             if let Some(order_id) = self.order_ids.pop() {
@@ -52,17 +54,20 @@ impl OrderQueue {
     }
 
     /// Search for an order with the given ID. O(1) operation.
+    #[must_use]
     pub fn find(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         self.orders.get(&order_id).map(|o| o.value().clone())
     }
 
     /// Remove an order with the given ID
     /// Returns the removed order if found. O(1) for the map, but the ID remains in the queue.
+    #[must_use]
     pub fn remove(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         self.orders.remove(&order_id).map(|(_, order)| order)
     }
 
     /// Convert the queue to a vector (for snapshots)
+    #[must_use]
     pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
         let mut orders: Vec<Arc<OrderType<()>>> =
             self.orders.iter().map(|o| o.value().clone()).collect();
@@ -86,6 +91,7 @@ impl OrderQueue {
     /// A new `OrderQueue` instance containing all the orders from the input vector.
     ///
     #[allow(dead_code)]
+    #[must_use]
     pub fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
@@ -96,6 +102,7 @@ impl OrderQueue {
 
     /// Check if the queue is empty
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.orders.is_empty()
     }
@@ -106,6 +113,7 @@ impl OrderQueue {
     ///
     /// * `usize` - The total count of orders in the queue.
     ///
+    #[must_use]
     pub fn len(&self) -> usize {
         self.orders.len()
     }

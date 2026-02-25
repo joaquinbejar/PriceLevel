@@ -27,6 +27,7 @@ pub struct MatchResult {
 
 impl MatchResult {
     /// Create a new empty match result
+    #[must_use]
     pub fn new(order_id: Id, initial_quantity: u64) -> Self {
         Self {
             order_id,

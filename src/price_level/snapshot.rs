@@ -27,6 +27,7 @@ pub struct PriceLevelSnapshot {
 
 impl PriceLevelSnapshot {
     /// Create a new empty snapshot
+    #[must_use]
     pub fn new(price: u128) -> Self {
         Self {
             price,

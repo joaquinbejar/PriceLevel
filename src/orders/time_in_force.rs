@@ -4,6 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Specifies how long an order remains active before it is executed or expires.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimeInForce {
     /// Good 'Til Canceled - The order remains active until it is filled or canceled.
@@ -36,16 +37,19 @@ pub enum TimeInForce {
 
 impl TimeInForce {
     /// Returns true if the order should be canceled after attempting to match
+    #[must_use]
     pub fn is_immediate(&self) -> bool {
         matches!(self, Self::Ioc | Self::Fok)
     }
 
     /// Returns true if the order has a specific expiration time
+    #[must_use]
     pub fn has_expiry(&self) -> bool {
         matches!(self, Self::Gtd(_) | Self::Day)
     }
 
     /// Checks if an order with this time in force has expired
+    #[must_use]
     pub fn is_expired(&self, current_timestamp: u64, market_close_timestamp: Option<u64>) -> bool {
         match self {
             Self::Gtd(expiry) => current_timestamp >= *expiry,
