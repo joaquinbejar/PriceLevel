@@ -10,16 +10,15 @@ mod tests {
 
     fn create_test_trade() -> Trade {
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-
-        Trade {
-            trade_id: Id::from_uuid(uuid),
-            taker_order_id: Id::from_u64(1),
-            maker_order_id: Id::from_u64(2),
-            price: Price::new(10000),
-            quantity: Quantity::new(5),
-            taker_side: Side::Buy,
-            timestamp: TimestampMs::new(1616823000000),
-        }
+        Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(10000),
+            Quantity::new(5),
+            Side::Buy,
+            TimestampMs::new(1616823000000),
+        )
     }
 
     #[test]
@@ -42,13 +41,13 @@ mod tests {
         let input = "Trade:trade_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Trade::from_str(input).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
-        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(5));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
+        assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(5));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(transaction.timestamp(), TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -109,39 +108,53 @@ mod tests {
         let string_representation = original.to_string();
         let parsed = Trade::from_str(&string_representation).unwrap();
 
-        assert_eq!(parsed.trade_id, original.trade_id);
-        assert_eq!(parsed.taker_order_id, original.taker_order_id);
-        assert_eq!(parsed.maker_order_id, original.maker_order_id);
-        assert_eq!(parsed.price, original.price);
-        assert_eq!(parsed.quantity, original.quantity);
-        assert_eq!(parsed.taker_side, original.taker_side);
-        assert_eq!(parsed.timestamp, original.timestamp);
+        assert_eq!(parsed.trade_id(), original.trade_id());
+        assert_eq!(parsed.taker_order_id(), original.taker_order_id());
+        assert_eq!(parsed.maker_order_id(), original.maker_order_id());
+        assert_eq!(parsed.price(), original.price());
+        assert_eq!(parsed.quantity(), original.quantity());
+        assert_eq!(parsed.taker_side(), original.taker_side());
+        assert_eq!(parsed.timestamp(), original.timestamp());
     }
 
     #[test]
     fn test_maker_side() {
         // Test when taker is buyer
-        let mut transaction = create_test_trade();
-        transaction.taker_side = Side::Buy;
-        assert_eq!(transaction.maker_side(), Side::Sell);
+        let buy_trade = create_test_trade();
+        assert_eq!(buy_trade.taker_side(), Side::Buy);
+        assert_eq!(buy_trade.maker_side(), Side::Sell);
 
         // Test when taker is seller
-        transaction.taker_side = Side::Sell;
-        assert_eq!(transaction.maker_side(), Side::Buy);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let sell_trade = Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(10000),
+            Quantity::new(5),
+            Side::Sell,
+            TimestampMs::new(1616823000000),
+        );
+        assert_eq!(sell_trade.maker_side(), Side::Buy);
     }
 
     #[test]
     fn test_total_value() {
-        let mut transaction = create_test_trade();
-        transaction.price = Price::new(10000);
-        transaction.quantity = Quantity::new(5);
-
+        let transaction = create_test_trade();
         assert_eq!(transaction.total_value(), 50000);
 
         // Test with larger values
-        transaction.price = Price::new(123456);
-        transaction.quantity = Quantity::new(789);
-        assert_eq!(transaction.total_value(), 97406784);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let large_trade = Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(123456),
+            Quantity::new(789),
+            Side::Buy,
+            TimestampMs::new(1616823000000),
+        );
+        assert_eq!(large_trade.total_value(), 97406784);
     }
 
     #[test]
@@ -161,15 +174,15 @@ mod tests {
             Side::Buy,
         );
 
-        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
-        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(5));
-        assert_eq!(transaction.taker_side, Side::Buy);
+        assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(5));
+        assert_eq!(transaction.taker_side(), Side::Buy);
 
         // The timestamp should be approximately now
-        let timestamp_diff = transaction.timestamp.as_u64().abs_diff(now);
+        let timestamp_diff = transaction.timestamp().as_u64().abs_diff(now);
 
         // Timestamp should be within 100ms of current time
         assert!(
@@ -187,13 +200,13 @@ mod tests {
         let transaction = Trade::from_str(input).unwrap();
 
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
-        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(5));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
+        assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(5));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(transaction.timestamp(), TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -264,15 +277,15 @@ mod transaction_serialization_tests {
 
     fn create_test_trade() -> Trade {
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        Trade {
-            trade_id: Id::from_uuid(uuid),
-            taker_order_id: Id::from_u64(1),
-            maker_order_id: Id::from_u64(2),
-            price: Price::new(10000),
-            quantity: Quantity::new(5),
-            taker_side: Side::Buy,
-            timestamp: TimestampMs::new(1616823000000),
-        }
+        Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(10000),
+            Quantity::new(5),
+            Side::Buy,
+            TimestampMs::new(1616823000000),
+        )
     }
 
     #[test]
@@ -302,13 +315,13 @@ mod transaction_serialization_tests {
 
         let transaction: Trade = serde_json::from_str(json).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
-        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(5));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
+        assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(5));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(transaction.timestamp(), TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -319,13 +332,13 @@ mod transaction_serialization_tests {
 
         let deserialized: Trade = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.trade_id, original.trade_id);
-        assert_eq!(deserialized.taker_order_id, original.taker_order_id);
-        assert_eq!(deserialized.maker_order_id, original.maker_order_id);
-        assert_eq!(deserialized.price, original.price);
-        assert_eq!(deserialized.quantity, original.quantity);
-        assert_eq!(deserialized.taker_side, original.taker_side);
-        assert_eq!(deserialized.timestamp, original.timestamp);
+        assert_eq!(deserialized.trade_id(), original.trade_id());
+        assert_eq!(deserialized.taker_order_id(), original.taker_order_id());
+        assert_eq!(deserialized.maker_order_id(), original.maker_order_id());
+        assert_eq!(deserialized.price(), original.price());
+        assert_eq!(deserialized.quantity(), original.quantity());
+        assert_eq!(deserialized.taker_side(), original.taker_side());
+        assert_eq!(deserialized.timestamp(), original.timestamp());
     }
 
     #[test]
@@ -348,13 +361,13 @@ mod transaction_serialization_tests {
         let input = "Trade:trade_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8;taker_order_id=00000000-0000-0001-0000-000000000000;maker_order_id=00000000-0000-0002-0000-000000000000;price=10000;quantity=5;taker_side=BUY;timestamp=1616823000000";
         let transaction = Trade::from_str(input).unwrap();
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        assert_eq!(transaction.trade_id, Id::from_uuid(uuid));
-        assert_eq!(transaction.taker_order_id, Id::from_u64(1));
-        assert_eq!(transaction.maker_order_id, Id::from_u64(2));
-        assert_eq!(transaction.price, Price::new(10000));
-        assert_eq!(transaction.quantity, Quantity::new(5));
-        assert_eq!(transaction.taker_side, Side::Buy);
-        assert_eq!(transaction.timestamp, TimestampMs::new(1616823000000));
+        assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
+        assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
+        assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
+        assert_eq!(transaction.price(), Price::new(10000));
+        assert_eq!(transaction.quantity(), Quantity::new(5));
+        assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(transaction.timestamp(), TimestampMs::new(1616823000000));
     }
 
     #[test]
@@ -400,42 +413,52 @@ mod transaction_serialization_tests {
         let string_representation = original.to_string();
         let parsed = Trade::from_str(&string_representation).unwrap();
 
-        assert_eq!(parsed.trade_id, original.trade_id);
-        assert_eq!(parsed.taker_order_id, original.taker_order_id);
-        assert_eq!(parsed.maker_order_id, original.maker_order_id);
-        assert_eq!(parsed.price, original.price);
-        assert_eq!(parsed.quantity, original.quantity);
-        assert_eq!(parsed.taker_side, original.taker_side);
-        assert_eq!(parsed.timestamp, original.timestamp);
+        assert_eq!(parsed.trade_id(), original.trade_id());
+        assert_eq!(parsed.taker_order_id(), original.taker_order_id());
+        assert_eq!(parsed.maker_order_id(), original.maker_order_id());
+        assert_eq!(parsed.price(), original.price());
+        assert_eq!(parsed.quantity(), original.quantity());
+        assert_eq!(parsed.taker_side(), original.taker_side());
+        assert_eq!(parsed.timestamp(), original.timestamp());
     }
 
     #[test]
     fn test_maker_side_when_taker_is_buyer() {
-        let mut transaction = create_test_trade();
-        transaction.taker_side = Side::Buy;
-
+        let transaction = create_test_trade();
+        assert_eq!(transaction.taker_side(), Side::Buy);
         assert_eq!(transaction.maker_side(), Side::Sell);
     }
 
     #[test]
     fn test_maker_side_when_taker_is_seller() {
-        let mut transaction = create_test_trade();
-        transaction.taker_side = Side::Sell;
-
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let transaction = Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(10000),
+            Quantity::new(5),
+            Side::Sell,
+            TimestampMs::new(1616823000000),
+        );
         assert_eq!(transaction.maker_side(), Side::Buy);
     }
 
     #[test]
     fn test_total_value_calculation() {
-        let mut transaction = create_test_trade();
-        transaction.price = Price::new(10000);
-        transaction.quantity = Quantity::new(5);
-
+        let transaction = create_test_trade();
         assert_eq!(transaction.total_value(), 50000);
 
-        transaction.price = Price::new(12345);
-        transaction.quantity = Quantity::new(67);
-
-        assert_eq!(transaction.total_value(), 827115);
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let large_trade = Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(12345),
+            Quantity::new(67),
+            Side::Buy,
+            TimestampMs::new(1616823000000),
+        );
+        assert_eq!(large_trade.total_value(), 827115);
     }
 }

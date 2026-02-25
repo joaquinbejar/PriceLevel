@@ -14,19 +14,19 @@ use std::sync::Arc;
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
     /// The price of this level.
-    pub price: u128,
-    /// Total visible quantity at this level. This represents the sum of the visible quantities of all orders at this price level.
-    pub visible_quantity: u64,
-    /// Total hidden quantity at this level. This represents the sum of the hidden quantities of all orders at this price level.
-    pub hidden_quantity: u64,
+    price: u128,
+    /// Total visible quantity at this level in the smallest unit.
+    visible_quantity: u64,
+    /// Total hidden quantity at this level in the smallest unit.
+    hidden_quantity: u64,
     /// Number of orders at this level.
-    pub order_count: usize,
-    /// Orders at this level.  This is a vector of `Arc<OrderType<()>>` representing each individual order at this price level.
-    pub orders: Vec<Arc<OrderType<()>>>,
+    order_count: usize,
+    /// Orders at this level.
+    orders: Vec<Arc<OrderType<()>>>,
 }
 
 impl PriceLevelSnapshot {
-    /// Create a new empty snapshot
+    /// Create a new empty snapshot at the given price.
     #[must_use]
     pub fn new(price: u128) -> Self {
         Self {
@@ -38,7 +38,80 @@ impl PriceLevelSnapshot {
         }
     }
 
-    /// Get the total quantity (visible + hidden) at this price level
+    /// Creates a snapshot populated with orders, computing aggregates automatically.
+    pub fn with_orders(
+        price: u128,
+        orders: Vec<Arc<OrderType<()>>>,
+    ) -> Result<Self, PriceLevelError> {
+        let mut snapshot = Self {
+            price,
+            visible_quantity: 0,
+            hidden_quantity: 0,
+            order_count: 0,
+            orders,
+        };
+        snapshot.refresh_aggregates()?;
+        Ok(snapshot)
+    }
+
+    /// Returns the price of this level.
+    #[must_use]
+    pub fn price(&self) -> u128 {
+        self.price
+    }
+
+    /// Returns the total visible quantity.
+    #[must_use]
+    pub fn visible_quantity(&self) -> u64 {
+        self.visible_quantity
+    }
+
+    /// Returns the total hidden quantity.
+    #[must_use]
+    pub fn hidden_quantity(&self) -> u64 {
+        self.hidden_quantity
+    }
+
+    /// Returns the number of orders.
+    #[must_use]
+    pub fn order_count(&self) -> usize {
+        self.order_count
+    }
+
+    /// Returns a reference to the orders in this snapshot.
+    #[must_use]
+    pub fn orders(&self) -> &[Arc<OrderType<()>>] {
+        &self.orders
+    }
+
+    /// Consumes the snapshot and returns the inner orders vector.
+    #[must_use]
+    pub fn into_orders(self) -> Vec<Arc<OrderType<()>>> {
+        self.orders
+    }
+
+    /// Constructs a snapshot with pre-computed aggregates.
+    ///
+    /// This is intended for internal crate use where the caller has already
+    /// computed the aggregate values (e.g., from atomic counters).
+    #[must_use]
+    pub(crate) fn from_raw_parts(
+        price: u128,
+        visible_quantity: u64,
+        hidden_quantity: u64,
+        order_count: usize,
+        orders: Vec<Arc<OrderType<()>>>,
+    ) -> Self {
+        Self {
+            price,
+            visible_quantity,
+            hidden_quantity,
+            order_count,
+            orders,
+        }
+    }
+
+    /// Get the total quantity (visible + hidden) at this price level.
     pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
         self.visible_quantity
             .checked_add(self.hidden_quantity)
@@ -84,14 +157,37 @@ impl PriceLevelSnapshot {
 pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
 
 /// Serialized representation of a price level snapshot including checksum validation metadata.
+///
+/// All fields are private to protect checksum integrity.
+/// Use the provided accessor methods to read package data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceLevelSnapshotPackage {
     /// Version of the serialized snapshot schema to support future migrations.
-    pub version: u32,
+    version: u32,
     /// Captured snapshot data.
-    pub snapshot: PriceLevelSnapshot,
+    snapshot: PriceLevelSnapshot,
     /// Hex-encoded checksum used to validate the snapshot integrity.
-    pub checksum: String,
+    checksum: String,
+}
+
+impl PriceLevelSnapshotPackage {
+    /// Returns the schema version of this package.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Returns a reference to the contained snapshot.
+    #[must_use]
+    pub fn snapshot(&self) -> &PriceLevelSnapshot {
+        &self.snapshot
+    }
+
+    /// Returns the hex-encoded checksum.
+    #[must_use]
+    pub fn checksum(&self) -> &str {
+        &self.checksum
+    }
 }
 
 impl PriceLevelSnapshotPackage {

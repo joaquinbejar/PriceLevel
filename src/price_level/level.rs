@@ -41,13 +41,16 @@ impl PriceLevel {
     pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
-        let order_count = snapshot.orders.len();
-        let queue = OrderQueue::from(snapshot.orders.clone());
+        let order_count = snapshot.orders().len();
+        let visible_quantity = snapshot.visible_quantity();
+        let hidden_quantity = snapshot.hidden_quantity();
+        let price = snapshot.price();
+        let queue = OrderQueue::from(snapshot.into_orders());
 
         Ok(Self {
-            price: snapshot.price,
-            visible_quantity: AtomicU64::new(snapshot.visible_quantity),
-            hidden_quantity: AtomicU64::new(snapshot.hidden_quantity),
+            price,
+            visible_quantity: AtomicU64::new(visible_quantity),
+            hidden_quantity: AtomicU64::new(hidden_quantity),
             order_count: AtomicUsize::new(order_count),
             orders: queue,
             stats: Arc::new(PriceLevelStatistics::new()),
@@ -268,8 +271,7 @@ impl PriceLevel {
             }
         }
 
-        result.remaining_quantity = remaining;
-        result.is_complete = remaining == 0;
+        result.finalize(remaining);
 
         result
     }
@@ -277,13 +279,13 @@ impl PriceLevel {
     /// Create a snapshot of the current price level state
     #[must_use]
     pub fn snapshot(&self) -> PriceLevelSnapshot {
-        PriceLevelSnapshot {
-            price: self.price,
-            visible_quantity: self.visible_quantity(),
-            hidden_quantity: self.hidden_quantity(),
-            order_count: self.order_count(),
-            orders: self.snapshot_orders(),
-        }
+        PriceLevelSnapshot::from_raw_parts(
+            self.price,
+            self.visible_quantity(),
+            self.hidden_quantity(),
+            self.order_count(),
+            self.snapshot_orders(),
+        )
     }
 
     /// Serialize the current price level state into a checksum-protected snapshot package.
@@ -517,13 +519,16 @@ impl From<&PriceLevelSnapshot> for PriceLevel {
         let mut snapshot = value.clone();
         let _ = snapshot.refresh_aggregates();
 
-        let order_count = snapshot.orders.len();
-        let queue = OrderQueue::from(snapshot.orders.clone());
+        let order_count = snapshot.orders().len();
+        let visible_quantity = snapshot.visible_quantity();
+        let hidden_quantity = snapshot.hidden_quantity();
+        let price = snapshot.price();
+        let queue = OrderQueue::from(snapshot.into_orders());
 
         Self {
-            price: snapshot.price,
-            visible_quantity: AtomicU64::new(snapshot.visible_quantity),
-            hidden_quantity: AtomicU64::new(snapshot.hidden_quantity),
+            price,
+            visible_quantity: AtomicU64::new(visible_quantity),
+            hidden_quantity: AtomicU64::new(hidden_quantity),
             order_count: AtomicUsize::new(order_count),
             orders: queue,
             stats: Arc::new(PriceLevelStatistics::new()),
