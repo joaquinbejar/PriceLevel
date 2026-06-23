@@ -2709,6 +2709,328 @@ mod tests {
         // The final quiescent snapshot must also be self-consistent.
         assert_snapshot_internally_consistent(&price_level.snapshot());
     }
+
+    // ------------------------------------------------------------------
+    // Issue #77: assert MatchResult field-agreement and Trade structural
+    // invariants on output produced by `PriceLevel::match_order` itself,
+    // not on hand-built results.
+    // ------------------------------------------------------------------
+
+    /// Assert that the `MatchResult` returned by `match_order` is internally
+    /// consistent across all its derived views.
+    ///
+    /// Checks the documented field-agreement invariants:
+    /// - `is_complete()` is true iff `remaining_quantity() == 0`;
+    /// - `executed_quantity()` equals the sum of trade quantities;
+    /// - `executed_value()` equals the sum of each trade's `price * quantity`;
+    /// - `filled_order_ids().len()` equals the count of fully-consumed makers.
+    fn assert_match_result_consistent(result: &crate::execution::MatchResult, level_price: u128) {
+        // is_complete <=> remaining_quantity == 0
+        assert_eq!(
+            result.is_complete(),
+            result.remaining_quantity() == 0,
+            "is_complete must agree with remaining_quantity == 0"
+        );
+
+        let trades = result.trades().as_vec();
+
+        // executed_quantity == sum of trade quantities.
+        let expected_qty: u64 = trades.iter().map(|t| t.quantity().as_u64()).sum();
+        let executed_qty = match result.executed_quantity() {
+            Ok(q) => q,
+            Err(e) => panic!("executed_quantity must not error on real output: {e}"),
+        };
+        assert_eq!(
+            executed_qty, expected_qty,
+            "executed_quantity must equal the sum of trade quantities"
+        );
+
+        // executed_value == sum of each trade's price * quantity.
+        let expected_value: u128 = trades
+            .iter()
+            .map(|t| t.price().as_u128() * u128::from(t.quantity().as_u64()))
+            .sum();
+        let executed_value = match result.executed_value() {
+            Ok(v) => v,
+            Err(e) => panic!("executed_value must not error on real output: {e}"),
+        };
+        assert_eq!(
+            executed_value, expected_value,
+            "executed_value must equal the sum of price * quantity over trades"
+        );
+
+        // Each filled id is unique (a maker is consumed at most once per
+        // sweep). `Id` is `Hash + Eq` but not `Ord`, so dedup via a set.
+        let filled = result.filled_order_ids();
+        let unique: std::collections::HashSet<_> = filled.iter().collect();
+        assert_eq!(
+            unique.len(),
+            filled.len(),
+            "filled_order_ids must not contain duplicates"
+        );
+
+        assert_match_result_trades_valid(result, level_price);
+    }
+
+    /// Assert the structural invariants on every `Trade` emitted by a real
+    /// `match_order` call: maker != taker, price == level price, quantity > 0,
+    /// and taker side is the opposite of the maker side.
+    ///
+    /// All makers in these scenarios rest on a single side per level, so the
+    /// taker side is uniform across the sweep and equals that maker side's
+    /// opposite. The trade already records `taker_side`; we cross-check it
+    /// against the known resting side.
+    fn assert_match_result_trades_valid(result: &crate::execution::MatchResult, level_price: u128) {
+        let taker_id = result.order_id();
+        for trade in result.trades().as_vec() {
+            assert_ne!(
+                trade.maker_order_id(),
+                trade.taker_order_id(),
+                "maker and taker must differ (no self-fill)"
+            );
+            assert_eq!(
+                trade.taker_order_id(),
+                taker_id,
+                "every trade's taker must be the incoming order"
+            );
+            assert_eq!(
+                trade.price(),
+                Price::new(level_price),
+                "trade price must equal the level price"
+            );
+            assert!(
+                trade.quantity().as_u64() > 0,
+                "trade quantity must be strictly positive"
+            );
+            // taker_side == maker_side.opposite(). `maker_side()` is derived as
+            // `taker_side().opposite()`, so this also pins the relationship.
+            assert_eq!(
+                trade.taker_side(),
+                trade.maker_side().opposite(),
+                "taker side must be the opposite of the maker side"
+            );
+        }
+    }
+
+    #[test]
+    fn test_match_order_partial_fill_result_invariants_hold() {
+        // Taker smaller than a single resting maker: the taker is fully filled
+        // (complete), the maker is only partially consumed and keeps resting, so
+        // no maker appears in filled_order_ids.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            40,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        // The taker (40) is exhausted against the maker (100): complete.
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        // The maker is only partially filled and remains resting.
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(price_level.order_count(), 1);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_exact_full_fill_result_invariants_hold() {
+        // Taker exactly equals total resting depth across two makers: every
+        // maker is fully consumed and the taker is complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 60));
+        price_level.add_order(create_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 2);
+        assert_eq!(result.filled_order_ids().len(), 2);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_taker_larger_than_depth_result_invariants_hold() {
+        // Taker exceeds resting depth: queue drained, all makers filled, and a
+        // positive remainder is left so the result is NOT complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 30));
+        price_level.add_order(create_standard_order(2, 10000, 30));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.trades().len(), 2);
+        assert_eq!(result.filled_order_ids().len(), 2);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_multi_maker_sweep_result_invariants_hold() {
+        // Sweep three makers, partially filling the last: two fully-consumed
+        // makers, three trades, taker complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 40));
+        price_level.add_order(create_standard_order(2, 10000, 30));
+        price_level.add_order(create_standard_order(3, 10000, 50));
+
+        let result = price_level.match_order(
+            90,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 3);
+        assert_eq!(result.filled_order_ids().len(), 2);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_empty_level_result_invariants_hold() {
+        // No resting orders: no trades, nothing filled, remainder == taker qty,
+        // not complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_iceberg_maker_result_invariants_hold() {
+        // Iceberg maker: matching beyond the visible tranche triggers a
+        // replenishment from hidden. The emitted trades must still satisfy
+        // every field-agreement and structural invariant.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // visible 50, hidden 200.
+        price_level.add_order(create_iceberg_order(1, 10000, 50, 200));
+
+        // Consume the full visible tranche; the maker replenishes and keeps
+        // resting, so it is not in filled_order_ids.
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert!(!result.trades().as_vec().is_empty());
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_reserve_maker_result_invariants_hold() {
+        // Reserve maker with auto-replenish: same shape as iceberg — exercise
+        // the hidden->visible replenishment branch and assert invariants on the
+        // real output.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // visible 50, hidden 200, replenish threshold 10, auto-replenish on.
+        price_level.add_order(create_reserve_order(1, 10000, 50, 200, 10, true, Some(50)));
+
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert!(!result.trades().as_vec().is_empty());
+        assert_match_result_consistent(&result, 10000);
+    }
+
+    #[test]
+    fn test_match_order_iceberg_maker_deterministic_trade_stream() {
+        // Determinism with a replenishing iceberg maker: matching the same
+        // input twice with the same threaded timestamp must yield byte-identical
+        // trade streams. Complements the standard-maker determinism test (#61)
+        // by covering the hidden->visible replenishment branch.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let taker_id = Id::from_u64(999);
+        let timestamp = TimestampMs::new(1_716_000_000_000);
+
+        // Fixed-timestamp iceberg maker so both runs use identical input.
+        let mk = || OrderType::IcebergOrder {
+            id: Id::from_u64(1),
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(50),
+            hidden_quantity: Quantity::new(200),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_700_000_000_001),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        };
+
+        let run = || {
+            let price_level = PriceLevel::new(10000);
+            price_level.add_order(mk());
+            let trade_id_generator = UuidGenerator::new(namespace);
+            // Cross more than the visible tranche to force replenishment and a
+            // multi-trade stream.
+            price_level.match_order(120, taker_id, timestamp, &trade_id_generator)
+        };
+
+        let first = run();
+        let second = run();
+
+        assert_eq!(first.trades().as_vec(), second.trades().as_vec());
+        assert_match_result_consistent(&first, 10000);
+        assert_match_result_consistent(&second, 10000);
+    }
 }
 
 #[cfg(test)]
