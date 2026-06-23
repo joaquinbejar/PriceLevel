@@ -445,4 +445,94 @@ mod tests {
         assert!(order_ids.contains(&Id::from_u64(1)));
         assert!(order_ids.contains(&Id::from_u64(2)));
     }
+
+    #[test]
+    fn test_order_queue_reinsert_keeps_front_priority() {
+        // A arrives before B. Popping A (the head), then re-inserting it at its
+        // original sequence must keep A ahead of B — modelling a partial fill
+        // that preserves price-time priority.
+        let queue = OrderQueue::new();
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1000u128, 20)));
+
+        let (seq_a, order_a) = match queue.pop_entry() {
+            Some(entry) => entry,
+            None => panic!("expected to pop order A"),
+        };
+        assert_eq!(order_a.id(), Id::from_u64(1));
+
+        // Re-insert A's residual at its original sequence.
+        queue.reinsert(seq_a, order_a);
+
+        // The very next pop must still be A, not the later-arriving B.
+        match queue.pop_entry() {
+            Some((_, order)) => assert_eq!(
+                order.id(),
+                Id::from_u64(1),
+                "re-inserted residual must keep front priority"
+            ),
+            None => panic!("expected to pop the re-inserted order A"),
+        }
+        match queue.pop() {
+            Some(order) => assert_eq!(order.id(), Id::from_u64(2)),
+            None => panic!("expected to pop order B"),
+        }
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn test_order_queue_push_assigns_tail_priority() {
+        // A re-pushed order (new sequence) lands behind everything else.
+        let queue = OrderQueue::new();
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1000u128, 20)));
+
+        let order_a = match queue.pop() {
+            Some(order) => order,
+            None => panic!("expected to pop order A"),
+        };
+        assert_eq!(order_a.id(), Id::from_u64(1));
+
+        // Re-push A: it gets a fresh (highest) sequence and goes to the tail.
+        queue.push(order_a);
+
+        match queue.pop() {
+            Some(order) => assert_eq!(
+                order.id(),
+                Id::from_u64(2),
+                "B should now be ahead of re-pushed A"
+            ),
+            None => panic!("expected to pop order B"),
+        }
+        match queue.pop() {
+            Some(order) => assert_eq!(order.id(), Id::from_u64(1)),
+            None => panic!("expected to pop re-pushed order A"),
+        }
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn test_order_queue_remove_cleans_index() {
+        // Removing an order must drop it from both the map and the ordered
+        // index, so it never resurfaces from a later pop.
+        let queue = OrderQueue::new();
+        queue.push(Arc::new(create_test_order(1, 1000u128, 10)));
+        queue.push(Arc::new(create_test_order(2, 1000u128, 20)));
+
+        match queue.remove(Id::from_u64(1)) {
+            Some(order) => assert_eq!(order.id(), Id::from_u64(1)),
+            None => panic!("expected to remove order A"),
+        }
+        assert_eq!(queue.len(), 1);
+
+        match queue.pop() {
+            Some(order) => assert_eq!(
+                order.id(),
+                Id::from_u64(2),
+                "removed order must not resurface"
+            ),
+            None => panic!("expected to pop order B"),
+        }
+        assert!(queue.pop().is_none());
+    }
 }

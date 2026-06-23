@@ -51,6 +51,37 @@ pub fn register_benchmarks(c: &mut Criterion) {
         })
     });
 
+    // Benchmark the partial-fill path: a sub-head-quantity match partially
+    // fills the head order and re-inserts the residual at the front (the
+    // price-time-priority path added for issue #39). Guards the O(log n)
+    // ordered-index push/pop against the previous O(1) tail FIFO.
+    group.bench_function("match_partial_fill_reinsert", |b| {
+        b.iter(|| {
+            let price_level = setup_standard_orders(100);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
+            // 5 < head quantity (10): partial fill + front re-insert.
+            black_box(price_level.match_order(5, Id::from_u64(999), &transaction_id_generator));
+        })
+    });
+
+    // Benchmark repeated partial fills (residual churn) against a deep level:
+    // each call re-inserts the head residual, stressing the ordered index.
+    group.bench_function("match_partial_fill_churn", |b| {
+        b.iter(|| {
+            let price_level = setup_standard_orders(100);
+            let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+            let transaction_id_generator = UuidGenerator::new(namespace);
+            for i in 0..50u64 {
+                black_box(price_level.match_order(
+                    3,
+                    Id::from_u64(1000 + i),
+                    &transaction_id_generator,
+                ));
+            }
+        })
+    });
+
     // Benchmark with different match quantities against standard orders
     for match_quantity in [10, 50, 100, 200, 500].iter() {
         group.bench_with_input(
