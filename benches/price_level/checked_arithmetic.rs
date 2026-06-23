@@ -24,7 +24,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     // Benchmark executed_quantity on a MatchResult with many trades
     group.bench_function("executed_quantity_many_trades", |b| {
         let level = setup_standard_level(100);
-        let result = level.match_order(500, Id::from_u64(9999), &id_gen);
+        let result = level.match_order(
+            500,
+            Id::from_u64(9999),
+            TimestampMs::new(1_716_000_000_000),
+            &id_gen,
+        );
         b.iter(|| {
             black_box(result.executed_quantity().unwrap());
         })
@@ -33,7 +38,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     // Benchmark executed_value on a MatchResult with many trades
     group.bench_function("executed_value_many_trades", |b| {
         let level = setup_standard_level(100);
-        let result = level.match_order(500, Id::from_u64(9999), &id_gen);
+        let result = level.match_order(
+            500,
+            Id::from_u64(9999),
+            TimestampMs::new(1_716_000_000_000),
+            &id_gen,
+        );
         b.iter(|| {
             black_box(result.executed_value().unwrap());
         })
@@ -42,7 +52,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     // Benchmark average_price computation
     group.bench_function("average_price", |b| {
         let level = setup_standard_level(100);
-        let result = level.match_order(500, Id::from_u64(9999), &id_gen);
+        let result = level.match_order(
+            500,
+            Id::from_u64(9999),
+            TimestampMs::new(1_716_000_000_000),
+            &id_gen,
+        );
         b.iter(|| {
             black_box(result.average_price().unwrap());
         })
@@ -70,7 +85,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     // Benchmark empty match result (zero trades) arithmetic
     group.bench_function("empty_match_arithmetic", |b| {
         let empty_level = PriceLevel::new(10000);
-        let result = empty_level.match_order(100, Id::from_u64(1), &id_gen);
+        let result = empty_level.match_order(
+            100,
+            Id::from_u64(1),
+            TimestampMs::new(1_716_000_000_000),
+            &id_gen,
+        );
         b.iter(|| {
             black_box(result.executed_quantity().unwrap());
             black_box(result.executed_value().unwrap());
@@ -83,7 +103,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
         let tc = *trade_count;
         group.bench_function(format!("executed_quantity_{tc}_trades"), |b| {
             let level = setup_standard_level(tc);
-            let result = level.match_order(tc * 10, Id::from_u64(9999), &id_gen);
+            let result = level.match_order(
+                tc * 10,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            );
             b.iter(|| {
                 black_box(result.executed_quantity().unwrap());
             })

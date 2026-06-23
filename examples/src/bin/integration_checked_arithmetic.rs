@@ -85,7 +85,12 @@ fn test_executed_quantity_and_value(id_gen: &UuidGenerator) {
         });
     }
 
-    let result = level.match_order(250, Id::from_u64(999), id_gen);
+    let result = level.match_order(
+        250,
+        Id::from_u64(999),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
 
     let executed_qty = result
         .executed_quantity()
@@ -130,7 +135,12 @@ fn test_average_price(id_gen: &UuidGenerator) {
         extra_fields: (),
     });
 
-    let result = level.match_order(100, Id::from_u64(800), id_gen);
+    let result = level.match_order(
+        100,
+        Id::from_u64(800),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     let avg = result
         .average_price()
         .unwrap_or_else(|e| exit_err(&format!("average_price: {e}")));
@@ -150,7 +160,12 @@ fn test_empty_match_result(id_gen: &UuidGenerator) {
 
     // Match on empty level
     let empty_level = PriceLevel::new(10_000);
-    let result = empty_level.match_order(100, Id::from_u64(900), id_gen);
+    let result = empty_level.match_order(
+        100,
+        Id::from_u64(900),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
 
     let executed = result
         .executed_quantity()
@@ -228,7 +243,12 @@ fn test_match_result_display_fromstr(id_gen: &UuidGenerator) {
         extra_fields: (),
     });
 
-    let result = level.match_order(30, Id::from_u64(888), id_gen);
+    let result = level.match_order(
+        30,
+        Id::from_u64(888),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     let display = result.to_string();
 
     // Verify the display contains expected fields

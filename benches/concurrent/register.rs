@@ -72,7 +72,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
                             let transaction_id_generator = UuidGenerator::new(namespace);
                             // Use different taker order IDs for each thread/iteration
                             let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + iteration);
-                            price_level.match_order(5, taker_id, &transaction_id_generator);
+                            price_level.match_order(
+                                5,
+                                taker_id,
+                                TimestampMs::new(1_716_000_000_000),
+                                &transaction_id_generator,
+                            );
                         },
                     )
                 });
@@ -306,7 +311,12 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                     1 => {
                         // Match against existing orders
                         let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + i);
-                        thread_price_level.match_order(5, taker_id, &thread_transaction_id_gen);
+                        thread_price_level.match_order(
+                            5,
+                            taker_id,
+                            TimestampMs::new(1_716_000_000_000),
+                            &thread_transaction_id_gen,
+                        );
                     }
                     2 => {
                         // Cancel one of the initial orders

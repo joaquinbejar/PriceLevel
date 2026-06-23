@@ -21,7 +21,7 @@ fn main() {
 
     // --- Phase 1: Add orders ---
     println!("[Phase 1] Adding orders...");
-    let mut ts = 1_616_823_000_000_u64;
+    let base_ts = 1_616_823_000_000_u64;
 
     for i in 1..=10_u64 {
         let order = OrderType::Standard {
@@ -30,12 +30,11 @@ fn main() {
             quantity: Quantity::new(100),
             side: Side::Buy,
             user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(ts),
+            timestamp: TimestampMs::new(base_ts + (i - 1)),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
         price_level.add_order(order);
-        ts += 1;
     }
 
     assert_eq_or_exit(price_level.order_count(), 10, "order_count after add");
@@ -125,7 +124,12 @@ fn main() {
     // --- Phase 5: Match orders ---
     println!("[Phase 5] Matching orders...");
     let taker_id = Id::from_u64(1000);
-    let match_result: MatchResult = price_level.match_order(200, taker_id, &trade_id_gen);
+    let match_result: MatchResult = price_level.match_order(
+        200,
+        taker_id,
+        TimestampMs::new(1_716_000_000_000),
+        &trade_id_gen,
+    );
 
     let executed_qty = match_result
         .executed_quantity()
@@ -150,7 +154,12 @@ fn main() {
     println!("[Phase 6] Partial match (exceeds available)...");
     let taker_id2 = Id::from_u64(1001);
     let remaining_visible = price_level.visible_quantity();
-    let partial = price_level.match_order(remaining_visible + 500, taker_id2, &trade_id_gen);
+    let partial = price_level.match_order(
+        remaining_visible + 500,
+        taker_id2,
+        TimestampMs::new(1_716_000_000_000),
+        &trade_id_gen,
+    );
 
     assert_or_exit(
         !partial.is_complete(),

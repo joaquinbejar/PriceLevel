@@ -17,7 +17,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_standard_orders(100);
             let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
             let transaction_id_generator = UuidGenerator::new(namespace);
-            black_box(price_level.match_order(50, Id::from_u64(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                50,
+                Id::from_u64(999),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -27,7 +32,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_iceberg_orders(100);
             let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
             let transaction_id_generator = UuidGenerator::new(namespace);
-            black_box(price_level.match_order(75, Id::from_u64(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                75,
+                Id::from_u64(999),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -37,7 +47,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_reserve_orders(100);
             let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
             let transaction_id_generator = UuidGenerator::new(namespace);
-            black_box(price_level.match_order(60, Id::from_u64(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                60,
+                Id::from_u64(999),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -47,7 +62,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = setup_mixed_orders(100);
             let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
             let transaction_id_generator = UuidGenerator::new(namespace);
-            black_box(price_level.match_order(100, Id::from_u64(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                100,
+                Id::from_u64(999),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -61,7 +81,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
             let transaction_id_generator = UuidGenerator::new(namespace);
             // 5 < head quantity (10): partial fill + front re-insert.
-            black_box(price_level.match_order(5, Id::from_u64(999), &transaction_id_generator));
+            black_box(price_level.match_order(
+                5,
+                Id::from_u64(999),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 
@@ -76,6 +101,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     3,
                     Id::from_u64(1000 + i),
+                    TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
             }
@@ -96,6 +122,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     black_box(price_level.match_order(
                         match_quantity,
                         Id::from_u64(999),
+                        TimestampMs::new(1_716_000_000_000),
                         &transaction_id_generator,
                     ));
                 })
@@ -117,6 +144,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     black_box(price_level.match_order(
                         match_quantity,
                         Id::from_u64(999),
+                        TimestampMs::new(1_716_000_000_000),
                         &transaction_id_generator,
                     ));
                 })

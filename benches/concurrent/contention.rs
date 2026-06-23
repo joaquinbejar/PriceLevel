@@ -107,7 +107,12 @@ fn measure_read_write_contention(
                         1 => {
                             // Match against existing orders
                             let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + i);
-                            thread_price_level.match_order(2, taker_id, &thread_transaction_id_gen);
+                            thread_price_level.match_order(
+                                2,
+                                taker_id,
+                                TimestampMs::new(1_716_000_000_000),
+                                &thread_transaction_id_gen,
+                            );
                         }
                         _ => {
                             // Cancel an order
@@ -217,7 +222,12 @@ fn measure_hot_spot_contention(
                     _ => {
                         // Match operations
                         let taker_id = Id::from_u64(thread_id as u64 * 1_000_000 + i);
-                        thread_price_level.match_order(1, taker_id, &thread_transaction_id_gen);
+                        thread_price_level.match_order(
+                            1,
+                            taker_id,
+                            TimestampMs::new(1_716_000_000_000),
+                            &thread_transaction_id_gen,
+                        );
                     }
                 }
             }

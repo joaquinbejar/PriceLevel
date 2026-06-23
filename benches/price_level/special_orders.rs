@@ -17,7 +17,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_post_only", |b| {
         b.iter(|| {
             let level = setup_post_only_level(100);
-            black_box(level.match_order(50, Id::from_u64(9999), &id_gen));
+            black_box(level.match_order(
+                50,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            ));
         })
     });
 
@@ -25,7 +30,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_trailing_stop", |b| {
         b.iter(|| {
             let level = setup_trailing_stop_level(100);
-            black_box(level.match_order(50, Id::from_u64(9999), &id_gen));
+            black_box(level.match_order(
+                50,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            ));
         })
     });
 
@@ -33,7 +43,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_pegged", |b| {
         b.iter(|| {
             let level = setup_pegged_level(100);
-            black_box(level.match_order(50, Id::from_u64(9999), &id_gen));
+            black_box(level.match_order(
+                50,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            ));
         })
     });
 
@@ -41,7 +56,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_market_to_limit", |b| {
         b.iter(|| {
             let level = setup_market_to_limit_level(100);
-            black_box(level.match_order(50, Id::from_u64(9999), &id_gen));
+            black_box(level.match_order(
+                50,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            ));
         })
     });
 
@@ -49,7 +69,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     group.bench_function("match_all_special_mixed", |b| {
         b.iter(|| {
             let level = setup_all_special_mixed(100);
-            black_box(level.match_order(100, Id::from_u64(9999), &id_gen));
+            black_box(level.match_order(
+                100,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            ));
         })
     });
 
@@ -61,7 +86,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             |b, &order_count| {
                 b.iter(|| {
                     let level = setup_all_special_mixed(order_count);
-                    black_box(level.match_order(order_count / 2, Id::from_u64(9999), &id_gen));
+                    black_box(level.match_order(
+                        order_count / 2,
+                        Id::from_u64(9999),
+                        TimestampMs::new(1_716_000_000_000),
+                        &id_gen,
+                    ));
                 })
             },
         );

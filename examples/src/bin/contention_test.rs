@@ -112,6 +112,7 @@ fn test_read_write_ratio() {
                                 thread_price_level.match_order(
                                     5, // Match 5 units
                                     taker_id,
+                                    TimestampMs::new(1_716_000_000_000),
                                     &thread_tx_id_gen,
                                 );
                             }

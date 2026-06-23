@@ -456,7 +456,12 @@ mod tests {
 
         // Match the entire order
         let taker_id = Id::from_u64(999); // market order ID
-        let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.order_id(), taker_id);
         assert_eq!(match_result.remaining_quantity(), 0);
@@ -482,6 +487,63 @@ mod tests {
     }
 
     #[test]
+    fn test_match_order_multi_maker_deterministic_timestamps() {
+        // Matching the same input twice with the same threaded timestamp must
+        // yield byte-identical trade streams — including each trade's timestamp,
+        // trade_id, and quantity. This guarantees a replayable trade stream and
+        // proves the match path never reads the wall clock.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let taker_id = Id::from_u64(999);
+        let timestamp = TimestampMs::new(1_716_000_000_000);
+
+        // Build makers with FIXED timestamps so both runs use truly identical
+        // input. `create_standard_order` draws from a global counter that
+        // advances on every call, which would differ between the two runs.
+        let mk = |id: u64, qty: u64| OrderType::Standard {
+            id: Id::from_u64(id),
+            price: Price::new(10000),
+            quantity: Quantity::new(qty),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_700_000_000_000 + id),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        };
+
+        // Run a scenario that crosses several resting makers (partial fill of
+        // the last maker) so the trade stream has multiple entries.
+        let run = || {
+            let price_level = PriceLevel::new(10000);
+            price_level.add_order(mk(1, 40));
+            price_level.add_order(mk(2, 30));
+            price_level.add_order(mk(3, 50));
+
+            let trade_id_generator = UuidGenerator::new(namespace);
+            price_level.match_order(90, taker_id, timestamp, &trade_id_generator)
+        };
+
+        let first = run();
+        let second = run();
+
+        let first_trades = first.trades().as_vec();
+        let second_trades = second.trades().as_vec();
+
+        // Crossed two full makers (40 + 30) and partially filled the third (20).
+        assert_eq!(first_trades.len(), 3);
+        assert_eq!(first.executed_quantity().unwrap_or_default(), 90);
+        assert_eq!(second.executed_quantity().unwrap_or_default(), 90);
+
+        // Byte-identical trade streams (Trade derives PartialEq over every
+        // field, including the timestamp).
+        assert_eq!(first_trades, second_trades);
+
+        // Explicitly assert each trade's timestamp is exactly the threaded one.
+        for trade in first_trades {
+            assert_eq!(trade.timestamp(), timestamp);
+        }
+    }
+
+    #[test]
     fn test_match_standard_order_partial() {
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
@@ -491,7 +553,12 @@ mod tests {
 
         // Match part of the order
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            60,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         // Verificar el resultado de matching
         assert_eq!(match_result.order_id(), taker_id);
@@ -527,7 +594,12 @@ mod tests {
 
         // Match with quantity exceeding available
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            150,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.order_id(), taker_id);
         assert_eq!(match_result.remaining_quantity(), 50); // 150 - 100 = 50 remaining
@@ -563,7 +635,12 @@ mod tests {
 
         // Match the visible portion of the iceberg order.
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         // Assertions to validate the match result.
         assert_eq!(match_result.order_id(), taker_id);
@@ -585,7 +662,12 @@ mod tests {
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
         let taker_id = Id::from_u64(1000);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
@@ -602,7 +684,12 @@ mod tests {
 
         // Match the remaining 50 units (50 visible + 0 hidden).
         let taker_id = Id::from_u64(1001);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
@@ -623,7 +710,12 @@ mod tests {
 
         // Match the visible portion of the iceberg order.
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         // Assertions to validate the match result.
         assert_eq!(match_result.order_id(), taker_id);
@@ -645,7 +737,12 @@ mod tests {
 
         // Match another 50 units, which should deplete the visible portion and reveal more.
         let taker_id = Id::from_u64(1000);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
@@ -664,7 +761,12 @@ mod tests {
         let taker_id = Id::from_u64(1001);
 
         // This should match the remaining visible quantity and deplete the hidden quantity.
-        let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            150,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
         assert_eq!(match_result.remaining_quantity(), 50);
         assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
@@ -684,7 +786,12 @@ mod tests {
 
         // Match part of the visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(30, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            30,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -709,7 +816,12 @@ mod tests {
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -733,7 +845,12 @@ mod tests {
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -763,7 +880,12 @@ mod tests {
 
         // Match partially, but still above threshold
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            25,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -772,7 +894,12 @@ mod tests {
 
         // Match more to go below threshold
         let taker_id = Id::from_u64(1000);
-        let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            10,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -804,7 +931,12 @@ mod tests {
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -828,7 +960,12 @@ mod tests {
 
         // Match partially
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(49, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            49,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -851,7 +988,12 @@ mod tests {
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -874,7 +1016,12 @@ mod tests {
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -897,7 +1044,12 @@ mod tests {
 
         // Match part of the visible portion, but still above threshold
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(25, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            25,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -906,7 +1058,12 @@ mod tests {
 
         // Match more to go below threshold
         let taker_id = Id::from_u64(1000);
-        let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            10,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -932,7 +1089,12 @@ mod tests {
 
         // Match 80 units, which is above the replenish threshold
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(80, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            80,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         // Validate the match result
         assert_eq!(match_result.order_id(), taker_id);
@@ -954,7 +1116,12 @@ mod tests {
 
         // Match 10 more units, which will take us below the replenish threshold
         let taker_id = Id::from_u64(1000);
-        let match_result = price_level.match_order(10, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            10,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -972,7 +1139,12 @@ mod tests {
 
         // Match with a larger amount than what's available
         let taker_id = Id::from_u64(1001);
-        let match_result = price_level.match_order(150, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            150,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 40); // 150 - 90 - 20 = 40
         assert!(!match_result.is_complete());
@@ -1012,7 +1184,12 @@ mod tests {
 
         // Post-only orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(60, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            60,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1030,7 +1207,12 @@ mod tests {
 
         // Trailing stop orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1048,7 +1230,12 @@ mod tests {
 
         // Pegged orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1066,7 +1253,12 @@ mod tests {
 
         // Market-to-limit orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1084,7 +1276,12 @@ mod tests {
 
         // For the price level, FOK behaves like standard orders
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1102,7 +1299,12 @@ mod tests {
 
         // For the price level, IOC behaves like standard orders
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(50, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            50,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1120,7 +1322,12 @@ mod tests {
 
         // GTD orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(100, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1140,7 +1347,12 @@ mod tests {
 
         // Match first two orders completely and third partially
         let taker_id = Id::from_u64(999);
-        let match_result = price_level.match_order(140, taker_id, &transaction_id_generator);
+        let match_result = price_level.match_order(
+            140,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         // Verificar el resultado de matching
         assert_eq!(match_result.order_id(), taker_id);
@@ -1564,8 +1776,12 @@ mod tests {
         price_level.add_order(create_standard_order(1, 10000, 200));
 
         // Match only part of what's available
-        let match_result =
-            price_level.match_order(100, Id::from_u64(999), &transaction_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &transaction_id_generator,
+        );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
@@ -1944,7 +2160,12 @@ mod tests {
         price_level.add_order(create_standard_order(2, 10000, 100));
 
         // First aggressor partially fills A (60 of 100). A's residual = 40.
-        let first = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+        let first = price_level.match_order(
+            60,
+            Id::from_u64(901),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
         assert_eq!(first.trades().len(), 1);
         assert_eq!(
             first.trades().as_vec()[0].maker_order_id(),
@@ -1957,7 +2178,12 @@ mod tests {
         assert_eq!(price_level.order_count(), 2);
 
         // Second aggressor (50) must hit A's remainder (40) FIRST, then B (10).
-        let second = price_level.match_order(50, Id::from_u64(902), &trade_ids);
+        let second = price_level.match_order(
+            50,
+            Id::from_u64(902),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
         assert_eq!(second.trades().len(), 2);
 
         let t0 = &second.trades().as_vec()[0];
@@ -1994,7 +2220,12 @@ mod tests {
         };
         assert_eq!(total_before, 200);
 
-        let _ = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+        let _ = price_level.match_order(
+            60,
+            Id::from_u64(901),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
         let total_after = match price_level.total_quantity() {
             Ok(q) => q,
             Err(e) => panic!("total_quantity failed: {e}"),
@@ -2018,13 +2249,23 @@ mod tests {
 
         // Aggressor consumes I's visible tip (50) → I refreshes from hidden and
         // moves to the tail. remaining hits 0, so this call stops there.
-        let first = price_level.match_order(50, Id::from_u64(901), &trade_ids);
+        let first = price_level.match_order(
+            50,
+            Id::from_u64(901),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
         assert_eq!(first.trades().len(), 1);
         assert_eq!(first.trades().as_vec()[0].maker_order_id(), Id::from_u64(1));
 
         // Next aggressor must now hit O (id=2) FIRST, because the refreshed
         // iceberg tranche lost its priority to the tail.
-        let second = price_level.match_order(50, Id::from_u64(902), &trade_ids);
+        let second = price_level.match_order(
+            50,
+            Id::from_u64(902),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
         assert_eq!(
             second.trades().as_vec()[0].maker_order_id(),
             Id::from_u64(2),
@@ -2042,7 +2283,12 @@ mod tests {
 
         price_level.add_order(create_standard_order(1, 10000, 100));
         price_level.add_order(create_standard_order(2, 10000, 100));
-        let _ = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+        let _ = price_level.match_order(
+            60,
+            Id::from_u64(901),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_ids,
+        );
 
         let json = match price_level.snapshot_to_json() {
             Ok(j) => j,
@@ -2056,7 +2302,12 @@ mod tests {
         // Match against the restored level: A's residual (40) must still come
         // first, proving the snapshot preserved price-time priority.
         let restored_trade_ids = UuidGenerator::new(namespace);
-        let result = restored.match_order(50, Id::from_u64(903), &restored_trade_ids);
+        let result = restored.match_order(
+            50,
+            Id::from_u64(903),
+            TimestampMs::new(1_716_000_000_000),
+            &restored_trade_ids,
+        );
         assert_eq!(
             result.trades().as_vec()[0].maker_order_id(),
             Id::from_u64(1),

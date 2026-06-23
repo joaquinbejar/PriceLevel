@@ -137,7 +137,12 @@ fn main() {
 
                 // Match varying quantities
                 let quantity = (local_counter % 5) + 1; // Match 1-5 units
-                let result = thread_price_level.match_order(quantity, taker_id, &thread_tx_id_gen);
+                let result = thread_price_level.match_order(
+                    quantity,
+                    taker_id,
+                    TimestampMs::new(1_716_000_000_000),
+                    &thread_tx_id_gen,
+                );
 
                 // Count successful matches
                 if result.executed_quantity().unwrap_or(0) > 0 {

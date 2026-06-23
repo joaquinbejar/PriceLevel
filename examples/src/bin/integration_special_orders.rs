@@ -50,7 +50,12 @@ fn test_iceberg_order(id_gen: &UuidGenerator) {
     assert_eq_or_exit(level.order_count(), 1, "iceberg order_count");
 
     // Match against visible portion
-    let result = level.match_order(10, Id::from_u64(100), id_gen);
+    let result = level.match_order(
+        10,
+        Id::from_u64(100),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     let executed = result.executed_quantity().unwrap_or(0);
     assert_eq_or_exit(executed, 10, "iceberg match executed");
     assert_or_exit(result.is_complete(), "taker should be fully filled");
@@ -89,7 +94,12 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
     assert_eq_or_exit(level.hidden_quantity(), 50, "reserve hidden_qty");
 
     // Match some visible quantity
-    let result = level.match_order(8, Id::from_u64(200), id_gen);
+    let result = level.match_order(
+        8,
+        Id::from_u64(200),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     let executed = result.executed_quantity().unwrap_or(0);
     assert_eq_or_exit(executed, 8, "reserve match executed");
 
@@ -127,7 +137,12 @@ fn test_post_only_order(id_gen: &UuidGenerator) {
     assert_eq_or_exit(level.order_count(), 1, "postonly order_count");
 
     // Match against post-only order
-    let result = level.match_order(50, Id::from_u64(300), id_gen);
+    let result = level.match_order(
+        50,
+        Id::from_u64(300),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     assert_eq_or_exit(
         result.executed_quantity().unwrap_or(0),
         50,
@@ -164,7 +179,12 @@ fn test_trailing_stop_order(id_gen: &UuidGenerator) {
 
     assert_eq_or_exit(level.visible_quantity(), 30, "trailing visible_qty");
 
-    let result = level.match_order(30, Id::from_u64(400), id_gen);
+    let result = level.match_order(
+        30,
+        Id::from_u64(400),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     assert_eq_or_exit(
         result.executed_quantity().unwrap_or(0),
         30,
@@ -194,7 +214,12 @@ fn test_pegged_order(id_gen: &UuidGenerator) {
 
     assert_eq_or_exit(level.visible_quantity(), 25, "pegged visible_qty");
 
-    let result = level.match_order(25, Id::from_u64(500), id_gen);
+    let result = level.match_order(
+        25,
+        Id::from_u64(500),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     assert_eq_or_exit(
         result.executed_quantity().unwrap_or(0),
         25,
@@ -223,7 +248,12 @@ fn test_market_to_limit_order(id_gen: &UuidGenerator) {
     assert_eq_or_exit(level.visible_quantity(), 40, "m2l visible_qty");
 
     // Partial match
-    let result = level.match_order(15, Id::from_u64(600), id_gen);
+    let result = level.match_order(
+        15,
+        Id::from_u64(600),
+        TimestampMs::new(1_716_000_000_000),
+        id_gen,
+    );
     assert_eq_or_exit(
         result.executed_quantity().unwrap_or(0),
         15,

@@ -339,6 +339,28 @@ let restored = PriceLevel::from_snapshot_json(&json).unwrap();
 7. Update snapshot code to use [`PriceLevelSnapshotPackage`] for checksum validation.
 8. Address new `#[must_use]` warnings on query methods.
 
+### Migration Guide (deterministic `match_order` timestamp)
+
+[`PriceLevel::match_order`] now takes an explicit `timestamp: TimestampMs`
+argument, inserted **between** `taker_order_id` and the trade-id generator:
+
+| Before | After |
+|--------|-------|
+| `level.match_order(qty, taker_id, &gen)` | `level.match_order(qty, taker_id, ts, &gen)` |
+
+**Why.** The match path previously read the wall clock once per emitted
+[`Trade`] (`SystemTime::now()`) and once per fill inside the statistics
+update. That made the trade stream non-deterministic (each replay produced
+different `Trade::timestamp` values) and put two syscalls per fill on the
+hot path. The caller now threads a single taker timestamp in; it is stamped
+onto every [`Trade`] and used as the execution time for statistics. No clock
+is read on the match path, so matching the same input twice with the same
+`timestamp` yields a byte-identical trade stream — a prerequisite for
+snapshot/replay equivalence.
+
+Pass the taker's arrival timestamp (or any deterministic value for
+tests/replay), e.g. [`TimestampMs::new`].
+
 
  ## Setup Instructions
 
