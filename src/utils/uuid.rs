@@ -77,6 +77,14 @@ impl UuidGenerator {
     ///
     /// A new UUID that is deterministically derived from the namespace and the current counter value.
     pub fn next(&self) -> Uuid {
+        // The only invariant is that each caller observes a distinct, monotonic
+        // counter value so the minted trade ids are unique (a `fetch_add` is
+        // atomic, so even `Relaxed` would guarantee uniqueness — no
+        // happens-before rides on this value, it is consumed locally to build
+        // the v5 UUID). `SeqCst` is kept deliberately: id minting is not on a
+        // measured hot path, and the global total order it provides makes the
+        // counter trivially auditable across threads. Behavior is intentionally
+        // unchanged here.
         let counter = self.counter.fetch_add(1, Ordering::SeqCst);
         let name = counter.to_string();
         // Generate a UUID v5 (name-based) using the namespace and counter
