@@ -93,8 +93,8 @@ mod tests {
     // computes `executed_value as f64 / executed_quantity as f64`, guarding
     // the zero-quantity case so it never divides by zero. These tests pin the
     // zero-quantity, precision-loss, and never-NaN/Inf behavior. The
-    // happy-path average (`test_average_price`) is verified via real
-    // `match_order` output in the price-level tests.
+    // happy-path (exact) average is covered by
+    // `test_average_price_exact_small_values_is_precise` below.
 
     /// No trades have been added, so executed quantity is zero and there is no
     /// average price to report: `average_price()` must return `Ok(None)`
@@ -167,22 +167,23 @@ mod tests {
                 assert!(!avg.is_nan(), "average price must not be NaN");
                 assert!(!avg.is_infinite(), "average price must not be Inf");
 
-                // Precision genuinely drifts: the f64 average differs from the
-                // exact integer average by exactly 1 here. Assert it is close,
-                // not equal.
-                let exact = EXACT_INT_AVG as f64;
-                let abs_err = (avg - exact).abs();
-                assert!(
-                    abs_err <= 2.0,
-                    "f64 average should be within tolerance of the exact \
-                     integer average; abs_err = {abs_err}"
-                );
-
                 // Document the observed drift: the exact integer average is
-                // 2^53 + 1, but f64 cannot represent it and returns 2^53.
+                // 2^53 + 1, but f64 has only a 53-bit mantissa and the division
+                // rounds it down to 2^53.
                 assert_eq!(
                     avg, 9_007_199_254_740_992.0_f64,
                     "observed f64 average rounds 2^53 + 1 down to 2^53"
+                );
+
+                // Show the loss in INTEGER space. Comparing `EXACT_INT_AVG as
+                // f64` would round the same way and hide the drift (abs_err
+                // would be 0), so convert the f64 result back to an integer and
+                // prove it is short of the exact integer average by exactly 1.
+                let avg_as_int = avg as u128;
+                assert_eq!(
+                    EXACT_INT_AVG - avg_as_int,
+                    1,
+                    "f64 average loses exactly 1 vs the exact integer average (2^53 + 1)"
                 );
             }
             other => panic!("expected Ok(Some(_)), got {other:?}"),
