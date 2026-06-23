@@ -84,6 +84,10 @@ pub enum PriceLevelError {
     },
 }
 impl Display for PriceLevelError {
+    // Error formatting is off the hot match path: keep it out of line and hint
+    // the optimizer that it is rarely reached.
+    #[cold]
+    #[inline(never)]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             PriceLevelError::ParseError { message } => write!(f, "{message}"),
@@ -112,6 +116,10 @@ impl Display for PriceLevelError {
 }
 
 impl Debug for PriceLevelError {
+    // Error formatting is off the hot match path: keep it out of line and hint
+    // the optimizer that it is rarely reached.
+    #[cold]
+    #[inline(never)]
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             PriceLevelError::ParseError { message } => write!(f, "{message}"),

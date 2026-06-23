@@ -93,6 +93,7 @@ impl OrderQueue {
 
     /// Search for an order with the given ID. O(1) operation.
     #[must_use]
+    #[inline]
     pub fn find(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         self.orders.get(&order_id).map(|o| o.value().1.clone())
     }
@@ -190,6 +191,7 @@ impl OrderQueue {
     /// Check if the queue is empty
     #[allow(dead_code)]
     #[must_use]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.orders.is_empty()
     }
@@ -201,6 +203,7 @@ impl OrderQueue {
     /// * `usize` - The total count of orders in the queue.
     ///
     #[must_use]
+    #[inline]
     pub fn len(&self) -> usize {
         self.orders.len()
     }
