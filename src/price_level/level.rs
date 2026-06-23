@@ -105,19 +105,38 @@ impl PriceLevel {
         self.price
     }
 
-    /// Get the visible quantity
+    /// Get the visible quantity, in quantity units.
+    ///
+    /// This is an **advisory, eventually-consistent** read: it loads a single
+    /// atomic counter, which under concurrent `add_order` / `match_order` /
+    /// `update_order` can briefly lead or lag the queue contents (it may not yet
+    /// include an order already in the queue, or still count one just removed).
+    /// The relative order of the counter update and the queue mutation is not a
+    /// guaranteed cross-method invariant — different paths order them
+    /// differently (e.g. iceberg replenishment in `match_order` adjusts the
+    /// counters before pushing the refreshed tranche). Treat any single counter
+    /// read as approximate; for a reading where the counters and the order list
+    /// are guaranteed mutually consistent, take a [`Self::snapshot`] and read
+    /// from it.
     #[must_use]
     pub fn visible_quantity(&self) -> u64 {
         self.visible_quantity.load(Ordering::Acquire)
     }
 
-    /// Get the hidden quantity
+    /// Get the hidden quantity, in quantity units.
+    ///
+    /// Advisory / eventually-consistent under concurrent mutation — see
+    /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
     #[must_use]
     pub fn hidden_quantity(&self) -> u64 {
         self.hidden_quantity.load(Ordering::Acquire)
     }
 
-    /// Get the total quantity (visible + hidden)
+    /// Get the total quantity (visible + hidden), in quantity units.
+    ///
+    /// Advisory / eventually-consistent under concurrent mutation (sums two
+    /// independent atomic counters) — see [`Self::visible_quantity`]; use
+    /// [`Self::snapshot`] for a consistent view.
     pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
         self.visible_quantity()
             .checked_add(self.hidden_quantity())
@@ -126,7 +145,10 @@ impl PriceLevel {
             })
     }
 
-    /// Get the number of orders
+    /// Get the number of orders.
+    ///
+    /// Advisory / eventually-consistent under concurrent mutation — see
+    /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
     #[must_use]
     pub fn order_count(&self) -> usize {
         self.order_count.load(Ordering::Acquire)
@@ -144,6 +166,16 @@ impl PriceLevel {
         let visible_qty = order.visible_quantity();
         let hidden_qty = order.hidden_quantity();
 
+        // On this path, publish to the queue FIRST, then bump the counters, so a
+        // concurrent reader of this add tends to see the order resting before it
+        // is counted rather than the reverse. This is a local ordering choice,
+        // not a cross-method guarantee (other paths, e.g. iceberg replenishment
+        // in `match_order`, adjust counters before pushing). The bare counters
+        // are advisory under concurrency; `snapshot()` is the mutually-consistent
+        // view (see `visible_quantity`).
+        let order_arc = Arc::new(order);
+        self.orders.push(order_arc.clone());
+
         // Update atomic counters
         self.visible_quantity
             .fetch_add(visible_qty, Ordering::AcqRel);
@@ -152,10 +184,6 @@ impl PriceLevel {
 
         // Update statistics
         self.stats.record_order_added();
-
-        // Add to order queue
-        let order_arc = Arc::new(order);
-        self.orders.push(order_arc.clone());
 
         order_arc
     }
