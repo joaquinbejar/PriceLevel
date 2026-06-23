@@ -344,10 +344,15 @@ impl Serialize for PriceLevelSnapshot {
         state.serialize_field("hidden_quantity", &self.hidden_quantity)?;
         state.serialize_field("order_count", &self.order_count)?;
 
-        let plain_orders: Vec<OrderType<()>> =
-            self.orders.iter().map(|arc_order| **arc_order).collect();
+        // Serialize the borrowed orders rather than deep-copying every
+        // `OrderType<()>` by value (issue #72). `Serialize for &T` forwards to
+        // `T`'s impl, so a sequence of `&OrderType<()>` produces byte-identical
+        // output to the previous `Vec<OrderType<()>>` — the checksum and
+        // round-trip are unchanged — while only copying `Arc` pointers, not the
+        // whole order payload.
+        let borrowed_orders: Vec<&OrderType<()>> = self.orders.iter().map(Arc::as_ref).collect();
 
-        state.serialize_field("orders", &plain_orders)?;
+        state.serialize_field("orders", &borrowed_orders)?;
         state.serialize_field("statistics", &self.statistics)?;
 
         state.end()
