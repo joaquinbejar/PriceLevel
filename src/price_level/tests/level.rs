@@ -1627,6 +1627,124 @@ mod tests {
     }
 
     #[test]
+    fn test_update_order_reduce_quantity_keeps_queue_position() {
+        let price_level = PriceLevel::new(10000);
+
+        // Add makers A (id 1) then B (id 2) at the same price. A is ahead in
+        // price-time priority.
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+
+        // Reduce A's quantity (decrease). A must keep its front position.
+        let result = price_level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: Id::from_u64(1),
+            new_quantity: Quantity::new(40),
+        });
+        assert!(result.is_ok());
+        let updated = result.unwrap();
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().visible_quantity(), 40);
+
+        // Match a quantity that only consumes the first resting order. A (id 1)
+        // must be hit before B (id 2).
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+        let execution_ts = TimestampMs::new(1_716_000_000_000);
+        let match_result =
+            price_level.match_order(40, Id::from_u64(900), execution_ts, &trade_id_generator);
+
+        let trades = match_result.trades().as_vec();
+        assert_eq!(trades.len(), 1);
+        // The first (and only) trade must name A as the maker: A kept its
+        // position despite the reduction.
+        assert_eq!(trades[0].maker_order_id(), Id::from_u64(1));
+        assert_eq!(trades[0].quantity(), Quantity::new(40));
+    }
+
+    #[test]
+    fn test_update_order_increase_quantity_demotes_to_back() {
+        let price_level = PriceLevel::new(10000);
+
+        // Add makers A (id 1) then B (id 2) at the same price.
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+
+        // Increase A's quantity (Standard orders support resizing). This must
+        // demote A to the back of the queue, behind B.
+        let result = price_level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: Id::from_u64(1),
+            new_quantity: Quantity::new(150),
+        });
+        assert!(result.is_ok());
+        let updated = result.unwrap();
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().visible_quantity(), 150);
+
+        // A subsequent match that only consumes the first resting order must
+        // now hit B (id 2) before the resized A (id 1).
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+        let execution_ts = TimestampMs::new(1_716_000_000_000);
+        let match_result =
+            price_level.match_order(100, Id::from_u64(900), execution_ts, &trade_id_generator);
+
+        let trades = match_result.trades().as_vec();
+        assert_eq!(trades.len(), 1);
+        // B is now at the front: it is matched before the resized A.
+        assert_eq!(trades[0].maker_order_id(), Id::from_u64(2));
+        assert_eq!(trades[0].quantity(), Quantity::new(100));
+    }
+
+    #[test]
+    fn test_update_order_quantity_counters_consistent() {
+        let price_level = PriceLevel::new(10000);
+
+        // Two standard makers plus an iceberg (so hidden_quantity is exercised).
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level.add_order(create_iceberg_order(3, 10000, 50, 200));
+
+        // Decrease (in place) on a standard order.
+        let _ = price_level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(1),
+                new_quantity: Quantity::new(30),
+            })
+            .expect("decrease update should succeed");
+
+        // Increase (demote) on a standard order.
+        let _ = price_level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(2),
+                new_quantity: Quantity::new(180),
+            })
+            .expect("increase update should succeed");
+
+        // Reduce the iceberg's visible part in place (hidden unchanged).
+        let _ = price_level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(3),
+                new_quantity: Quantity::new(20),
+            })
+            .expect("iceberg decrease update should succeed");
+
+        // Atomic counters must equal the sum over the live queue contents.
+        let snapshot = price_level.snapshot_orders();
+        let expected_visible: u64 = snapshot.iter().map(|o| o.visible_quantity()).sum();
+        let expected_hidden: u64 = snapshot.iter().map(|o| o.hidden_quantity()).sum();
+
+        assert_eq!(price_level.order_count(), snapshot.len());
+        assert_eq!(price_level.visible_quantity(), expected_visible);
+        assert_eq!(price_level.hidden_quantity(), expected_hidden);
+
+        // Spot-check the expected values: A=30, B=180, iceberg visible=20.
+        assert_eq!(expected_visible, 30 + 180 + 20);
+        // Iceberg hidden remains 200.
+        assert_eq!(expected_hidden, 200);
+        assert_eq!(price_level.order_count(), 3);
+    }
+
+    #[test]
     fn test_update_order_update_price_and_quantity() {
         let price_level = PriceLevel::new(10000);
 

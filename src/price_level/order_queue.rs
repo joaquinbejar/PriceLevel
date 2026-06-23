@@ -97,6 +97,30 @@ impl OrderQueue {
         self.orders.get(&order_id).map(|o| o.value().1.clone())
     }
 
+    /// Replace the stored order for `order_id` in place, keeping its existing
+    /// insertion sequence (and therefore its price-time / FIFO position).
+    ///
+    /// Returns the previous order if `order_id` was present, or `None` if it
+    /// was not (e.g. concurrently removed). The `index` entry `seq -> id`
+    /// stays valid because the sequence is unchanged, so only the `DashMap`
+    /// value is swapped.
+    ///
+    /// The whole swap happens under the `DashMap` per-entry lock, so a
+    /// concurrent [`OrderQueue::remove`] of the same id either observes the
+    /// old value and removes it, or observes the new value and removes that —
+    /// it never sees the entry mid-update. This closes the
+    /// absent-from-`orders` window that a remove-then-push sequence would open.
+    #[must_use]
+    pub(crate) fn update_in_place(
+        &self,
+        order_id: Id,
+        new_order: Arc<OrderType<()>>,
+    ) -> Option<Arc<OrderType<()>>> {
+        let mut entry = self.orders.get_mut(&order_id)?;
+        let (_seq, slot) = entry.value_mut();
+        Some(std::mem::replace(slot, new_order))
+    }
+
     /// Remove an order with the given ID.
     /// Returns the removed order if found. Cleans both the map and the index.
     #[must_use]

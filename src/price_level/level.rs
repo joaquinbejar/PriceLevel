@@ -389,7 +389,34 @@ impl PriceLevel {
 }
 
 impl PriceLevel {
-    /// Apply an update to an existing order at this price level
+    /// Apply an update to an existing order at this price level.
+    ///
+    /// # Quantity-update priority policy
+    ///
+    /// For [`OrderUpdate::UpdateQuantity`] (and the same-price branch of
+    /// [`OrderUpdate::UpdatePriceAndQuantity`]) this method follows the
+    /// conventional exchange price-time-priority rules:
+    ///
+    /// - **Decrease or unchanged total quantity** keeps the maker's queue
+    ///   position. The stored order is updated *in place* at its existing
+    ///   insertion sequence, so it is consumed at the same point in FIFO order
+    ///   as before. Reducing size never forfeits time priority.
+    /// - **Increase in total quantity** demotes the order to the *back* of the
+    ///   queue (it is assigned a fresh insertion sequence). Sizing an order up
+    ///   loses time priority, matching standard exchange behaviour.
+    ///
+    /// Total quantity is `visible + hidden`; the branch is chosen by comparing
+    /// the order's total before and after the update. Order types that cannot
+    /// be resized fall back to an unchanged order and therefore take the
+    /// in-place (position-preserving) branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if an
+    /// [`OrderUpdate::UpdatePrice`] / [`OrderUpdate::Replace`] would not move
+    /// the order to a different price level, or if computing an order's total
+    /// quantity overflows `u64`.
+    #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,
         update: OrderUpdate,
@@ -432,54 +459,100 @@ impl PriceLevel {
                 order_id,
                 new_quantity,
             } => {
-                // Find the order
-                if let Some(order) = self.orders.find(order_id) {
-                    // Get current quantities
-                    let old_visible = order.visible_quantity();
-                    let old_hidden = order.hidden_quantity();
+                // Find the order to read its current quantities.
+                let Some(order) = self.orders.find(order_id) else {
+                    return Ok(None); // Order not found
+                };
 
-                    // Remove the old order
-                    let old_order = match self.orders.remove(order_id) {
-                        Some(order) => order,
-                        None => return Ok(None), // Order not found, remove by other thread
-                    };
+                let old_visible = order.visible_quantity();
+                let old_hidden = order.hidden_quantity();
 
-                    // Create updated order with new quantity
-                    let new_order = old_order.with_reduced_quantity(new_quantity.as_u64());
+                // Build the updated order. `with_reduced_quantity` sets the
+                // (visible/main) quantity to exactly `new_quantity` for order
+                // types that support resizing; types it cannot resize fall
+                // back to an unchanged clone, so `new_total` simply equals
+                // `old_total` for them and we take the in-place branch.
+                let new_order = order.with_reduced_quantity(new_quantity.as_u64());
+                let new_visible = new_order.visible_quantity();
+                let new_hidden = new_order.hidden_quantity();
 
-                    // Calculate the new quantities
-                    let new_visible = new_order.visible_quantity();
-                    let new_hidden = new_order.hidden_quantity();
+                // Compare total quantity (visible + hidden) before/after to
+                // decide the priority policy. Use checked addition so a
+                // pathological overflow surfaces as an error rather than
+                // wrapping the comparison.
+                let old_total = old_visible.checked_add(old_hidden).ok_or_else(|| {
+                    PriceLevelError::InvalidOperation {
+                        message: "order total quantity overflow".to_string(),
+                    }
+                })?;
+                let new_total = new_visible.checked_add(new_hidden).ok_or_else(|| {
+                    PriceLevelError::InvalidOperation {
+                        message: "order total quantity overflow".to_string(),
+                    }
+                })?;
 
-                    // Update atomic counters
-                    if old_visible != new_visible {
-                        if new_visible > old_visible {
-                            self.visible_quantity
-                                .fetch_add(new_visible - old_visible, Ordering::AcqRel);
-                        } else {
-                            self.visible_quantity
-                                .fetch_sub(old_visible - new_visible, Ordering::AcqRel);
-                        }
+                let new_order_arc = Arc::new(new_order);
+
+                if new_total > old_total {
+                    // Quantity INCREASE: demote to the back of the queue
+                    // (mint a new sequence), losing time priority. This
+                    // retains the remove+push shape; its concurrency window is
+                    // the broader #81 work and is intentionally not addressed
+                    // here.
+                    if self.orders.remove(order_id).is_none() {
+                        return Ok(None); // Removed by another thread.
                     }
 
-                    if old_hidden != new_hidden {
-                        if new_hidden > old_hidden {
-                            self.hidden_quantity
-                                .fetch_add(new_hidden - old_hidden, Ordering::AcqRel);
-                        } else {
-                            self.hidden_quantity
-                                .fetch_sub(old_hidden - new_hidden, Ordering::AcqRel);
-                        }
+                    if new_visible >= old_visible {
+                        self.visible_quantity
+                            .fetch_add(new_visible - old_visible, Ordering::AcqRel);
+                    } else {
+                        self.visible_quantity
+                            .fetch_sub(old_visible - new_visible, Ordering::AcqRel);
+                    }
+                    if new_hidden >= old_hidden {
+                        self.hidden_quantity
+                            .fetch_add(new_hidden - old_hidden, Ordering::AcqRel);
+                    } else {
+                        self.hidden_quantity
+                            .fetch_sub(old_hidden - new_hidden, Ordering::AcqRel);
                     }
 
-                    // Add the updated order back to the queue
-                    let new_order_arc = Arc::new(new_order);
                     self.orders.push(new_order_arc.clone());
+                    Ok(Some(new_order_arc))
+                } else {
+                    // Quantity DECREASE or unchanged total: keep the maker's
+                    // queue position by swapping the stored order in place at
+                    // its existing insertion sequence. The swap is done under
+                    // the DashMap per-entry lock, so the counters are adjusted
+                    // only after we confirm the order is still present.
+                    if self
+                        .orders
+                        .update_in_place(order_id, new_order_arc.clone())
+                        .is_none()
+                    {
+                        return Ok(None); // Removed by another thread.
+                    }
 
-                    return Ok(Some(new_order_arc));
+                    // Totals can only shrink or stay equal here, so the
+                    // per-component deltas are non-negative subtractions.
+                    if old_visible > new_visible {
+                        self.visible_quantity
+                            .fetch_sub(old_visible - new_visible, Ordering::AcqRel);
+                    } else if new_visible > old_visible {
+                        self.visible_quantity
+                            .fetch_add(new_visible - old_visible, Ordering::AcqRel);
+                    }
+                    if old_hidden > new_hidden {
+                        self.hidden_quantity
+                            .fetch_sub(old_hidden - new_hidden, Ordering::AcqRel);
+                    } else if new_hidden > old_hidden {
+                        self.hidden_quantity
+                            .fetch_add(new_hidden - old_hidden, Ordering::AcqRel);
+                    }
+
+                    Ok(Some(new_order_arc))
                 }
-
-                Ok(None) // Order not found
             }
 
             OrderUpdate::UpdatePriceAndQuantity {
