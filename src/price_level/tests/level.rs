@@ -100,6 +100,116 @@ mod tests {
     }
 
     #[test]
+    fn test_price_level_snapshot_roundtrip_preserves_statistics() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // Rest several makers so we accumulate non-trivial waiting-time and
+        // arrival aggregates, then partially match them to drive every counter.
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level.add_order(create_standard_order(3, 10000, 100));
+
+        // Execution timestamp is comfortably after the order arrival timestamps
+        // (TIMESTAMP_COUNTER starts at 1_616_823_000_000), so waiting times are
+        // positive and deterministic.
+        let execution_ts = TimestampMs::new(1_716_000_000_000);
+
+        // First match: fully consumes maker 1 and partially maker 2.
+        let _ = price_level.match_order(150, Id::from_u64(900), execution_ts, &trade_id_generator);
+        // Second match: consumes the rest of maker 2 and part of maker 3.
+        let _ = price_level.match_order(60, Id::from_u64(901), execution_ts, &trade_id_generator);
+
+        let stats = price_level.stats();
+        // Sanity: stats are genuinely non-zero before we snapshot.
+        assert!(stats.orders_added() >= 3);
+        assert!(stats.orders_executed() > 0);
+        assert!(stats.quantity_executed() > 0);
+        assert!(stats.value_executed() > 0);
+        assert!(stats.average_waiting_time().is_some());
+
+        let json = price_level
+            .snapshot_to_json()
+            .expect("Failed to serialize snapshot to JSON");
+
+        let restored = PriceLevel::from_snapshot_json(&json)
+            .expect("Failed to restore price level from snapshot JSON");
+
+        let restored_stats = restored.stats();
+
+        // Every persisted statistic must survive the round-trip identically.
+        assert_eq!(restored_stats.orders_added(), stats.orders_added());
+        assert_eq!(restored_stats.orders_removed(), stats.orders_removed());
+        assert_eq!(restored_stats.orders_executed(), stats.orders_executed());
+        assert_eq!(
+            restored_stats.quantity_executed(),
+            stats.quantity_executed()
+        );
+        assert_eq!(restored_stats.value_executed(), stats.value_executed());
+        assert_eq!(
+            restored_stats.average_waiting_time(),
+            stats.average_waiting_time()
+        );
+        assert_eq!(
+            restored_stats.average_execution_price(),
+            stats.average_execution_price()
+        );
+        // The raw timestamp / waiting-time aggregates round-trip exactly too.
+        assert_eq!(
+            restored_stats.last_execution_time.load(Ordering::Relaxed),
+            stats.last_execution_time.load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            restored_stats.first_arrival_time.load(Ordering::Relaxed),
+            stats.first_arrival_time.load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            restored_stats.sum_waiting_time.load(Ordering::Relaxed),
+            stats.sum_waiting_time.load(Ordering::Relaxed)
+        );
+    }
+
+    #[test]
+    fn test_price_level_from_snapshot_json_v1_package_rejected() {
+        // Build a current (v2) package, then downgrade its `version` to 1 to
+        // emulate a snapshot written by a pre-#63 release. Restoration must fail
+        // with a clear version mismatch (InvalidOperation), not a checksum error
+        // and not a panic.
+        let price_level = PriceLevel::new(10000);
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let json = price_level
+            .snapshot_to_json()
+            .expect("Failed to serialize snapshot to JSON");
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(&json).expect("JSON parsing failed");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "version".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(1u32)),
+            );
+        }
+        let downgraded_json = serde_json::to_string(&value).expect("JSON serialization failed");
+
+        let err = PriceLevel::from_snapshot_json(&downgraded_json)
+            .expect_err("Restoration should reject a v1 package");
+
+        match err {
+            PriceLevelError::InvalidOperation { message } => {
+                assert!(
+                    message.contains("Unsupported snapshot version"),
+                    "unexpected message: {message}"
+                );
+                assert!(message.contains('1'));
+                assert!(message.contains('2'));
+            }
+            other => panic!("expected InvalidOperation version mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_price_level_from_snapshot_preserves_order_positions() {
         let price_level = PriceLevel::new(15000);
         price_level.add_order(create_standard_order(1, 15000, 100));

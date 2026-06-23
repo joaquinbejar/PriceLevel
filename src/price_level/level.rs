@@ -38,6 +38,17 @@ pub struct PriceLevel {
 
 impl PriceLevel {
     /// Reconstructs a price level directly from a snapshot.
+    ///
+    /// The rebuilt level carries the per-level statistics persisted in the
+    /// snapshot (orders added / removed / executed, quantity / value executed,
+    /// waiting-time aggregates, and execution / arrival timestamps) rather than
+    /// a fresh, zeroed set — so a restored level resumes with its recorded
+    /// history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if recomputing the snapshot
+    /// aggregates overflows `u64`.
     pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
@@ -45,6 +56,8 @@ impl PriceLevel {
         let visible_quantity = snapshot.visible_quantity();
         let hidden_quantity = snapshot.hidden_quantity();
         let price = snapshot.price();
+        // Clone the persisted statistics before consuming the snapshot's orders.
+        let stats = (*snapshot.statistics()).clone();
         let queue = OrderQueue::from(snapshot.into_orders());
 
         Ok(Self {
@@ -53,7 +66,7 @@ impl PriceLevel {
             hidden_quantity: AtomicU64::new(hidden_quantity),
             order_count: AtomicUsize::new(order_count),
             orders: queue,
-            stats: Arc::new(PriceLevelStatistics::new()),
+            stats: Arc::new(stats),
         })
     }
 
@@ -349,12 +362,18 @@ impl PriceLevel {
             }
         }
 
-        PriceLevelSnapshot::from_raw_parts(
+        // Persist the per-level statistics alongside the aggregates so the
+        // snapshot round-trip reproduces the recorded execution history. The
+        // clone snapshots the eight atomic counters (best-effort, like every
+        // other read path); statistics are independent counters, not part of
+        // the queue / counter consistency invariant.
+        PriceLevelSnapshot::from_raw_parts_with_stats(
             self.price,
             visible_quantity,
             hidden_quantity,
             order_count,
             orders,
+            (*self.stats).clone(),
         )
     }
 
@@ -593,6 +612,8 @@ impl From<&PriceLevelSnapshot> for PriceLevel {
         let visible_quantity = snapshot.visible_quantity();
         let hidden_quantity = snapshot.hidden_quantity();
         let price = snapshot.price();
+        // Preserve the persisted statistics instead of resetting them.
+        let stats = (*snapshot.statistics()).clone();
         let queue = OrderQueue::from(snapshot.into_orders());
 
         Self {
@@ -601,7 +622,7 @@ impl From<&PriceLevelSnapshot> for PriceLevel {
             hidden_quantity: AtomicU64::new(hidden_quantity),
             order_count: AtomicUsize::new(order_count),
             orders: queue,
-            stats: Arc::new(PriceLevelStatistics::new()),
+            stats: Arc::new(stats),
         }
     }
 }

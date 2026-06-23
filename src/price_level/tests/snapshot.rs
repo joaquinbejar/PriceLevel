@@ -8,6 +8,7 @@ mod tests {
     use serde_json::Value;
     use std::str::FromStr;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
@@ -96,6 +97,110 @@ mod tests {
             .validate()
             .expect_err("Checksum mismatch expected");
         assert!(matches!(err, PriceLevelError::ChecksumMismatch { .. }));
+    }
+
+    #[test]
+    fn test_snapshot_package_roundtrip_preserves_statistics() {
+        use crate::price_level::PriceLevelStatistics;
+
+        // Build statistics with distinct, non-zero values in every counter so a
+        // dropped or mis-mapped field fails the assertions below.
+        let stats = PriceLevelStatistics::new();
+        stats.record_order_added();
+        stats.record_order_added();
+        stats.record_order_removed();
+        // execution_timestamp (5_000) is after the maker arrival (1_000), so the
+        // recorded waiting time is positive and deterministic.
+        stats
+            .record_execution(7, 1000, 1000, 5000)
+            .expect("record_execution should succeed");
+        stats
+            .record_execution(3, 1000, 2000, 5000)
+            .expect("record_execution should succeed");
+
+        let snapshot = PriceLevelSnapshot::with_orders_and_stats(42, create_sample_orders(), stats)
+            .expect("Failed to create snapshot with stats");
+
+        let original = snapshot.statistics();
+        let original_orders_added = original.orders_added();
+        let original_orders_removed = original.orders_removed();
+        let original_orders_executed = original.orders_executed();
+        let original_quantity = original.quantity_executed();
+        let original_value = original.value_executed();
+        let original_last = original.last_execution_time.load(Ordering::Relaxed);
+        let original_first = original.first_arrival_time.load(Ordering::Relaxed);
+        let original_waiting = original.sum_waiting_time.load(Ordering::Relaxed);
+
+        let package = PriceLevelSnapshotPackage::new(snapshot).expect("Failed to create package");
+        assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
+
+        let json = package.to_json().expect("Failed to serialize package");
+        let restored_package =
+            PriceLevelSnapshotPackage::from_json(&json).expect("Failed to deserialize package");
+        let restored = restored_package
+            .into_snapshot()
+            .expect("Snapshot extraction failed (checksum should validate)");
+
+        let restored_stats = restored.statistics();
+        assert_eq!(restored_stats.orders_added(), original_orders_added);
+        assert_eq!(restored_stats.orders_removed(), original_orders_removed);
+        assert_eq!(restored_stats.orders_executed(), original_orders_executed);
+        assert_eq!(restored_stats.quantity_executed(), original_quantity);
+        assert_eq!(restored_stats.value_executed(), original_value);
+        assert_eq!(
+            restored_stats.last_execution_time.load(Ordering::Relaxed),
+            original_last
+        );
+        assert_eq!(
+            restored_stats.first_arrival_time.load(Ordering::Relaxed),
+            original_first
+        );
+        assert_eq!(
+            restored_stats.sum_waiting_time.load(Ordering::Relaxed),
+            original_waiting
+        );
+    }
+
+    #[test]
+    fn test_snapshot_package_v1_version_rejected() {
+        // A package carrying the previous format version must be rejected by
+        // `validate()` with a version mismatch (InvalidOperation) rather than a
+        // confusing checksum error, and never a panic.
+        let snapshot = PriceLevelSnapshot::with_orders(99, create_sample_orders())
+            .expect("Failed to create snapshot with orders");
+        let package = PriceLevelSnapshotPackage::new(snapshot).expect("Failed to create package");
+
+        let json = package.to_json().expect("Failed to serialize package");
+        let mut value: Value = serde_json::from_str(&json).expect("JSON parsing failed");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("version".to_string(), Value::Number(1u32.into()));
+        }
+        let v1_json = serde_json::to_string(&value).expect("JSON serialization failed");
+
+        let v1_package = PriceLevelSnapshotPackage::from_json(&v1_json)
+            .expect("Deserialization should still succeed");
+        assert_eq!(v1_package.version(), 1);
+
+        let err = v1_package
+            .validate()
+            .expect_err("v1 package should be rejected");
+        match err {
+            PriceLevelError::InvalidOperation { message } => {
+                assert!(
+                    message.contains("Unsupported snapshot version"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected InvalidOperation version mismatch, got {other:?}"),
+        }
+
+        // `into_snapshot` (used by the restore path) must reject it too.
+        let v1_package_again = PriceLevelSnapshotPackage::from_json(&v1_json)
+            .expect("Deserialization should still succeed");
+        let err = v1_package_again
+            .into_snapshot()
+            .expect_err("v1 package should be rejected on restore");
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
     }
 
     #[test]

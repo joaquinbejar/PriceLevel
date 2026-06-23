@@ -1,5 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::OrderType;
+use crate::price_level::statistics::PriceLevelStatistics;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,8 +10,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 /// A snapshot of a price level in the order book. This struct provides a summary of the state of a specific price level
-/// at a given point in time, including the price, visible and hidden quantities, order count, and a vector of the orders
-/// at that level.
+/// at a given point in time, including the price, visible and hidden quantities, order count, the orders
+/// at that level, and the per-level execution statistics.
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
     /// The price of this level.
@@ -23,6 +24,14 @@ pub struct PriceLevelSnapshot {
     order_count: usize,
     /// Orders at this level.
     orders: Vec<Arc<OrderType<()>>>,
+    /// Per-level execution statistics captured at snapshot time.
+    ///
+    /// Carries the eight counters (orders added / removed / executed, quantity
+    /// and value executed, last-execution and first-arrival timestamps, and the
+    /// waiting-time sum) so a restored level resumes with its recorded history
+    /// rather than a zeroed set. Persisted via [`PriceLevelStatistics`]'s own
+    /// serde shape and covered by the package SHA-256 checksum.
+    statistics: PriceLevelStatistics,
 }
 
 impl PriceLevelSnapshot {
@@ -35,13 +44,37 @@ impl PriceLevelSnapshot {
             hidden_quantity: 0,
             order_count: 0,
             orders: Vec::new(),
+            statistics: PriceLevelStatistics::new(),
         }
     }
 
     /// Creates a snapshot populated with orders, computing aggregates automatically.
+    ///
+    /// The statistics are initialized empty; use [`Self::with_orders_and_stats`]
+    /// to carry recorded execution statistics into the snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
+    /// visible / hidden quantities overflows `u64`.
     pub fn with_orders(
         price: u128,
         orders: Vec<Arc<OrderType<()>>>,
+    ) -> Result<Self, PriceLevelError> {
+        Self::with_orders_and_stats(price, orders, PriceLevelStatistics::new())
+    }
+
+    /// Creates a snapshot populated with orders and statistics, computing
+    /// aggregates automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
+    /// visible / hidden quantities overflows `u64`.
+    pub fn with_orders_and_stats(
+        price: u128,
+        orders: Vec<Arc<OrderType<()>>>,
+        statistics: PriceLevelStatistics,
     ) -> Result<Self, PriceLevelError> {
         let mut snapshot = Self {
             price,
@@ -49,6 +82,7 @@ impl PriceLevelSnapshot {
             hidden_quantity: 0,
             order_count: 0,
             orders,
+            statistics,
         };
         snapshot.refresh_aggregates()?;
         Ok(snapshot)
@@ -78,6 +112,12 @@ impl PriceLevelSnapshot {
         self.order_count
     }
 
+    /// Returns a reference to the per-level statistics captured in this snapshot.
+    #[must_use]
+    pub fn statistics(&self) -> &PriceLevelStatistics {
+        &self.statistics
+    }
+
     /// Returns a reference to the orders in this snapshot.
     #[must_use]
     pub fn orders(&self) -> &[Arc<OrderType<()>>] {
@@ -90,10 +130,13 @@ impl PriceLevelSnapshot {
         self.orders
     }
 
-    /// Constructs a snapshot with pre-computed aggregates.
+    /// Constructs a snapshot with pre-computed aggregates and empty statistics.
     ///
     /// This is intended for internal crate use where the caller has already
-    /// computed the aggregate values (e.g., from atomic counters).
+    /// computed the aggregate values (e.g., from atomic counters) and does not
+    /// carry execution statistics. Use [`Self::from_raw_parts_with_stats`] to
+    /// persist recorded statistics alongside the aggregates.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn from_raw_parts(
         price: u128,
@@ -102,12 +145,37 @@ impl PriceLevelSnapshot {
         order_count: usize,
         orders: Vec<Arc<OrderType<()>>>,
     ) -> Self {
+        Self::from_raw_parts_with_stats(
+            price,
+            visible_quantity,
+            hidden_quantity,
+            order_count,
+            orders,
+            PriceLevelStatistics::new(),
+        )
+    }
+
+    /// Constructs a snapshot with pre-computed aggregates and recorded statistics.
+    ///
+    /// This is intended for internal crate use where the caller has already
+    /// computed the aggregate values (e.g., from atomic counters) and wants to
+    /// preserve the level's execution statistics through the snapshot.
+    #[must_use]
+    pub(crate) fn from_raw_parts_with_stats(
+        price: u128,
+        visible_quantity: u64,
+        hidden_quantity: u64,
+        order_count: usize,
+        orders: Vec<Arc<OrderType<()>>>,
+        statistics: PriceLevelStatistics,
+    ) -> Self {
         Self {
             price,
             visible_quantity,
             hidden_quantity,
             order_count,
             orders,
+            statistics,
         }
     }
 
@@ -154,7 +222,11 @@ impl PriceLevelSnapshot {
 }
 
 /// Format version for checksum-enabled price level snapshots.
-pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 (issue #63) persists per-level [`PriceLevelStatistics`] inside the
+/// snapshot. Version 1 packages carried no statistics and are rejected by
+/// [`PriceLevelSnapshotPackage::validate`] with a version mismatch.
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 
 /// Serialized representation of a price level snapshot including checksum validation metadata.
 ///
@@ -265,7 +337,7 @@ impl Serialize for PriceLevelSnapshot {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("PriceLevelSnapshot", 5)?;
+        let mut state = serializer.serialize_struct("PriceLevelSnapshot", 6)?;
 
         state.serialize_field("price", &self.price)?;
         state.serialize_field("visible_quantity", &self.visible_quantity)?;
@@ -276,6 +348,7 @@ impl Serialize for PriceLevelSnapshot {
             self.orders.iter().map(|arc_order| **arc_order).collect();
 
         state.serialize_field("orders", &plain_orders)?;
+        state.serialize_field("statistics", &self.statistics)?;
 
         state.end()
     }
@@ -292,6 +365,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
             HiddenQuantity,
             OrderCount,
             Orders,
+            Statistics,
         }
 
         impl<'de> Deserialize<'de> for Field {
@@ -305,7 +379,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                     type Value = Field;
 
                     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                        formatter.write_str("`price`, `visible_quantity`, `hidden_quantity`, `order_count`, or `orders`")
+                        formatter.write_str("`price`, `visible_quantity`, `hidden_quantity`, `order_count`, `orders`, or `statistics`")
                     }
 
                     fn visit_str<E>(self, value: &str) -> Result<Field, E>
@@ -318,6 +392,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             "hidden_quantity" => Ok(Field::HiddenQuantity),
                             "order_count" => Ok(Field::OrderCount),
                             "orders" => Ok(Field::Orders),
+                            "statistics" => Ok(Field::Statistics),
                             _ => Err(de::Error::unknown_field(
                                 value,
                                 &[
@@ -326,6 +401,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                                     "hidden_quantity",
                                     "order_count",
                                     "orders",
+                                    "statistics",
                                 ],
                             )),
                         }
@@ -354,6 +430,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                 let mut hidden_quantity = None;
                 let mut order_count = None;
                 let mut orders = None;
+                let mut statistics = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -388,6 +465,12 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             let plain_orders: Vec<OrderType<()>> = map.next_value()?;
                             orders = Some(plain_orders.into_iter().map(Arc::new).collect());
                         }
+                        Field::Statistics => {
+                            if statistics.is_some() {
+                                return Err(de::Error::duplicate_field("statistics"));
+                            }
+                            statistics = Some(map.next_value()?);
+                        }
                     }
                 }
 
@@ -399,6 +482,13 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                 let order_count =
                     order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
                 let orders = orders.unwrap_or_default();
+                // `statistics` is optional on deserialize so a payload that omits
+                // it (e.g. a hand-built fixture) restores with empty statistics
+                // rather than failing — i.e. tolerant of a *missing* field, not
+                // forward-compatible with future *added* fields (this visitor
+                // still rejects unknown fields). A genuine v1 *package* is
+                // rejected up-front by `validate()`'s version check regardless.
+                let statistics = statistics.unwrap_or_default();
 
                 Ok(PriceLevelSnapshot {
                     price,
@@ -406,6 +496,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                     hidden_quantity,
                     order_count,
                     orders,
+                    statistics,
                 })
             }
         }
@@ -416,6 +507,7 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
             "hidden_quantity",
             "order_count",
             "orders",
+            "statistics",
         ];
         deserializer.deserialize_struct("PriceLevelSnapshot", FIELDS, PriceLevelSnapshotVisitor)
     }
@@ -497,13 +589,16 @@ impl FromStr for PriceLevelSnapshot {
         let order_count_str = get_field("order_count")?;
         let order_count = parse_usize("order_count", order_count_str)?;
 
-        // Create a new snapshot - note that orders cannot be serialized/deserialized in this simple format
+        // Create a new snapshot - note that orders and statistics cannot be
+        // serialized/deserialized in this simple, human-readable format. Use the
+        // JSON snapshot package for a lossless round-trip.
         Ok(PriceLevelSnapshot {
             price,
             visible_quantity,
             hidden_quantity,
             order_count,
             orders: Vec::new(),
+            statistics: PriceLevelStatistics::new(),
         })
     }
 }

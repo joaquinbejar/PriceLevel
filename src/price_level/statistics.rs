@@ -259,6 +259,30 @@ impl Default for PriceLevelStatistics {
     }
 }
 
+impl Clone for PriceLevelStatistics {
+    /// Clones the statistics by snapshotting each atomic counter.
+    ///
+    /// Each counter is read with [`Ordering::Relaxed`]: the clone is a
+    /// best-effort point-in-time copy of independent counters (the same
+    /// contract as the serde path and `snapshot()`), not a globally consistent
+    /// transactional read across all eight fields. This is the representation
+    /// persisted in [`PriceLevelSnapshot`](crate::price_level::PriceLevelSnapshot),
+    /// so a restored level carries the recorded statistics rather than a fresh,
+    /// zeroed set.
+    fn clone(&self) -> Self {
+        Self {
+            orders_added: AtomicUsize::new(self.orders_added.load(Ordering::Relaxed)),
+            orders_removed: AtomicUsize::new(self.orders_removed.load(Ordering::Relaxed)),
+            orders_executed: AtomicUsize::new(self.orders_executed.load(Ordering::Relaxed)),
+            quantity_executed: AtomicU64::new(self.quantity_executed.load(Ordering::Relaxed)),
+            value_executed: AtomicU64::new(self.value_executed.load(Ordering::Relaxed)),
+            last_execution_time: AtomicU64::new(self.last_execution_time.load(Ordering::Relaxed)),
+            first_arrival_time: AtomicU64::new(self.first_arrival_time.load(Ordering::Relaxed)),
+            sum_waiting_time: AtomicU64::new(self.sum_waiting_time.load(Ordering::Relaxed)),
+        }
+    }
+}
+
 impl fmt::Display for PriceLevelStatistics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
