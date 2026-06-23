@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_total_value() {
         let transaction = create_test_trade();
-        assert_eq!(transaction.total_value(), 50000);
+        assert_eq!(transaction.total_value().unwrap(), 50000);
 
         // Test with larger values
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
@@ -154,7 +154,26 @@ mod tests {
             Side::Buy,
             TimestampMs::new(1616823000000),
         );
-        assert_eq!(large_trade.total_value(), 97406784);
+        assert_eq!(large_trade.total_value().unwrap(), 97406784);
+    }
+
+    #[test]
+    fn test_total_value_overflow_returns_invalid_operation() {
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        // price * quantity overflows u128 -> checked_mul yields InvalidOperation.
+        let trade = Trade::with_timestamp(
+            Id::from_uuid(uuid),
+            Id::from_u64(1),
+            Id::from_u64(2),
+            Price::new(u128::MAX),
+            Quantity::new(2),
+            Side::Buy,
+            TimestampMs::new(1616823000000),
+        );
+        assert!(matches!(
+            trade.total_value(),
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
+        ));
     }
 
     #[test]
@@ -447,7 +466,7 @@ mod transaction_serialization_tests {
     #[test]
     fn test_total_value_calculation() {
         let transaction = create_test_trade();
-        assert_eq!(transaction.total_value(), 50000);
+        assert_eq!(transaction.total_value().unwrap(), 50000);
 
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let large_trade = Trade::with_timestamp(
@@ -459,6 +478,6 @@ mod transaction_serialization_tests {
             Side::Buy,
             TimestampMs::new(1616823000000),
         );
-        assert_eq!(large_trade.total_value(), 827115);
+        assert_eq!(large_trade.total_value().unwrap(), 827115);
     }
 }

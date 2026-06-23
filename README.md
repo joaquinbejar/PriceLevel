@@ -380,6 +380,16 @@ checksum error). Re-take any persisted snapshots with this release. No code
 changes are required at the call sites: `snapshot_to_json()` /
 `from_snapshot_json()` keep the same signatures.
 
+### Migration Guide (`Trade::total_value` is now checked)
+
+[`Trade::total_value`](crate::execution::Trade::total_value) now returns
+`Result<u128, PriceLevelError>` instead of `u128`. It computes
+`price * quantity` with `checked_mul` and returns
+[`PriceLevelError::InvalidOperation`] on overflow, matching the checked
+arithmetic of [`MatchResult::executed_value`](crate::execution::MatchResult::executed_value),
+which previously used an unchecked `*` that could panic in debug or wrap in
+release. Callers must handle the `Result` (e.g. `trade.total_value()?`).
+
 
  ## Setup Instructions
 
