@@ -1375,6 +1375,494 @@ mod tests {
         assert_eq!(price_level.order_count(), 0);
     }
 
+    // --------------------------------- ORDER-TYPE MATRIX (#78) ---------------------------------
+    //
+    // The matching rules require every order type to ship unit tests covering:
+    // empty level, partial fill, full fill, and the type-specific branch.
+    // Issue #77 added the {standard, iceberg, reserve} matrix and the
+    // `assert_match_result_consistent` helper. This block fills the remaining
+    // gaps for PostOnly / TrailingStop / PeggedOrder / MarketToLimit, plus the
+    // `incoming_quantity == 0` boundary.
+    //
+    // IMPORTANT — current engine behavior. These four order types fall through
+    // the `_ =>` arm of `OrderType::match_against` (orders/order_type.rs) and
+    // are matched as plain standard makers: their visible quantity is consumed
+    // FIFO exactly like a `Standard` order. The genuine taker-side semantics
+    // (post-only rejection, market-to-limit conversion, pegged / trailing-stop
+    // reprice) are NOT implemented in the engine yet — that is the separate,
+    // gated issue #65. The "type-branch" tests below therefore PIN the current
+    // pass-through behavior; they deliberately do NOT assert post-only /
+    // conversion semantics the engine does not have. When #65 lands, the
+    // type-branch tests are the ones that must be revisited.
+    //
+    // Maker sides (taken from each helper, which differ): PostOnly = Buy,
+    // TrailingStop = Sell, PeggedOrder = Buy, MarketToLimit = Buy. The correct
+    // side is threaded into `assert_match_result_consistent` so the trade
+    // `taker_side` cross-check is the opposite of the KNOWN resting side.
+
+    // ----- PostOnly (resting maker, side = Buy) -----
+
+    #[test]
+    fn test_match_post_only_partial_fill_taker_complete() {
+        // Taker (60) smaller than the resting PostOnly maker (100): taker is
+        // fully filled, maker is partially consumed and keeps resting.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_post_only_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            60,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.order_count(), 1);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_post_only_full_fill_maker_consumed() {
+        // Taker exactly equals the resting PostOnly maker (100): the maker is
+        // fully consumed and removed; the taker is complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_post_only_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_post_only_type_branch_pins_passthrough() {
+        // Type-specific branch: a PostOnly maker would, under genuine post-only
+        // semantics (pending #65), reject the resting/taker interaction
+        // differently. Today it falls through the `_ =>` arm of
+        // `match_against` and fills exactly like a standard maker. This test
+        // PINS that pass-through: an over-large taker drains the maker and
+        // leaves a positive remainder, identical to a `Standard` maker.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_post_only_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            150,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        // Pass-through: maker fully consumed, 50 left over on the taker.
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(100));
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_post_only_empty_level_no_trades() {
+        // Empty level: matching against a PostOnly-free, empty `PriceLevel`
+        // yields no trades, the full incoming quantity remains, and the result
+        // is not complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        let result = price_level.match_order(
+            75,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 75);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+    }
+
+    // ----- TrailingStop (resting maker, side = Sell) -----
+
+    #[test]
+    fn test_match_trailing_stop_partial_fill_taker_complete() {
+        // Taker (40) smaller than the resting TrailingStop maker (100): taker
+        // fully filled, maker partially consumed and still resting.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_trailing_stop_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            40,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(price_level.visible_quantity(), 60);
+        assert_eq!(price_level.order_count(), 1);
+        // TrailingStop helper rests on Side::Sell.
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_match_trailing_stop_full_fill_maker_consumed() {
+        // Taker exactly equals the resting TrailingStop maker (100): maker
+        // fully consumed and removed; taker complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_trailing_stop_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_match_trailing_stop_type_branch_pins_passthrough() {
+        // Type-specific branch: genuine trailing-stop reprice semantics are
+        // pending #65. Today a TrailingStop maker falls through the `_ =>` arm
+        // of `match_against` and fills like a standard maker with no reprice.
+        // PIN that pass-through: an over-large taker drains the maker and
+        // leaves a positive remainder.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_trailing_stop_order(1, 10000, 80));
+
+        let result = price_level.match_order(
+            120,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(80));
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_match_trailing_stop_empty_level_no_trades() {
+        // Empty level: no resting orders -> no trades, full remainder, not
+        // complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        let result = price_level.match_order(
+            55,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 55);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+    }
+
+    // ----- PeggedOrder (resting maker, side = Buy) -----
+
+    #[test]
+    fn test_match_pegged_partial_fill_taker_complete() {
+        // Taker (50) smaller than the resting PeggedOrder maker (100): taker
+        // fully filled, maker partially consumed and still resting.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_pegged_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(price_level.visible_quantity(), 50);
+        assert_eq!(price_level.order_count(), 1);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_pegged_full_fill_maker_consumed() {
+        // Taker exactly equals the resting PeggedOrder maker (100): maker fully
+        // consumed and removed; taker complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_pegged_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_pegged_type_branch_pins_passthrough() {
+        // Type-specific branch: genuine pegged reprice semantics (peg to a
+        // reference price) are pending #65. Today a PeggedOrder maker falls
+        // through the `_ =>` arm and fills like a standard maker at the level
+        // price with no reprice. PIN that pass-through with an over-large taker.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_pegged_order(1, 10000, 90));
+
+        let result = price_level.match_order(
+            130,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(90));
+        // Pass-through fills at the level price, NOT a pegged reference price.
+        assert_eq!(result.trades().as_vec()[0].price(), Price::new(10000));
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_pegged_empty_level_no_trades() {
+        // Empty level: no resting orders -> no trades, full remainder, not
+        // complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        let result = price_level.match_order(
+            33,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 33);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+    }
+
+    // ----- MarketToLimit (resting maker, side = Buy) -----
+
+    #[test]
+    fn test_match_market_to_limit_partial_fill_taker_complete() {
+        // Taker (70) smaller than the resting MarketToLimit maker (100): taker
+        // fully filled, maker partially consumed and still resting.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_market_to_limit_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            70,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(price_level.visible_quantity(), 30);
+        assert_eq!(price_level.order_count(), 1);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_market_to_limit_full_fill_maker_consumed() {
+        // Taker exactly equals the resting MarketToLimit maker (100): maker
+        // fully consumed and removed; taker complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_market_to_limit_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_market_to_limit_type_branch_pins_passthrough() {
+        // Type-specific branch: genuine market-to-limit conversion semantics
+        // (an unfilled remainder converting to a resting limit) are pending
+        // #65. Today a MarketToLimit maker falls through the `_ =>` arm and
+        // fills like a standard maker; the taker's unfilled remainder is simply
+        // reported as `remaining_quantity`, NOT converted. PIN that
+        // pass-through with an over-large taker.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_market_to_limit_order(1, 10000, 60));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(60));
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_market_to_limit_empty_level_no_trades() {
+        // Empty level: no resting orders -> no trades, full remainder, not
+        // complete.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        let result = price_level.match_order(
+            90,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 90);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+    }
+
+    // ----- incoming_quantity == 0 boundary -----
+
+    #[test]
+    fn test_match_order_zero_incoming_quantity_no_trades_complete() {
+        // Boundary: matching an incoming quantity of 0 against a populated
+        // level. Observed engine behavior (level.rs `while remaining > 0`): the
+        // sweep loop never runs, so no maker is touched, no trade is emitted,
+        // `remaining_quantity()` stays 0 and `finalize(0)` therefore reports
+        // `is_complete() == true` (a vacuous full fill: nothing to fill, so the
+        // taker is trivially "complete"). The resting depth is left intact.
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_post_only_order(2, 10000, 50));
+
+        let result = price_level.match_order(
+            0,
+            Id::from_u64(999),
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        // No trades produced.
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        // remaining == 0 and is_complete agree (vacuously complete).
+        assert_eq!(result.remaining_quantity(), 0);
+        assert!(result.is_complete());
+        // executed_quantity is 0 and matches the (empty) trade sum.
+        assert!(matches!(result.executed_quantity(), Ok(0)));
+        // Resting depth untouched: both makers still rest at full size.
+        assert_eq!(price_level.order_count(), 2);
+        assert_eq!(price_level.visible_quantity(), 150);
+    }
+
     #[test]
     fn test_match_fill_or_kill_order() {
         let price_level = PriceLevel::new(10000);
