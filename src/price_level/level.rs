@@ -4,7 +4,7 @@ use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, TimeInForce};
-use crate::price_level::order_queue::OrderQueue;
+use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
@@ -417,15 +417,28 @@ impl PriceLevel {
     ///
     /// Resting orders are consumed in strict price-time (FIFO) order, and a
     /// partially-filled maker keeps its position at the front of the queue.
-    /// This method assumes a **single logical matcher per level at a time**:
-    /// concurrent `add_order` / `cancel` from other threads are safe, but two
-    /// concurrent `match_order` calls on the *same* level — or a `match_order`
-    /// racing a `cancel` of the resting order it is currently matching — must
-    /// be serialized by the caller (an order book typically matches a level
-    /// from a single thread). The post-only / fill-or-kill pre-checks read the
-    /// queue before the sweep; under that single-matcher assumption no
-    /// concurrent `match_order` can change the matchable depth between the
-    /// pre-check and the sweep.
+    ///
+    /// **A concurrent `cancel` of the order currently being matched is safe and
+    /// linearizable** (issue #81). The sweep keeps each maker resident in the
+    /// queue and applies its decision (full consume / partial fill in place /
+    /// replenish) while the maker's per-entry lock is held — the same lock a
+    /// `cancel`'s removal takes (the internal `OrderQueue::match_front` step).
+    /// The two therefore serialize: a cancel either fully wins (removes the
+    /// maker and decrements the counters before the match observes it) or fully
+    /// loses (the match commits first and the cancel then removes the residual
+    /// it left). A cancel is never silently lost, and the counters never
+    /// double-count. This closes the prior "lost cancel" window where a cancel
+    /// landing between the matcher's pop and its reinsert would no-op while the
+    /// matcher re-rested the residual.
+    ///
+    /// This method still assumes a **single logical matcher per level at a
+    /// time**: two concurrent `match_order` calls on the *same* level are NOT
+    /// made safe here and must be serialized by the caller (an order book
+    /// typically matches a level from a single thread). The post-only /
+    /// fill-or-kill pre-checks read the queue before the sweep; under that
+    /// single-matcher assumption no concurrent `match_order` can change the
+    /// matchable depth between the pre-check and the sweep. Concurrent
+    /// `add_order` from other threads is likewise safe.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -482,156 +495,225 @@ impl PriceLevel {
             MatchResult::with_capacity(taker_order_id, Quantity::new(incoming_quantity), capacity);
         let mut remaining = incoming_quantity;
 
-        // No-progress safety guard. A popped maker that yields no progress
+        // No-progress safety guard. A maker that yields no progress
         // (`consumed == 0`, re-queued unchanged, `remaining` not decreased)
-        // must not be re-popped this sweep, or the loop would spin forever on
+        // must not be re-selected this sweep, or the loop would spin forever on
         // the same front order. Because such a dead order sits at the FRONT
         // (FIFO), simply breaking would starve any matchable makers behind it.
-        // Instead we set the dead order ASIDE (preserving its original
-        // insertion sequence) and keep sweeping the rest of the queue; the
-        // set-aside orders are re-inserted at their original sequences after the
-        // sweep, so they stay resting in their correct price-time position with
-        // no silent loss of (hidden) quantity. `match_against`'s own progress
-        // fix means this guard should never fire for the iceberg/reserve states
-        // it now handles; it is defense-in-depth against any future
-        // zero-progress shape (e.g. a degenerate residual from
-        // `with_reduced_quantity(0)`).
-        let mut stalled: Vec<(u64, Arc<OrderType<()>>)> = Vec::new();
+        // [`OrderQueue::match_front`] leaves a `SetAside` maker untouched in the
+        // queue and parks its insertion sequence in `set_aside` so the sweep
+        // advances to the maker behind it without re-selecting it. The maker is
+        // never modified, never traded against, and its counters are never
+        // touched, so the queue and the atomic counters stay exactly as if it
+        // had been skipped — keeping counter <-> queue consistency intact and
+        // preserving its price-time position for the next sweep.
+        //
+        // `match_against`'s own progress fix means this guard should never fire
+        // for the iceberg/reserve states it now handles; it is defense-in-depth
+        // against any future zero-progress shape (e.g. a degenerate residual
+        // from `with_reduced_quantity(0)`).
+        let mut set_aside: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+        // Per-step bookkeeping carried out of the locked decision closure. The
+        // trade / stats / counter work is done AFTER the closure returns so it
+        // is not performed while the per-entry lock is held; correctness vs a
+        // concurrent cancel rides on the `FrontAction` the queue committed under
+        // the lock (see `OrderQueue::match_front`), not on when these counters
+        // move (they are advisory — issue #68).
+        struct StepData {
+            consumed: u64,
+            hidden_reduced: u64,
+            fully_consumed: bool,
+            maker_id: Id,
+            maker_side: crate::orders::Side,
+            maker_price: u128,
+            maker_timestamp: u64,
+            /// Hidden quantity stranded by a full consume with no replenishment
+            /// (drained reserve / leftover iceberg hidden), to subtract from the
+            /// hidden counter.
+            hidden_stranded: u64,
+            /// The taker's remaining quantity after this maker is matched.
+            new_remaining: u64,
+        }
+
+        // Either the maker progressed (carrying `StepData`) or it was parked by
+        // the no-progress guard (`SetAside`). The parked variant threads the
+        // maker's id and insertion seq OUT of the locked decision closure so the
+        // no-progress `warn!` can name the parked maker without logging inside
+        // the per-entry lock.
+        enum StepResult {
+            Progressed(StepData),
+            SetAside { maker_id: Id, seq: u64 },
+        }
 
         while remaining > 0 {
-            if let Some((order_seq, order_arc)) = self.orders.pop_entry() {
+            let outcome = self.orders.match_front(&mut set_aside, |seq, order_arc| {
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
-                // Detect a non-progressing pop: nothing consumed, no hidden
+                // Detect a non-progressing maker: nothing consumed, no hidden
                 // drawn, the taker's remaining unchanged, and the maker handed
-                // back to us to re-queue. Re-inserting it at its front sequence
-                // would make the next iteration pop the same id again. Set it
-                // aside and advance to the maker behind it.
+                // back to us to re-queue. Park it and advance. Thread the maker
+                // id + seq out so the caller can name it in the no-progress
+                // `warn!` without logging under the per-entry lock.
                 if consumed == 0
                     && hidden_reduced == 0
                     && new_remaining == remaining
                     && updated_order.is_some()
                 {
-                    tracing::warn!(
-                        order_id = %order_arc.id(),
-                        price = self.price,
-                        remaining,
-                        "match sweep: front maker made no progress; setting aside to avoid re-pop"
-                    );
-                    stalled.push((order_seq, order_arc));
-                    continue;
-                }
-
-                if consumed > 0 {
-                    // Update visible quantity counter. `Relaxed`: advisory
-                    // counter (issue #68); the queue mutation (`pop_entry`
-                    // above) carries the real happens-before, not this RMW.
-                    self.visible_quantity.fetch_sub(consumed, Ordering::Relaxed);
-
-                    // Use UUID generator directly
-                    let trade_id = Id::from_uuid(trade_id_generator.next());
-
-                    // A resting maker must never be the taker that is matching
-                    // against it. Debug-only guard: the type system cannot
-                    // encode this, and it is a logic invariant of the caller
-                    // (the order book never routes an order against itself).
-                    debug_assert!(
-                        order_arc.id() != taker_order_id,
-                        "self-fill: maker == taker"
-                    );
-
-                    let trade = Trade::with_timestamp(
-                        trade_id,
-                        taker_order_id,
-                        order_arc.id(),
-                        Price::new(self.price),
-                        Quantity::new(consumed),
-                        order_arc.side().opposite(),
-                        timestamp,
-                    );
-
-                    if result.add_trade(trade).is_err() {
-                        remaining = new_remaining;
-                        break;
-                    }
-
-                    // If the order was completely executed, add it to filled_order_ids
-                    if updated_order.is_none() {
-                        result.add_filled_order_id(order_arc.id());
-                    }
-
-                    // Update statistics only for real executions. A popped maker
-                    // can yield `consumed == 0` (e.g. a zero-quantity resting
-                    // order from `update_order`); recording it would inflate
-                    // `orders_executed` / `last_execution_time` without a trade.
-                    let _ = self.stats.record_execution(
-                        consumed,
-                        order_arc.price().as_u128(),
-                        order_arc.timestamp().as_u64(),
-                        timestamp.as_u64(),
+                    return (
+                        FrontAction::SetAside,
+                        StepResult::SetAside {
+                            maker_id: order_arc.id(),
+                            seq,
+                        },
                     );
                 }
 
-                remaining = new_remaining;
+                let maker_id = order_arc.id();
+                let maker_side = order_arc.side();
+                let maker_price = order_arc.price().as_u128();
+                let maker_timestamp = order_arc.timestamp().as_u64();
 
-                if let Some(updated) = updated_order {
-                    if hidden_reduced > 0 {
-                        // Iceberg/Reserve replenishment: a fresh tranche is
-                        // drawn from hidden into visible. By convention the
-                        // refreshed tranche loses time priority, so it is
-                        // appended to the tail via `push` (new sequence).
-                        // `Relaxed` on both counter RMWs: advisory counters
-                        // (issue #68); the `push` below carries the real
-                        // happens-before for the refreshed tranche.
-                        self.hidden_quantity
-                            .fetch_sub(hidden_reduced, Ordering::Relaxed);
-                        self.visible_quantity
-                            .fetch_add(hidden_reduced, Ordering::Relaxed);
-                        self.orders.push(Arc::new(updated));
-                    } else {
-                        // Pure partial fill: the maker keeps its place in the
-                        // queue. Re-insert the residual at its original
-                        // sequence so it stays ahead of later arrivals,
-                        // preserving strict price-time priority.
-                        self.orders.reinsert(order_seq, Arc::new(updated));
-                    }
-                } else {
-                    // Maker fully consumed and removed from the queue (the
-                    // `pop_entry` above already removed it). `Relaxed` on both
-                    // counter RMWs: advisory counters (issue #68); the queue
-                    // removal carries the happens-before, not these counters.
-                    self.order_count.fetch_sub(1, Ordering::Relaxed);
-                    match &*order_arc {
+                // Hidden stranded by a full consume that does not replenish:
+                // an iceberg / reserve whose visible was fully taken but whose
+                // hidden is dropped (non-auto reserve, or a leftover the
+                // `match_against` chose not to refresh). Identical condition to
+                // the pre-#81 sweep's full-consume cleanup branch.
+                let hidden_stranded = if updated_order.is_none() && hidden_reduced == 0 {
+                    match order_arc {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
                         }
                         | OrderType::ReserveOrder {
                             hidden_quantity, ..
-                        } if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 => {
-                            self.hidden_quantity
-                                .fetch_sub(hidden_quantity.as_u64(), Ordering::Relaxed);
+                        } if hidden_quantity.as_u64() > 0 => hidden_quantity.as_u64(),
+                        _ => 0,
+                    }
+                } else {
+                    0
+                };
+
+                let data = StepData {
+                    consumed,
+                    hidden_reduced,
+                    fully_consumed: updated_order.is_none(),
+                    maker_id,
+                    maker_side,
+                    maker_price,
+                    maker_timestamp,
+                    hidden_stranded,
+                    new_remaining,
+                };
+
+                let action = match updated_order {
+                    None => FrontAction::Remove,
+                    Some(updated) => {
+                        if hidden_reduced > 0 {
+                            // Replenishment: refreshed tranche loses priority.
+                            FrontAction::ReplaceAtTail(Arc::new(updated))
+                        } else {
+                            // Pure partial fill: keep priority in place.
+                            FrontAction::KeepInPlace(Arc::new(updated))
                         }
-                        _ => {}
+                    }
+                };
+
+                (action, StepResult::Progressed(data))
+            });
+
+            match outcome {
+                FrontOutcome::Empty => break,
+                FrontOutcome::Matched { result: step } => {
+                    let data = match step {
+                        StepResult::SetAside { maker_id, seq } => {
+                            // Parked by the queue; advance to the maker behind it.
+                            // The id + seq were threaded out of the locked
+                            // decision closure so we can name the parked maker
+                            // here, outside the per-entry lock.
+                            tracing::warn!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                seq,
+                                "match sweep: front maker made no progress; set aside to avoid re-pop"
+                            );
+                            continue;
+                        }
+                        StepResult::Progressed(data) => data,
+                    };
+                    let new_remaining = data.new_remaining;
+
+                    if data.consumed > 0 {
+                        // Update visible quantity counter. `Relaxed`: advisory
+                        // counter (issue #68); the queue mutation committed
+                        // inside `match_front` carries the real happens-before,
+                        // not this RMW. The delta is keyed off the committed
+                        // action so it never double-counts with a concurrent
+                        // cancel (which decrements only the residual it removes).
+                        self.visible_quantity
+                            .fetch_sub(data.consumed, Ordering::Relaxed);
+
+                        let trade_id = Id::from_uuid(trade_id_generator.next());
+
+                        // A resting maker must never be the taker matching
+                        // against it. Debug-only invariant of the caller.
+                        debug_assert!(data.maker_id != taker_order_id, "self-fill: maker == taker");
+
+                        let trade = Trade::with_timestamp(
+                            trade_id,
+                            taker_order_id,
+                            data.maker_id,
+                            Price::new(self.price),
+                            Quantity::new(data.consumed),
+                            data.maker_side.opposite(),
+                            timestamp,
+                        );
+
+                        if result.add_trade(trade).is_err() {
+                            remaining = new_remaining;
+                            break;
+                        }
+
+                        if data.fully_consumed {
+                            result.add_filled_order_id(data.maker_id);
+                        }
+
+                        let _ = self.stats.record_execution(
+                            data.consumed,
+                            data.maker_price,
+                            data.maker_timestamp,
+                            timestamp.as_u64(),
+                        );
+                    }
+
+                    remaining = new_remaining;
+
+                    if data.fully_consumed {
+                        // Maker fully consumed and removed inside `match_front`.
+                        self.order_count.fetch_sub(1, Ordering::Relaxed);
+                        if data.hidden_stranded > 0 {
+                            self.hidden_quantity
+                                .fetch_sub(data.hidden_stranded, Ordering::Relaxed);
+                        }
+                    } else if data.hidden_reduced > 0 {
+                        // Replenishment: a fresh tranche moved from hidden into
+                        // visible. The maker stayed resident (re-sequenced in
+                        // place by `match_front`), so only the counters move.
+                        self.hidden_quantity
+                            .fetch_sub(data.hidden_reduced, Ordering::Relaxed);
+                        self.visible_quantity
+                            .fetch_add(data.hidden_reduced, Ordering::Relaxed);
+                    }
+                    // Pure partial fill (KeepInPlace, hidden_reduced == 0):
+                    // visible already decremented by `consumed` above; the maker
+                    // stays resident with its residual. Nothing else to do.
+
+                    if remaining == 0 {
+                        break;
                     }
                 }
-
-                if remaining == 0 {
-                    break;
-                }
-            } else {
-                break;
             }
-        }
-
-        // Restore any set-aside non-progressing makers at their original
-        // insertion sequences. They were never modified, never traded against,
-        // and their visible/hidden counters were never touched, so re-inserting
-        // them leaves the queue and the atomic counters exactly as if they had
-        // simply been skipped — keeping counter <-> queue consistency intact and
-        // preserving their price-time position for the next sweep.
-        for (seq, order) in stalled {
-            self.orders.reinsert(seq, order);
         }
 
         result.finalize(Quantity::new(remaining));

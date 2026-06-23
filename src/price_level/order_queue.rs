@@ -2,9 +2,11 @@ use crate::errors::PriceLevelError;
 use crate::orders::{Id, OrderType};
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Display;
 use std::marker::PhantomData;
@@ -32,6 +34,49 @@ pub struct OrderQueue {
     next_seq: AtomicU64,
 }
 
+/// The mutation a matcher decides to apply to the front maker it is currently
+/// matching, while the maker's `orders` entry is held under the per-entry lock.
+///
+/// Returned by the decision closure passed to [`OrderQueue::match_front`]. The
+/// queue applies the variant atomically (under the same per-entry lock that
+/// guards a concurrent [`OrderQueue::remove`]), so a `cancel` of the same id
+/// either runs entirely before the decision (the closure observes `Vacant` and
+/// is never called) or entirely after the commit (it observes the residual /
+/// emptiness the matcher left behind). A cancel can never be lost mid-decision.
+#[derive(Debug)]
+pub(crate) enum FrontAction {
+    /// The maker was fully consumed: remove it from `orders` and drop its index
+    /// entry. After this the id no longer rests at the level.
+    Remove,
+    /// Pure partial fill: keep the maker at its current insertion sequence
+    /// (and therefore its price-time / FIFO position) by swapping the stored
+    /// value to the residual in place under the per-entry lock.
+    KeepInPlace(Arc<OrderType<()>>),
+    /// Iceberg / reserve replenishment: the refreshed tranche loses time
+    /// priority, so remove the old entry and re-queue the new order at the tail
+    /// with a fresh insertion sequence.
+    ReplaceAtTail(Arc<OrderType<()>>),
+    /// The maker made no progress this sweep (a degenerate zero-progress shape).
+    /// Leave it untouched in `orders`/`index`; the caller sets its sequence
+    /// aside so the sweep advances to the maker behind it without re-popping it.
+    SetAside,
+}
+
+/// The outcome of a single [`OrderQueue::match_front`] step, reported back to
+/// the sweep so it can drive the loop and apply counter deltas.
+#[derive(Debug)]
+pub(crate) enum FrontOutcome<R> {
+    /// A front candidate existed and the decision closure ran. Carries the
+    /// closure's result `R` (the trade bookkeeping data the sweep needs to apply
+    /// counter deltas and emit the trade). The committed [`FrontAction`] is
+    /// already encoded in that bookkeeping (full consume vs partial vs
+    /// replenish), so it is not surfaced separately.
+    Matched { result: R },
+    /// The queue is empty (no front candidate that is not already set aside).
+    /// The sweep is done.
+    Empty,
+}
+
 impl OrderQueue {
     /// Create a new empty order queue
     #[must_use]
@@ -55,11 +100,13 @@ impl OrderQueue {
         self.index.insert(seq, order_id);
     }
 
-    /// Pop the front (oldest) order together with its insertion sequence.
+    /// Pop the front (oldest) order together with its insertion sequence,
+    /// removing it from the queue.
     ///
-    /// The sequence is returned so the caller can re-insert a partial-fill
-    /// residual at the *same* position via [`OrderQueue::reinsert`], preserving
-    /// strict price-time priority.
+    /// The sequence is returned alongside the order. As of #81 the match sweep
+    /// no longer pops-then-reinserts a maker (it operates in place under the
+    /// per-entry lock via [`OrderQueue::match_front`]); this remains the backing
+    /// of the destructive [`OrderQueue::pop`] used by tests and queue draining.
     #[must_use]
     pub(crate) fn pop_entry(&self) -> Option<(u64, Arc<OrderType<()>>)> {
         loop {
@@ -80,11 +127,169 @@ impl OrderQueue {
         self.pop_entry().map(|(_, order)| order)
     }
 
+    /// Select the front (oldest, not-yet-set-aside) maker and apply a match
+    /// decision to it **atomically with respect to a concurrent
+    /// [`OrderQueue::remove`] (cancel) of the same id**.
+    ///
+    /// This replaces the old `pop_entry` + later `reinsert` sequence used by the
+    /// match sweep, which removed the maker from `orders` before deciding and so
+    /// opened a "lost cancel" window: a `cancel` landing between the pop and the
+    /// reinsert would `remove` an id that was no longer in `orders`, silently
+    /// no-op (no counter decrement), and the matcher would then reinsert the
+    /// residual — leaving the cancelled order resting.
+    ///
+    /// Here the maker is **kept resident in `orders`** while it is matched. The
+    /// decision and the resulting mutation both run while the maker's `orders`
+    /// entry is held under DashMap's per-entry (shard) lock — the same lock a
+    /// concurrent `cancel`'s [`DashMap::remove`] must take. The two therefore
+    /// serialize on that lock:
+    ///
+    /// - If `cancel` wins the lock first, this method observes the entry as
+    ///   `Vacant` (cancel already removed it + decremented counters), drops the
+    ///   stale index entry, and advances to the next candidate. The decision
+    ///   closure is never run for the cancelled id.
+    /// - If this method wins, it commits its [`FrontAction`] under the lock; a
+    ///   `cancel` arriving afterwards observes whatever the matcher left — the
+    ///   residual for a partial fill (and removes *that*, decrementing by the
+    ///   residual), or nothing for a full consume (and correctly no-ops).
+    ///
+    /// In every interleaving a cancel either fully wins or fully loses; it is
+    /// never lost. The counter delta for the matched transition is the caller's
+    /// responsibility and is keyed off the returned [`FrontAction`], so it can
+    /// never double-count with the cancel.
+    ///
+    /// `set_aside` carries the insertion sequences of makers the current sweep
+    /// has parked (the no-progress guard); they are skipped when choosing the
+    /// front so the sweep does not re-pick them. A `SetAside` action inserts the
+    /// chosen seq into it. It is a `HashSet` so membership during the front scan
+    /// is O(1) rather than the O(n) `Vec::contains` it replaced; it is only ever
+    /// inserted into and probed, never iterated for ordering.
+    ///
+    /// `decide` is the pure match decision (e.g. [`OrderType::match_against`]
+    /// plus trade bookkeeping). It runs while the per-entry lock is held, so it
+    /// MUST NOT call back into this queue (that would deadlock on the same
+    /// shard) and MUST NOT block. It receives the maker's insertion `seq` and an
+    /// immutable borrow of the resident order; the borrow ends before any commit
+    /// mutates the entry, so the decision must return OWNED action data and no
+    /// reference may escape it.
+    ///
+    /// All three mutating actions keep the maker's value **resident in `orders`
+    /// until it is genuinely gone** (a full consume) — even the
+    /// [`FrontAction::ReplaceAtTail`] re-prioritisation swaps the value and
+    /// re-sequences it in place rather than removing-then-re-pushing — so the
+    /// lost-cancel window is closed for every action, not just the partial fill.
+    pub(crate) fn match_front<F, R>(
+        &self,
+        set_aside: &mut HashSet<u64>,
+        decide: F,
+    ) -> FrontOutcome<R>
+    where
+        F: FnOnce(u64, &OrderType<()>) -> (FrontAction, R),
+    {
+        loop {
+            // Find the lowest-sequence index entry not already set aside this
+            // sweep. `index.iter()` yields entries in ascending sequence order
+            // (front = oldest = highest time priority).
+            let Some((seq, order_id)) = self
+                .index
+                .iter()
+                .find(|e| !set_aside.contains(e.key()))
+                .map(|e| (*e.key(), *e.value()))
+            else {
+                return FrontOutcome::Empty;
+            };
+
+            // Lock the maker's `orders` entry. `entry` takes the shard write
+            // lock, which a concurrent `cancel`'s `remove` must also take, so the
+            // decision + mutation below are atomic with respect to that cancel.
+            match self.orders.entry(order_id) {
+                Entry::Vacant(_) => {
+                    // The maker was cancelled (removed from `orders`) but its
+                    // index entry is stale. Drop the stale index entry and retry
+                    // with the next front candidate. The cancel already
+                    // decremented the counters, so there is nothing to account
+                    // here.
+                    self.index.remove(&seq);
+                    continue;
+                }
+                Entry::Occupied(mut occupied) => {
+                    // `occupied.get()` is `(stored_seq, order)`. Decide against
+                    // the live order while the entry lock is held. Borrow the
+                    // resident order rather than cloning its `Arc` on the hot
+                    // path: the immutable borrow lives only for the `decide`
+                    // call, which returns OWNED action data, so it ends before
+                    // any `get_mut()` / `remove()` commit below (no reference
+                    // escapes into a `FrontAction`).
+                    let (action, result) = decide(seq, occupied.get().1.as_ref());
+
+                    match &action {
+                        FrontAction::Remove => {
+                            // Full consume: remove the entry under the lock, then
+                            // drop its index entry. A cancel cannot also remove it
+                            // (the entry is gone), so no double counter decrement.
+                            let _ = occupied.remove();
+                            self.index.remove(&seq);
+                        }
+                        FrontAction::KeepInPlace(residual) => {
+                            // Partial fill keeping priority: swap the stored value
+                            // to the residual in place, keeping the same
+                            // sequence/index entry. Still under the entry lock.
+                            let slot = occupied.get_mut();
+                            slot.1 = residual.clone();
+                        }
+                        FrontAction::ReplaceAtTail(refreshed) => {
+                            // Replenished tranche loses time priority, but the
+                            // maker keeps the SAME id and must stay resident in
+                            // `orders` so a concurrent cancel cannot slip into a
+                            // remove-then-push gap. So: mint a fresh tail sequence
+                            // and swap BOTH the value and its stored sequence in
+                            // place under the entry lock; only the index is
+                            // re-keyed (old seq -> new seq) afterwards.
+                            let new_seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                            {
+                                let slot = occupied.get_mut();
+                                slot.0 = new_seq;
+                                slot.1 = refreshed.clone();
+                            }
+                            // `occupied` still holds the per-entry lock here (it
+                            // is dropped at the end of this arm), so re-keying the
+                            // index — a different structure (`SkipMap`), no
+                            // deadlock — happens while a concurrent cancel is
+                            // still excluded from the entry. Once the lock is
+                            // released the value already carries `new_seq`, so a
+                            // cancel removes `orders[id]` and `index[new_seq]`
+                            // consistently. The only residue a race can leave is a
+                            // stale `index[seq|new_seq] -> id` entry pointing at an
+                            // already-removed id, which the next `match_front`
+                            // self-heals on the `Vacant` branch. No order and no
+                            // counter update is ever lost.
+                            self.index.remove(&seq);
+                            self.index.insert(new_seq, order_id);
+                        }
+                        FrontAction::SetAside => {
+                            // No progress: leave the entry untouched and park its
+                            // sequence so the sweep advances past it.
+                            set_aside.insert(seq);
+                        }
+                    }
+
+                    return FrontOutcome::Matched { result };
+                }
+            }
+        }
+    }
+
     /// Re-insert an order at a given (previously assigned) insertion sequence.
     ///
-    /// Used for a partial-fill residual: re-inserting at the maker's original
-    /// sequence returns it to the front of the queue, keeping its time priority
-    /// ahead of orders that arrived later.
+    /// Re-inserting at a maker's original sequence returns it to its place in
+    /// the queue, keeping its time priority ahead of orders that arrived later.
+    ///
+    /// As of #81 the match sweep no longer removes-then-reinserts a partially
+    /// filled maker; it swaps the residual in place under the per-entry lock via
+    /// [`OrderQueue::match_front`], which keeps the maker resident in `orders`
+    /// the whole time (closing the lost-cancel window). This helper survives
+    /// only as a queue-priority test fixture and is therefore `#[cfg(test)]`.
+    #[cfg(test)]
     pub(crate) fn reinsert(&self, seq: u64, order: Arc<OrderType<()>>) {
         let order_id = order.id();
         self.orders.insert(order_id, (seq, order));

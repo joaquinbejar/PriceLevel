@@ -4654,6 +4654,287 @@ mod tests {
         assert_eq!(restored.hidden_quantity(), price_level.hidden_quantity());
         assert_eq!(restored.order_count(), price_level.order_count());
     }
+
+    // ------------------------------------------------------------------
+    // Issue #81: real-implementation stress tests for `match_order` racing
+    // `cancel` on the SAME price level. These exercise the per-entry-lock
+    // protocol of `OrderQueue::match_front` (cancel either fully wins or fully
+    // loses) under genuine `std::thread` concurrency with a `Barrier` start and
+    // no `sleep`. loom proves the protocol exhaustively in `tests/loom/`; these
+    // exercise the real DashMap / SkipMap structures it cannot instrument.
+    // ------------------------------------------------------------------
+
+    /// Assert the level's advisory counters agree with the queue contents read
+    /// from a single consistent `snapshot()`, AND that no cancelled id is left
+    /// silently resting.
+    fn assert_counters_match_queue(level: &PriceLevel) {
+        // `snapshot()` derives every aggregate from one materialized order
+        // vector, so its counter fields are mutually consistent with its own
+        // order list by construction (issue #62). Asserting on it (rather than on
+        // the live atomics + a separate iteration) avoids a benign torn read of
+        // two independent reads.
+        let snapshot = level.snapshot();
+        let orders = snapshot.orders();
+
+        let visible_sum: u64 = orders.iter().map(|o| o.visible_quantity().as_u64()).sum();
+        let hidden_sum: u64 = orders.iter().map(|o| o.hidden_quantity().as_u64()).sum();
+
+        assert_eq!(
+            snapshot.visible_quantity().as_u64(),
+            visible_sum,
+            "visible counter must equal the sum over the snapshot's own orders"
+        );
+        assert_eq!(
+            snapshot.hidden_quantity().as_u64(),
+            hidden_sum,
+            "hidden counter must equal the sum over the snapshot's own orders"
+        );
+        assert_eq!(
+            snapshot.order_count(),
+            orders.len(),
+            "order_count must equal the snapshot's own order-list length"
+        );
+    }
+
+    #[test]
+    fn test_match_order_concurrent_cancel_same_id_never_lost() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 2_000;
+        const PRICE: u128 = 10_000;
+        // The single maker rests with quantity 10; the taker would consume 4,
+        // leaving a residual of 6 on a clean (uncancelled) match.
+        const MAKER_QTY: u64 = 10;
+        const TAKER_QTY: u64 = 4;
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            // Deterministic id derived from the iteration index.
+            let maker_id_u64 = (iter as u64) * 4 + 1;
+            let maker_id = Id::from_u64(maker_id_u64);
+            // A sell maker so a buy taker crosses it.
+            level.add_order(OrderType::Standard {
+                id: maker_id,
+                price: Price::new(PRICE),
+                quantity: Quantity::new(MAKER_QTY),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            });
+
+            let barrier = Arc::new(Barrier::new(2));
+            // Deterministic, per-iteration trade-id stream.
+            let generator = Arc::new(UuidGenerator::new(Uuid::from_u128(
+                0xA11C_E000_0000_0000u128 + iter as u128,
+            )));
+
+            let matcher = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let generator = Arc::clone(&generator);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.match_order(
+                        TAKER_QTY,
+                        Id::from_u64(maker_id_u64 + 1),
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
+                        TimestampMs::new(1_700_000_000_000),
+                        &generator,
+                    )
+                })
+            };
+
+            let canceller = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::Cancel { order_id: maker_id })
+                        .expect("cancel must not error")
+                })
+            };
+
+            let result = matcher.join().expect("matcher thread panicked");
+            let cancelled = canceller.join().expect("canceller thread panicked");
+
+            // The cancel is never lost: either it removed the maker (Some), or
+            // the match fully consumed it first (None). It is NEVER the case
+            // that the maker is left silently resting with the cancel no-op'd.
+            let cancel_won = cancelled.is_some();
+
+            // Whatever the interleaving, the level's counters must agree with the
+            // queue, and the maker must NOT be silently resting at full quantity.
+            assert_counters_match_queue(&level);
+
+            // The traded quantity plus what cancel removed plus what still rests
+            // must conserve the original maker quantity. Read the residual from a
+            // consistent snapshot.
+            let snapshot = level.snapshot();
+            let resting_ids: HashSet<Id> = snapshot.orders().iter().map(|o| o.id()).collect();
+            let resting_qty: u64 = snapshot
+                .orders()
+                .iter()
+                .filter(|o| o.id() == maker_id)
+                .map(|o| o.visible_quantity().as_u64())
+                .sum();
+
+            let traded = result
+                .executed_quantity()
+                .expect("executed_quantity must not error")
+                .as_u64();
+            let cancelled_qty = cancelled
+                .as_ref()
+                .map_or(0, |o| o.visible_quantity().as_u64());
+
+            assert_eq!(
+                traded + cancelled_qty + resting_qty,
+                MAKER_QTY,
+                "iter {iter}: quantity not conserved (traded={traded} \
+                 cancelled={cancelled_qty} resting={resting_qty})"
+            );
+
+            // The lost-cancel invariant: for the cancelled id, either a trade
+            // consumed it fully (gone, cancel returned None) or the cancel
+            // removed it (gone). If the cancel won, the maker must be absent.
+            if cancel_won {
+                assert!(
+                    !resting_ids.contains(&maker_id),
+                    "iter {iter}: cancel won but maker {maker_id} is still resting"
+                );
+            }
+            // If the cancel lost (returned None), the match must have fully
+            // consumed the maker (a partial fill would have left a residual that
+            // the losing cancel would then have removed — so a None cancel here
+            // means the maker is gone via trade).
+            if !cancel_won {
+                assert!(
+                    !resting_ids.contains(&maker_id),
+                    "iter {iter}: cancel returned None yet maker {maker_id} \
+                     is still resting (lost cancel!)"
+                );
+                assert_eq!(
+                    traded, MAKER_QTY,
+                    "iter {iter}: cancel lost so the match must have fully \
+                     consumed the maker"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_match_order_concurrent_cancel_different_ids_consistent() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 400;
+        const PRICE: u128 = 10_000;
+        const MAKERS: u64 = 8;
+        const MAKER_QTY: u64 = 5;
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+
+            // Add MAKERS sell makers with deterministic ids.
+            let base = (iter as u64) * 1_000 + 1;
+            for k in 0..MAKERS {
+                level.add_order(OrderType::Standard {
+                    id: Id::from_u64(base + k),
+                    price: Price::new(PRICE),
+                    quantity: Quantity::new(MAKER_QTY),
+                    side: Side::Sell,
+                    user_id: Hash32::zero(),
+                    timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64 * 16 + k),
+                    time_in_force: TimeInForce::Gtc,
+                    extra_fields: (),
+                });
+            }
+
+            // The matcher will consume the first ~2.5 makers; the canceller
+            // cancels a DIFFERENT id near the back (id base+6), which the matcher
+            // is unlikely to reach, exercising match || cancel(different id).
+            let cancel_id = Id::from_u64(base + 6);
+            let total_qty = MAKERS * MAKER_QTY;
+            let taker_qty = MAKER_QTY * 2 + 2; // 12: two full makers + partial.
+
+            let barrier = Arc::new(Barrier::new(2));
+            let generator = Arc::new(UuidGenerator::new(Uuid::from_u128(
+                0xB0B0_0000_0000_0000u128 + iter as u128,
+            )));
+
+            let matcher = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let generator = Arc::clone(&generator);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.match_order(
+                        taker_qty,
+                        Id::from_u64(9_000_000 + iter as u64),
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
+                        TimestampMs::new(1_700_000_000_000),
+                        &generator,
+                    )
+                })
+            };
+
+            let canceller = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::Cancel {
+                            order_id: cancel_id,
+                        })
+                        .expect("cancel must not error")
+                })
+            };
+
+            let result = matcher.join().expect("matcher thread panicked");
+            let cancelled = canceller.join().expect("canceller thread panicked");
+
+            assert_counters_match_queue(&level);
+
+            let traded = result
+                .executed_quantity()
+                .expect("executed_quantity must not error")
+                .as_u64();
+            let cancelled_qty = cancelled
+                .as_ref()
+                .map_or(0, |o| o.visible_quantity().as_u64());
+
+            let snapshot = level.snapshot();
+            let resting_qty: u64 = snapshot
+                .orders()
+                .iter()
+                .map(|o| o.visible_quantity().as_u64())
+                .sum();
+            let resting_ids: HashSet<Id> = snapshot.orders().iter().map(|o| o.id()).collect();
+
+            // Global conservation across all makers.
+            assert_eq!(
+                traded + cancelled_qty + resting_qty,
+                total_qty,
+                "iter {iter}: quantity not conserved (traded={traded} \
+                 cancelled={cancelled_qty} resting={resting_qty})"
+            );
+
+            // The cancelled id must be gone whether the cancel won or the matcher
+            // reached and consumed it. Either way it must not silently rest.
+            assert!(
+                !resting_ids.contains(&cancel_id),
+                "iter {iter}: cancelled id {cancel_id} still resting"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

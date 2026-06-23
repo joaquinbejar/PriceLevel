@@ -27,6 +27,13 @@ include = [
     "Docker/**/*.yml",
 ]
 
+[lints.rust]
+# `loom` is a model-checker config flag set only by
+# `RUSTFLAGS="--cfg loom" cargo test` for the #81 linearization model
+# (`tests/loom/cancel_match.rs`); register it so the unexpected-cfg lint stays
+# quiet under `-D warnings` for normal builds.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -41,6 +48,17 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+# loom is a dev-only model checker, gated behind `--cfg loom`. It is NOT a
+# runtime dependency. It models the cancel-vs-partial-fill linearization (issue
+# #81); see `tests/loom/cancel_match.rs`. loom cannot instrument dashmap /
+# crossbeam-skiplist (they are not loom-aware), so the loom test models the
+# per-entry-lock PROTOCOL with loom's own primitives rather than the real queue.
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[[test]]
+name = "loom_cancel_match"
+path = "tests/loom/cancel_match.rs"
 
 [[test]]
 name = "tests"
