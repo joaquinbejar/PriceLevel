@@ -276,11 +276,11 @@ mod tests {
         // silently clamping to u128::MAX / u64::MAX.
         assert!(matches!(
             Price::from_f64(2.0_f64.powi(128)),
-            Err(PriceLevelError::InvalidOperation { .. })
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
         ));
         assert!(matches!(
             Quantity::from_f64(2.0_f64.powi(64)),
-            Err(PriceLevelError::InvalidOperation { .. })
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
         ));
         // Just-in-range values still convert.
         assert!(Price::from_f64(1_000_000.0).is_ok());
