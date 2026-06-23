@@ -8,7 +8,6 @@ mod tests {
     use serde_json::Value;
     use std::str::FromStr;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
 
     fn create_sample_orders() -> Vec<Arc<OrderType<()>>> {
         vec![
@@ -127,9 +126,9 @@ mod tests {
         let original_orders_executed = original.orders_executed();
         let original_quantity = original.quantity_executed();
         let original_value = original.value_executed();
-        let original_last = original.last_execution_time.load(Ordering::Relaxed);
-        let original_first = original.first_arrival_time.load(Ordering::Relaxed);
-        let original_waiting = original.sum_waiting_time.load(Ordering::Relaxed);
+        let original_last = original.last_execution_time();
+        let original_first = original.first_arrival_time();
+        let original_waiting = original.sum_waiting_time();
 
         let package = PriceLevelSnapshotPackage::new(snapshot).expect("Failed to create package");
         assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
@@ -147,18 +146,9 @@ mod tests {
         assert_eq!(restored_stats.orders_executed(), original_orders_executed);
         assert_eq!(restored_stats.quantity_executed(), original_quantity);
         assert_eq!(restored_stats.value_executed(), original_value);
-        assert_eq!(
-            restored_stats.last_execution_time.load(Ordering::Relaxed),
-            original_last
-        );
-        assert_eq!(
-            restored_stats.first_arrival_time.load(Ordering::Relaxed),
-            original_first
-        );
-        assert_eq!(
-            restored_stats.sum_waiting_time.load(Ordering::Relaxed),
-            original_waiting
-        );
+        assert_eq!(restored_stats.last_execution_time(), original_last);
+        assert_eq!(restored_stats.first_arrival_time(), original_first);
+        assert_eq!(restored_stats.sum_waiting_time(), original_waiting);
     }
 
     #[test]
