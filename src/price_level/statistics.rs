@@ -24,8 +24,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// published through them. They carry no happens-before relationship — each
 /// counter is independent and may be read mid-update, so a multi-field read
 /// (serde, [`Display`](std::fmt::Display), [`Clone`]) is an explicitly
-/// best-effort, non-transactional point-in-time view (the same contract as
-/// `PriceLevel::snapshot`). `Relaxed` is therefore both correct and the
+/// best-effort, non-transactional point-in-time view that can be torn across
+/// fields. This is unlike `PriceLevel::snapshot`, which is internally
+/// consistent (it derives its aggregates from one materialized order vector);
+/// these statistics counters are not part of that consistency guarantee.
+/// `Relaxed` is therefore both correct and the
 /// cheapest valid choice; a stronger ordering would only add cost without
 /// buying any guarantee a consumer relies on. The lone read-modify-write loop
 /// in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64) is a standard
