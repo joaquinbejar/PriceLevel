@@ -136,10 +136,26 @@ impl Trade {
         }
     }
 
-    /// Returns the total value of this trade
-    #[must_use]
-    pub fn total_value(&self) -> u128 {
-        self.price.as_u128() * (self.quantity.as_u64() as u128)
+    /// Returns the total value of this trade (`price * quantity`), in
+    /// price-ticks × quantity units.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `price * quantity`
+    /// overflows `u128`. This mirrors the checked-arithmetic discipline of
+    /// [`MatchResult::executed_value`](crate::execution::MatchResult::executed_value),
+    /// which computes the same product.
+    pub fn total_value(&self) -> Result<u128, PriceLevelError> {
+        self.price
+            .as_u128()
+            .checked_mul(u128::from(self.quantity.as_u64()))
+            .ok_or_else(|| PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade total value overflow: price {} * quantity {}",
+                    self.price.as_u128(),
+                    self.quantity.as_u64()
+                ),
+            })
     }
 }
 
