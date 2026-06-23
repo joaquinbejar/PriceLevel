@@ -181,6 +181,17 @@ impl PriceLevel {
     /// generated trades, the remaining unmatched quantity, a flag indicating whether the
     /// incoming order was completely filled, and a list of IDs of orders that were completely filled
     /// during the matching process.
+    ///
+    /// # Concurrency
+    ///
+    /// Resting orders are consumed in strict price-time (FIFO) order, and a
+    /// partially-filled maker keeps its position at the front of the queue.
+    /// This method assumes a **single logical matcher per level at a time**:
+    /// concurrent `add_order` / `cancel` from other threads are safe, but two
+    /// concurrent `match_order` calls on the *same* level — or a `match_order`
+    /// racing a `cancel` of the resting order it is currently matching — must
+    /// be serialized by the caller (an order book typically matches a level
+    /// from a single thread).
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -191,7 +202,7 @@ impl PriceLevel {
         let mut remaining = incoming_quantity;
 
         while remaining > 0 {
-            if let Some(order_arc) = self.orders.pop() {
+            if let Some((order_seq, order_arc)) = self.orders.pop_entry() {
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
@@ -233,31 +244,33 @@ impl PriceLevel {
 
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {
+                        // Iceberg/Reserve replenishment: a fresh tranche is
+                        // drawn from hidden into visible. By convention the
+                        // refreshed tranche loses time priority, so it is
+                        // appended to the tail via `push` (new sequence).
                         self.hidden_quantity
                             .fetch_sub(hidden_reduced, Ordering::AcqRel);
                         self.visible_quantity
                             .fetch_add(hidden_reduced, Ordering::AcqRel);
+                        self.orders.push(Arc::new(updated));
+                    } else {
+                        // Pure partial fill: the maker keeps its place in the
+                        // queue. Re-insert the residual at its original
+                        // sequence so it stays ahead of later arrivals,
+                        // preserving strict price-time priority.
+                        self.orders.reinsert(order_seq, Arc::new(updated));
                     }
-
-                    self.orders.push(Arc::new(updated));
                 } else {
                     self.order_count.fetch_sub(1, Ordering::AcqRel);
                     match &*order_arc {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
-                        } => {
-                            if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 {
-                                self.hidden_quantity
-                                    .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
-                            }
                         }
-                        OrderType::ReserveOrder {
+                        | OrderType::ReserveOrder {
                             hidden_quantity, ..
-                        } => {
-                            if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 {
-                                self.hidden_quantity
-                                    .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
-                            }
+                        } if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 => {
+                            self.hidden_quantity
+                                .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
                         }
                         _ => {}
                     }

@@ -13,7 +13,7 @@
 //!  - Efficient order matching and execution logic
 //!  - Designed with domain-driven principles for financial markets
 //!  - Comprehensive test suite demonstrating concurrent usage scenarios
-//!  - Built with crossbeam's lock-free data structures
+//!  - Built with crossbeam's lock-free data structures (`crossbeam-skiplist`)
 //!  - Optimized statistics tracking for each price level
 //!  - Memory-efficient implementations suitable for high-frequency trading systems
 //!
@@ -44,7 +44,7 @@
 //!  ## Implementation Details
 //!
 //!  - **Thread Safety**: Uses atomic operations and lock-free data structures to ensure thread safety without mutex locks
-//!  - **Order Queue Management**: Specialized order queue implementation based on crossbeam's SegQueue
+//!  - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index
 //!  - **Statistics Tracking**: Each price level tracks execution statistics in real-time
 //!  - **Snapshot Capabilities**: Create point-in-time snapshots of price levels for market data distribution
 //!  - **Efficient Matching**: Optimized algorithms for matching incoming orders against existing orders
@@ -133,6 +133,30 @@
 //! - **Lock-Free Architecture**: Maintains high throughput with minimal contention overhead
 //!
 //! The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
+//!
+//! ## Changes in v0.8.0
+//!
+//! - **Price-time priority across partial fills** (issue #39). A partial fill
+//!   previously re-queued the resting maker's residual at the *back* of its
+//!   price level, so the next aggressor at that price matched a later arrival
+//!   instead of the older, partially-filled maker (a wrong `maker_order_id` in
+//!   the trade stream). The order queue now keeps strict price-time priority:
+//!   the residual stays at the front. Iceberg / reserve replenishment keeps its
+//!   existing semantics (a refreshed tranche still loses time priority).
+//! - **Internal queue moved to a lock-free `crossbeam-skiplist` ordered
+//!   index.** The method surface of [`OrderQueue`] is unchanged, but because
+//!   the new index relies on interior mutability, [`OrderQueue`] and
+//!   [`PriceLevel`] no longer implement [`std::panic::UnwindSafe`] /
+//!   [`std::panic::RefUnwindSafe`] (they remain `Send + Sync`). This is the
+//!   only breaking change and is why this release is `0.8.0` rather than a
+//!   patch. Callers that wrapped these types in [`std::panic::catch_unwind`]
+//!   are affected; nothing else is.
+//! - **Matching concurrency contract.** [`PriceLevel::match_order`] assumes a
+//!   single logical matcher per level at a time. Concurrent `add_order` /
+//!   `cancel` from other threads are safe, but two concurrent `match_order`
+//!   calls on the *same* level — or a `match_order` racing a `cancel` of the
+//!   resting order it is currently matching — are the caller's responsibility
+//!   to serialize.
 //!
 //! ## Migration Guide (v0.6 → v0.7)
 //!

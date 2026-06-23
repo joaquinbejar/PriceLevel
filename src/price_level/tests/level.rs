@@ -1926,6 +1926,144 @@ mod tests {
         assert_eq!(deserialized.hidden_quantity(), 70);
         assert_eq!(deserialized.order_count(), 2);
     }
+
+    // ------------------------- PRICE-TIME PRIORITY (issue #39) -------------------------
+
+    #[test]
+    /// Regression for issue #39: a partial fill must keep the resting maker at
+    /// the FRONT of the queue. Rest A then B at the same price, partially fill
+    /// A, then send a second aggressor — it must consume A's remainder before
+    /// touching the later-arriving B.
+    fn test_match_partial_fill_keeps_maker_price_time_priority() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_ids = UuidGenerator::new(namespace);
+
+        // A (id=1) arrives before B (id=2), both 100 @ 10000.
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+
+        // First aggressor partially fills A (60 of 100). A's residual = 40.
+        let first = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+        assert_eq!(first.trades().len(), 1);
+        assert_eq!(
+            first.trades().as_vec()[0].maker_order_id(),
+            Id::from_u64(1),
+            "first aggressor must hit A"
+        );
+        assert_eq!(first.trades().as_vec()[0].quantity(), Quantity::new(60));
+        // A(40) + B(100) still resting.
+        assert_eq!(price_level.visible_quantity(), 140);
+        assert_eq!(price_level.order_count(), 2);
+
+        // Second aggressor (50) must hit A's remainder (40) FIRST, then B (10).
+        let second = price_level.match_order(50, Id::from_u64(902), &trade_ids);
+        assert_eq!(second.trades().len(), 2);
+
+        let t0 = &second.trades().as_vec()[0];
+        assert_eq!(
+            t0.maker_order_id(),
+            Id::from_u64(1),
+            "price-time priority: A's residual must be consumed before B"
+        );
+        assert_eq!(t0.quantity(), Quantity::new(40));
+
+        let t1 = &second.trades().as_vec()[1];
+        assert_eq!(t1.maker_order_id(), Id::from_u64(2));
+        assert_eq!(t1.quantity(), Quantity::new(10));
+
+        // A fully consumed; B has 90 left. Conservation holds.
+        assert_eq!(second.filled_order_ids(), &[Id::from_u64(1)]);
+        assert_eq!(price_level.visible_quantity(), 90);
+        assert_eq!(price_level.order_count(), 1);
+    }
+
+    #[test]
+    /// Conservation: a partial fill never changes the total resting quantity at
+    /// the level beyond what was consumed.
+    fn test_match_partial_fill_conserves_quantity() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_ids = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        let total_before = match price_level.total_quantity() {
+            Ok(q) => q,
+            Err(e) => panic!("total_quantity failed: {e}"),
+        };
+        assert_eq!(total_before, 200);
+
+        let _ = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+        let total_after = match price_level.total_quantity() {
+            Ok(q) => q,
+            Err(e) => panic!("total_quantity failed: {e}"),
+        };
+        assert_eq!(total_after, 140, "exactly the consumed 60 left the level");
+    }
+
+    #[test]
+    /// Iceberg/Reserve replenishment keeps its existing semantics: a refreshed
+    /// tranche LOSES time priority (goes to the tail), unlike a pure partial
+    /// fill. Confirms the `hidden_reduced` discriminator in `match_order`.
+    fn test_match_iceberg_replenish_loses_priority() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_ids = UuidGenerator::new(namespace);
+
+        // Iceberg I (id=1) arrives first: visible 50, hidden 100.
+        price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
+        // O (id=2) arrives later: a plain 50 (iceberg with no hidden).
+        price_level.add_order(create_iceberg_order(2, 10000, 50, 0));
+
+        // Aggressor consumes I's visible tip (50) → I refreshes from hidden and
+        // moves to the tail. remaining hits 0, so this call stops there.
+        let first = price_level.match_order(50, Id::from_u64(901), &trade_ids);
+        assert_eq!(first.trades().len(), 1);
+        assert_eq!(first.trades().as_vec()[0].maker_order_id(), Id::from_u64(1));
+
+        // Next aggressor must now hit O (id=2) FIRST, because the refreshed
+        // iceberg tranche lost its priority to the tail.
+        let second = price_level.match_order(50, Id::from_u64(902), &trade_ids);
+        assert_eq!(
+            second.trades().as_vec()[0].maker_order_id(),
+            Id::from_u64(2),
+            "refreshed iceberg tranche must lose time priority"
+        );
+    }
+
+    #[test]
+    /// A partial-fill residual at the front must survive a snapshot round-trip
+    /// with its priority intact.
+    fn test_snapshot_roundtrip_preserves_partial_fill_priority() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_ids = UuidGenerator::new(namespace);
+
+        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(2, 10000, 100));
+        let _ = price_level.match_order(60, Id::from_u64(901), &trade_ids);
+
+        let json = match price_level.snapshot_to_json() {
+            Ok(j) => j,
+            Err(e) => panic!("snapshot_to_json failed: {e}"),
+        };
+        let restored = match PriceLevel::from_snapshot_json(&json) {
+            Ok(r) => r,
+            Err(e) => panic!("from_snapshot_json failed: {e}"),
+        };
+
+        // Match against the restored level: A's residual (40) must still come
+        // first, proving the snapshot preserved price-time priority.
+        let restored_trade_ids = UuidGenerator::new(namespace);
+        let result = restored.match_order(50, Id::from_u64(903), &restored_trade_ids);
+        assert_eq!(
+            result.trades().as_vec()[0].maker_order_id(),
+            Id::from_u64(1),
+            "restored level must keep A's residual ahead of B"
+        );
+        assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(40));
+    }
 }
 
 #[cfg(test)]
