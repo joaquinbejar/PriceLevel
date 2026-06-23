@@ -35,7 +35,8 @@ pub struct PriceLevelStatistics {
     /// Last execution timestamp
     last_execution_time: AtomicU64,
 
-    /// First order arrival timestamp
+    /// Statistics initialization timestamp (set at construction / reset).
+    /// Not updated on order arrival — see `first_arrival_time()`.
     first_arrival_time: AtomicU64,
 
     /// Sum of waiting times for orders
@@ -215,11 +216,13 @@ impl PriceLevelStatistics {
         self.last_execution_time.load(Ordering::Relaxed)
     }
 
-    /// Get the timestamp of the first order arrival at this level, in
-    /// milliseconds since the Unix epoch.
+    /// Get the statistics initialization timestamp, in milliseconds since the
+    /// Unix epoch.
     ///
-    /// Seeded at construction (and on [`reset`](Self::reset)) with the current
-    /// wall-clock time, or `0` if the system clock could not be read.
+    /// Set when the statistics are created and on [`reset`](Self::reset) with the
+    /// current wall-clock time (`0` if the system clock could not be read). It is
+    /// **not** updated on order arrival, so it marks when statistics tracking
+    /// began for this level, not the first order's actual arrival time.
     #[must_use]
     pub fn first_arrival_time(&self) -> u64 {
         self.first_arrival_time.load(Ordering::Relaxed)
