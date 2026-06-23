@@ -111,9 +111,11 @@ impl PriceLevel {
     /// atomic counter, which under concurrent `add_order` / `match_order` /
     /// `update_order` can briefly lead or lag the queue contents (it may not yet
     /// include an order already in the queue, or still count one just removed).
-    /// `add_order` publishes to the queue before bumping the counter and
-    /// `match_order` removes from the queue before decrementing it, so the queue
-    /// is the leading view. For a reading where the counters and the order list
+    /// The relative order of the counter update and the queue mutation is not a
+    /// guaranteed cross-method invariant — different paths order them
+    /// differently (e.g. iceberg replenishment in `match_order` adjusts the
+    /// counters before pushing the refreshed tranche). Treat any single counter
+    /// read as approximate; for a reading where the counters and the order list
     /// are guaranteed mutually consistent, take a [`Self::snapshot`] and read
     /// from it.
     #[must_use]
@@ -164,11 +166,13 @@ impl PriceLevel {
         let visible_qty = order.visible_quantity();
         let hidden_qty = order.hidden_quantity();
 
-        // Publish to the queue FIRST, then bump the counters, so the queue is
-        // the leading (more conservative) view: a concurrent reader may see the
-        // order resting before it is counted, never counted before it rests.
-        // The bare counters are advisory under concurrency; `snapshot()` is the
-        // mutually-consistent view (see `visible_quantity`).
+        // On this path, publish to the queue FIRST, then bump the counters, so a
+        // concurrent reader of this add tends to see the order resting before it
+        // is counted rather than the reverse. This is a local ordering choice,
+        // not a cross-method guarantee (other paths, e.g. iceberg replenishment
+        // in `match_order`, adjust counters before pushing). The bare counters
+        // are advisory under concurrency; `snapshot()` is the mutually-consistent
+        // view (see `visible_quantity`).
         let order_arc = Arc::new(order);
         self.orders.push(order_arc.clone());
 
