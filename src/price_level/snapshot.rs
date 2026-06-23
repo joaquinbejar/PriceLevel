@@ -482,10 +482,12 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                 let order_count =
                     order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
                 let orders = orders.unwrap_or_default();
-                // `statistics` is optional so the DTO stays forward-compatible:
-                // a payload without it (e.g. a hand-built fixture) restores with
-                // empty statistics rather than failing. A genuine v1 *package*
-                // is still rejected up-front by `validate()`'s version check.
+                // `statistics` is optional on deserialize so a payload that omits
+                // it (e.g. a hand-built fixture) restores with empty statistics
+                // rather than failing — i.e. tolerant of a *missing* field, not
+                // forward-compatible with future *added* fields (this visitor
+                // still rejects unknown fields). A genuine v1 *package* is
+                // rejected up-front by `validate()`'s version check regardless.
                 let statistics = statistics.unwrap_or_default();
 
                 Ok(PriceLevelSnapshot {
