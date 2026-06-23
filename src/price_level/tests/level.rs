@@ -2723,8 +2723,18 @@ mod tests {
     /// - `is_complete()` is true iff `remaining_quantity() == 0`;
     /// - `executed_quantity()` equals the sum of trade quantities;
     /// - `executed_value()` equals the sum of each trade's `price * quantity`;
-    /// - `filled_order_ids().len()` equals the count of fully-consumed makers.
-    fn assert_match_result_consistent(result: &crate::execution::MatchResult, level_price: u128) {
+    /// - `filled_order_ids()` contains no duplicates (a maker is consumed at
+    ///   most once per sweep). The exact filled count per scenario is asserted by
+    ///   each test, not here.
+    ///
+    /// `maker_side` is the side every resting maker was added on; it is used to
+    /// check each trade's `taker_side` against the *known* resting side rather
+    /// than against a value derived from `taker_side` itself.
+    fn assert_match_result_consistent(
+        result: &crate::execution::MatchResult,
+        level_price: u128,
+        maker_side: Side,
+    ) {
         // is_complete <=> remaining_quantity == 0
         assert_eq!(
             result.is_complete(),
@@ -2734,8 +2744,13 @@ mod tests {
 
         let trades = result.trades().as_vec();
 
-        // executed_quantity == sum of trade quantities.
-        let expected_qty: u64 = trades.iter().map(|t| t.quantity().as_u64()).sum();
+        // executed_quantity == sum of trade quantities. Use checked addition to
+        // mirror `executed_quantity()`'s own checked arithmetic (and avoid a
+        // debug overflow panic in the test on pathological inputs).
+        let expected_qty = trades
+            .iter()
+            .try_fold(0u64, |acc, t| acc.checked_add(t.quantity().as_u64()))
+            .expect("summing trade quantities must not overflow u64");
         let executed_qty = match result.executed_quantity() {
             Ok(q) => q,
             Err(e) => panic!("executed_quantity must not error on real output: {e}"),
@@ -2745,11 +2760,18 @@ mod tests {
             "executed_quantity must equal the sum of trade quantities"
         );
 
-        // executed_value == sum of each trade's price * quantity.
-        let expected_value: u128 = trades
+        // executed_value == sum of each trade's price * quantity, checked the
+        // same way as `executed_value()`.
+        let expected_value = trades
             .iter()
-            .map(|t| t.price().as_u128() * u128::from(t.quantity().as_u64()))
-            .sum();
+            .try_fold(0u128, |acc, t| {
+                let v = t
+                    .price()
+                    .as_u128()
+                    .checked_mul(u128::from(t.quantity().as_u64()))?;
+                acc.checked_add(v)
+            })
+            .expect("summing trade values must not overflow u128");
         let executed_value = match result.executed_value() {
             Ok(v) => v,
             Err(e) => panic!("executed_value must not error on real output: {e}"),
@@ -2769,18 +2791,22 @@ mod tests {
             "filled_order_ids must not contain duplicates"
         );
 
-        assert_match_result_trades_valid(result, level_price);
+        assert_match_result_trades_valid(result, level_price, maker_side);
     }
 
     /// Assert the structural invariants on every `Trade` emitted by a real
     /// `match_order` call: maker != taker, price == level price, quantity > 0,
-    /// and taker side is the opposite of the maker side.
+    /// and `taker_side` is the opposite of the *known* resting `maker_side`.
     ///
-    /// All makers in these scenarios rest on a single side per level, so the
-    /// taker side is uniform across the sweep and equals that maker side's
-    /// opposite. The trade already records `taker_side`; we cross-check it
-    /// against the known resting side.
-    fn assert_match_result_trades_valid(result: &crate::execution::MatchResult, level_price: u128) {
+    /// `maker_side` is passed in (not read back from the trade) so the check is
+    /// not tautological: `Trade::maker_side()` is derived as
+    /// `taker_side().opposite()`, so comparing the two would always hold even if
+    /// the engine stamped the wrong `taker_side`.
+    fn assert_match_result_trades_valid(
+        result: &crate::execution::MatchResult,
+        level_price: u128,
+        maker_side: Side,
+    ) {
         let taker_id = result.order_id();
         for trade in result.trades().as_vec() {
             assert_ne!(
@@ -2802,12 +2828,11 @@ mod tests {
                 trade.quantity().as_u64() > 0,
                 "trade quantity must be strictly positive"
             );
-            // taker_side == maker_side.opposite(). `maker_side()` is derived as
-            // `taker_side().opposite()`, so this also pins the relationship.
+            // Cross-check taker_side against the KNOWN resting maker side.
             assert_eq!(
                 trade.taker_side(),
-                trade.maker_side().opposite(),
-                "taker side must be the opposite of the maker side"
+                maker_side.opposite(),
+                "taker side must be the opposite of the resting maker side"
             );
         }
     }
@@ -2837,7 +2862,7 @@ mod tests {
         // The maker is only partially filled and remains resting.
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_eq!(price_level.order_count(), 1);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]
@@ -2862,7 +2887,7 @@ mod tests {
         assert_eq!(result.remaining_quantity(), 0);
         assert_eq!(result.trades().len(), 2);
         assert_eq!(result.filled_order_ids().len(), 2);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]
@@ -2888,7 +2913,7 @@ mod tests {
         assert_eq!(result.trades().len(), 2);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_eq!(price_level.order_count(), 0);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]
@@ -2914,7 +2939,7 @@ mod tests {
         assert_eq!(result.remaining_quantity(), 0);
         assert_eq!(result.trades().len(), 3);
         assert_eq!(result.filled_order_ids().len(), 2);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]
@@ -2936,7 +2961,7 @@ mod tests {
         assert_eq!(result.remaining_quantity(), 50);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]
@@ -2964,7 +2989,7 @@ mod tests {
         assert_eq!(result.remaining_quantity(), 0);
         assert!(!result.trades().as_vec().is_empty());
         assert_eq!(result.filled_order_ids().len(), 0);
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
     }
 
     #[test]
@@ -2989,7 +3014,7 @@ mod tests {
         assert!(result.is_complete());
         assert_eq!(result.remaining_quantity(), 0);
         assert!(!result.trades().as_vec().is_empty());
-        assert_match_result_consistent(&result, 10000);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
     }
 
     #[test]
@@ -3028,8 +3053,8 @@ mod tests {
         let second = run();
 
         assert_eq!(first.trades().as_vec(), second.trades().as_vec());
-        assert_match_result_consistent(&first, 10000);
-        assert_match_result_consistent(&second, 10000);
+        assert_match_result_consistent(&first, 10000, Side::Sell);
+        assert_match_result_consistent(&second, 10000, Side::Sell);
     }
 }
 
