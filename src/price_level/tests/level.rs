@@ -1865,6 +1865,14 @@ mod tests {
 
     #[test]
     fn test_match_fill_or_kill_order() {
+        // NOTE: the FOK time-in-force on the resting *maker* is NOT enforced at
+        // this layer. `match_order` does not consult the maker's TIF — the FOK
+        // order matches exactly like a `TimeInForce::Gtc` standard order. This
+        // test only pins that "a resting FOK maker is consumable like any
+        // other"; it does NOT assert all-or-nothing "kill" semantics, because
+        // the engine cannot enforce them here. Real FOK/IOC *taker* semantics
+        // (all-or-nothing fill, discard-remainder) require `match_order` to
+        // accept a taker TIF and are gated on issue #65.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
@@ -1888,6 +1896,15 @@ mod tests {
 
     #[test]
     fn test_match_immediate_or_cancel_order() {
+        // NOTE: the IOC time-in-force on the resting *maker* is NOT enforced at
+        // this layer. `match_order` does not consult the maker's TIF — the IOC
+        // order matches and the unfilled remainder keeps resting exactly like a
+        // `TimeInForce::Gtc` standard order. This test only pins that "a resting
+        // IOC maker is partially consumable like any other and the unmatched
+        // part stays in the queue"; it does NOT assert IOC discard semantics on
+        // the maker. Real FOK/IOC *taker* semantics (the taker discarding its
+        // own remainder rather than the maker) require `match_order` to accept a
+        // taker TIF and are gated on issue #65.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
@@ -1930,6 +1947,120 @@ mod tests {
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
+    }
+
+    /// Pin the de-facto IOC behavior of `match_order` for a taker larger than
+    /// the available resting depth.
+    ///
+    /// `match_order` takes no taker `TimeInForce` and NEVER enqueues the taker:
+    /// it fills every unit it can against the resting queue and reports the
+    /// unfilled remainder via `remaining_quantity()`. With a taker (150) that
+    /// exceeds total depth (100), this is exactly the observable IOC outcome —
+    /// "fill what you can, discard the rest" — even though no IOC flag is
+    /// consulted: the resting depth is fully consumed, `remaining_quantity()`
+    /// stays positive, `is_complete()` is false, and nothing of the taker is
+    /// left resting at the level (the level only holds makers, and `match_order`
+    /// adds no new order).
+    ///
+    /// Explicit IOC/FOK *taker* semantics — distinguishing "discard remainder"
+    /// (IOC) from "all-or-nothing kill" (FOK) — require `match_order` to accept
+    /// a taker TIF and are gated on issue #65; they are intentionally NOT
+    /// asserted here.
+    #[test]
+    fn test_match_order_taker_exceeds_depth_fills_available_and_reports_remainder() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // Total resting depth = 100 (two Buy makers).
+        price_level.add_order(create_standard_order(1, 10000, 60));
+        price_level.add_order(create_standard_order(2, 10000, 40));
+        assert_eq!(price_level.visible_quantity(), 100);
+        assert_eq!(price_level.order_count(), 2);
+
+        // Taker of 150 exceeds the resting depth of 100.
+        let taker_id = Id::from_u64(999);
+        let result = price_level.match_order(
+            150,
+            taker_id,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+
+        // All available depth filled (100 of 150); 50 reported as remainder.
+        assert_eq!(result.executed_quantity().expect("real output is Ok"), 100);
+        assert_eq!(result.remaining_quantity(), 50);
+        assert!(
+            result.remaining_quantity() > 0,
+            "taker remainder must be strictly positive"
+        );
+        assert!(
+            !result.is_complete(),
+            "an under-filled taker must not be reported complete"
+        );
+
+        // Both resting makers were fully consumed and removed.
+        assert_eq!(result.filled_order_ids().len(), 2);
+
+        // The taker is NOT left resting: `match_order` never enqueues it. The
+        // level is now empty — only the (consumed) makers ever lived here.
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+
+        // Makers were Buy, so the taker is Sell.
+        assert_match_result_consistent(&result, 10000, Side::Buy);
+    }
+
+    /// Pin that `match_order` does NOT enforce maker time-in-force expiry.
+    ///
+    /// A `TimeInForce::Gtd` maker whose expiry timestamp is in the *past*
+    /// relative to the match timestamp still matches normally — the engine does
+    /// not consult `TimeInForce::is_expired` inside the match path. Enforcing
+    /// expiry (skipping or evicting expired makers) is intentionally the
+    /// caller's / order book's responsibility, not the price level's:
+    /// `TimeInForce::is_expired(current_ts, market_close_ts)` exists and is unit
+    /// tested in isolation (`src/orders/tests/time_in_force.rs`), but it is
+    /// deliberately not invoked here, so the match path stays a pure,
+    /// timestamp-driven, deterministic sweep over the resting queue.
+    #[test]
+    fn test_match_order_does_not_enforce_gtd_maker_expiry() {
+        let price_level = PriceLevel::new(10000);
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // Maker expiry is in the PAST relative to the match timestamp below.
+        let past_expiry: u64 = 1_000_000_000_000;
+        let match_ts: u64 = 1_716_000_000_000;
+        assert!(
+            match_ts > past_expiry,
+            "fixture: match time is after expiry"
+        );
+
+        // Sanity-check the isolated helper to make explicit WHAT the level is
+        // choosing not to consult: this maker IS expired by `is_expired`.
+        assert!(
+            TimeInForce::Gtd(past_expiry).is_expired(match_ts, None),
+            "fixture: the GTD maker is expired per TimeInForce::is_expired"
+        );
+
+        price_level.add_order(create_good_till_date_order(1, 10000, 100, past_expiry));
+
+        // Despite the expired maker, the match fills it like a standard order.
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimestampMs::new(match_ts),
+            &trade_id_generator,
+        );
+
+        assert_eq!(result.remaining_quantity(), 0);
+        assert!(result.is_complete());
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.order_count(), 0);
+
+        // Maker was Buy, so the taker is Sell.
+        assert_match_result_consistent(&result, 10000, Side::Buy);
     }
 
     #[test]

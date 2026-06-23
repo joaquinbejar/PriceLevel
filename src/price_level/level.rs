@@ -251,6 +251,12 @@ impl PriceLevel {
     /// and filled orders are removed from the queue.  The function also updates the visible and hidden
     /// quantity counters and records statistics for each execution.
     ///
+    /// Time-in-force EXPIRY is NOT enforced here: a resting maker's
+    /// [`TimeInForce`](crate::orders::TimeInForce) (e.g. `Gtd` / `Day`) is not
+    /// consulted, so an expired maker still matches. Evicting or skipping
+    /// expired orders is the caller's / order book's responsibility, keeping
+    /// the match path a pure, deterministic sweep over the resting queue.
+    ///
     /// # Arguments
     ///
     /// * `incoming_quantity`: The quantity of the incoming order to be matched.
