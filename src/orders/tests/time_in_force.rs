@@ -330,4 +330,51 @@ mod tests {
         let time_in_force = TimeInForce::Day;
         assert_eq!(time_in_force.to_string(), "DAY");
     }
+
+    // After dropping the redundant `alias = "Gtc"` / `"Ioc"` / `"Fok"` / `"Gtd"`
+    // / `"Day"` (the variant names serde accepts on deserialize by default),
+    // the uppercase serialize form (kept as an alias), the lowercase form
+    // (kept as an alias), and the bare variant name must all still deserialize,
+    // and every variant must round-trip through its serialized wire form.
+    #[test]
+    fn test_deserialize_all_accepted_forms_after_alias_cleanup() {
+        let unit_cases = [
+            (["\"GTC\"", "\"gtc\"", "\"Gtc\""], TimeInForce::Gtc),
+            (["\"IOC\"", "\"ioc\"", "\"Ioc\""], TimeInForce::Ioc),
+            (["\"FOK\"", "\"fok\"", "\"Fok\""], TimeInForce::Fok),
+            (["\"DAY\"", "\"day\"", "\"Day\""], TimeInForce::Day),
+        ];
+        for (forms, expected) in unit_cases {
+            for s in forms {
+                assert_eq!(
+                    serde_json::from_str::<TimeInForce>(s).unwrap(),
+                    expected,
+                    "{expected:?} should deserialize from {s}"
+                );
+            }
+        }
+
+        // Gtd carries a payload; the uppercase, lowercase, and variant-name
+        // keys must all still deserialize.
+        for s in ["{\"GTD\":12345}", "{\"gtd\":12345}", "{\"Gtd\":12345}"] {
+            assert_eq!(
+                serde_json::from_str::<TimeInForce>(s).unwrap(),
+                TimeInForce::Gtd(12345),
+                "Gtd should deserialize from {s}"
+            );
+        }
+
+        // Wire format proof: every variant round-trips through its serialized
+        // form via the kept uppercase alias.
+        for tif in [
+            TimeInForce::Gtc,
+            TimeInForce::Ioc,
+            TimeInForce::Fok,
+            TimeInForce::Gtd(12345),
+            TimeInForce::Day,
+        ] {
+            let wire = serde_json::to_string(&tif).unwrap();
+            assert_eq!(serde_json::from_str::<TimeInForce>(&wire).unwrap(), tif);
+        }
+    }
 }
