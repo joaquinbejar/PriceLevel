@@ -1,6 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, OrderType};
-use crossbeam::queue::SegQueue;
+use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -10,14 +10,26 @@ use std::fmt::Display;
 use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// A thread-safe queue of orders with specialized operations
+/// A thread-safe queue of orders with specialized operations.
+///
+/// Time priority (price-time / FIFO within the level) is maintained by an
+/// ordered index keyed by a monotonic insertion sequence rather than a plain
+/// tail-only FIFO. This lets a partially-filled maker keep its place at the
+/// front of the queue: the residual is re-inserted at its *original* sequence,
+/// instead of being appended to the tail.
 #[derive(Debug)]
 pub struct OrderQueue {
-    /// A map of order IDs to orders for quick lookups
-    orders: DashMap<Id, Arc<OrderType<()>>>,
-    /// A queue of order IDs to maintain FIFO order
-    order_ids: SegQueue<Id>,
+    /// A map of order IDs to `(insertion sequence, order)` for O(1) lookups.
+    /// The sequence travels with the value so it can be recovered on pop and
+    /// reused when re-inserting a partial-fill residual.
+    orders: DashMap<Id, (u64, Arc<OrderType<()>>)>,
+    /// Ordered index `sequence -> Id`. The lowest sequence is the front
+    /// (oldest) order, so iteration / pop honours strict time priority.
+    index: SkipMap<u64, Id>,
+    /// Monotonic source of insertion sequences.
+    next_seq: AtomicU64,
 }
 
 impl OrderQueue {
@@ -26,58 +38,90 @@ impl OrderQueue {
     pub fn new() -> Self {
         Self {
             orders: DashMap::new(),
-            order_ids: SegQueue::new(),
+            index: SkipMap::new(),
+            next_seq: AtomicU64::new(0),
         }
     }
 
-    /// Add an order to the queue
+    /// Add an order to the tail of the queue (newest time priority).
     pub fn push(&self, order: Arc<OrderType<()>>) {
+        // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
+        // counter matter. The happens-before ordering between concurrent
+        // producers/consumers is provided by the lock-free `index`/`orders`
+        // structures, not by this counter, so no synchronization rides on it.
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
         let order_id = order.id();
-        self.orders.insert(order_id, order);
-        self.order_ids.push(order_id);
+        self.orders.insert(order_id, (seq, order));
+        self.index.insert(seq, order_id);
     }
 
-    /// Attempt to pop an order from the queue
+    /// Pop the front (oldest) order together with its insertion sequence.
+    ///
+    /// The sequence is returned so the caller can re-insert a partial-fill
+    /// residual at the *same* position via [`OrderQueue::reinsert`], preserving
+    /// strict price-time priority.
     #[must_use]
-    pub fn pop(&self) -> Option<Arc<OrderType<()>>> {
+    pub(crate) fn pop_entry(&self) -> Option<(u64, Arc<OrderType<()>>)> {
         loop {
-            if let Some(order_id) = self.order_ids.pop() {
-                // If the order was removed, pop will return None, but the ID was in the queue.
-                // In this case, we loop and try to get the next one.
-                if let Some((_, order)) = self.orders.remove(&order_id) {
-                    return Some(order);
-                }
-            } else {
-                return None; // Queue is empty
+            // `pop_front` atomically removes the lowest-sequence index entry.
+            let entry = self.index.pop_front()?;
+            let order_id = *entry.value();
+            // The id may have been concurrently cancelled via `remove`; in that
+            // case the map no longer holds it, so skip it and try the next one.
+            if let Some((_, (seq, order))) = self.orders.remove(&order_id) {
+                return Some((seq, order));
             }
         }
+    }
+
+    /// Attempt to pop an order from the queue (front / oldest first).
+    #[must_use]
+    pub fn pop(&self) -> Option<Arc<OrderType<()>>> {
+        self.pop_entry().map(|(_, order)| order)
+    }
+
+    /// Re-insert an order at a given (previously assigned) insertion sequence.
+    ///
+    /// Used for a partial-fill residual: re-inserting at the maker's original
+    /// sequence returns it to the front of the queue, keeping its time priority
+    /// ahead of orders that arrived later.
+    pub(crate) fn reinsert(&self, seq: u64, order: Arc<OrderType<()>>) {
+        let order_id = order.id();
+        self.orders.insert(order_id, (seq, order));
+        self.index.insert(seq, order_id);
     }
 
     /// Search for an order with the given ID. O(1) operation.
     #[must_use]
     pub fn find(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
-        self.orders.get(&order_id).map(|o| o.value().clone())
+        self.orders.get(&order_id).map(|o| o.value().1.clone())
     }
 
-    /// Remove an order with the given ID
-    /// Returns the removed order if found. O(1) for the map, but the ID remains in the queue.
+    /// Remove an order with the given ID.
+    /// Returns the removed order if found. Cleans both the map and the index.
     #[must_use]
     pub fn remove(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
-        self.orders.remove(&order_id).map(|(_, order)| order)
+        let (_, (seq, order)) = self.orders.remove(&order_id)?;
+        self.index.remove(&seq);
+        Some(order)
     }
 
     /// Iterate through current orders without materializing an intermediate vector.
     pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
-        self.orders.iter().map(|entry| entry.value().clone())
+        self.orders.iter().map(|entry| entry.value().1.clone())
     }
 
-    /// Materialize a stable snapshot vector sorted by timestamp.
+    /// Materialize a stable snapshot vector sorted by `(timestamp, sequence)`.
+    ///
+    /// The insertion sequence is used as a deterministic tiebreak so orders
+    /// sharing a millisecond timestamp are still ordered exactly as matching
+    /// would consume them.
     #[must_use]
     pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
-        let mut orders: Vec<Arc<OrderType<()>>> =
+        let mut orders: Vec<(u64, Arc<OrderType<()>>)> =
             self.orders.iter().map(|o| o.value().clone()).collect();
-        orders.sort_by_key(|o| o.timestamp());
-        orders
+        orders.sort_by_key(|(seq, o)| (o.timestamp(), *seq));
+        orders.into_iter().map(|(_, o)| o).collect()
     }
 
     /// Convert the queue to a vector (for compatibility and snapshots).
@@ -142,8 +186,12 @@ impl Serialize for OrderQueue {
         S: Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(self.len()))?;
-        for order_entry in self.orders.iter() {
-            seq.serialize_element(order_entry.value().as_ref())?;
+        // Emit in insertion-sequence order so the round-trip preserves time
+        // priority (the DashMap alone has no deterministic iteration order).
+        for index_entry in self.index.iter() {
+            if let Some(order_entry) = self.orders.get(index_entry.value()) {
+                seq.serialize_element(order_entry.value().1.as_ref())?;
+            }
         }
         seq.end()
     }
