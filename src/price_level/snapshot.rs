@@ -180,6 +180,11 @@ impl PriceLevelSnapshot {
     }
 
     /// Get the total quantity (visible + hidden) at this price level.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `visible + hidden`
+    /// overflows `u64`.
     pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
         self.visible_quantity
             .checked_add(self.hidden_quantity)
@@ -194,6 +199,11 @@ impl PriceLevelSnapshot {
     }
 
     /// Recomputes aggregate fields (`visible_quantity`, `hidden_quantity`, and `order_count`) based on current orders.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
+    /// visible or hidden quantities overflows `u64`.
     pub fn refresh_aggregates(&mut self) -> Result<(), PriceLevelError> {
         self.order_count = self.orders.len();
 
@@ -264,6 +274,13 @@ impl PriceLevelSnapshotPackage {
 
 impl PriceLevelSnapshotPackage {
     /// Creates a new snapshot package computing the checksum for the provided snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if refreshing the snapshot
+    /// aggregates overflows a quantity, or [`PriceLevelError::SerializationError`]
+    /// if the snapshot payload cannot be encoded while computing its SHA-256
+    /// checksum.
     pub fn new(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
@@ -277,6 +294,11 @@ impl PriceLevelSnapshotPackage {
     }
 
     /// Serializes the package to JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::SerializationError`] if the package cannot be
+    /// encoded to a JSON string.
     pub fn to_json(&self) -> Result<String, PriceLevelError> {
         serde_json::to_string(self).map_err(|error| PriceLevelError::SerializationError {
             message: error.to_string(),
@@ -284,6 +306,13 @@ impl PriceLevelSnapshotPackage {
     }
 
     /// Deserializes a package from JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::DeserializationError`] if `data` is not a
+    /// valid JSON representation of a snapshot package. The returned package is
+    /// not yet checksum-validated; call [`Self::validate`] or
+    /// [`Self::into_snapshot`] to verify integrity.
     pub fn from_json(data: &str) -> Result<Self, PriceLevelError> {
         serde_json::from_str(data).map_err(|error| PriceLevelError::DeserializationError {
             message: error.to_string(),
@@ -291,6 +320,14 @@ impl PriceLevelSnapshotPackage {
     }
 
     /// Validates the checksum contained in the package against the serialized snapshot data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the package's format
+    /// version is not [`SNAPSHOT_FORMAT_VERSION`], [`PriceLevelError::SerializationError`]
+    /// if the snapshot payload cannot be re-encoded to recompute the checksum,
+    /// and [`PriceLevelError::ChecksumMismatch`] if the recomputed SHA-256
+    /// checksum does not match the stored one (tampered or corrupted snapshot).
     // Snapshot restoration / validation is a cold path: keep it out of line.
     #[inline(never)]
     pub fn validate(&self) -> Result<(), PriceLevelError> {
@@ -315,6 +352,14 @@ impl PriceLevelSnapshotPackage {
     }
 
     /// Consumes the package after validating the checksum and returns the contained snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::validate`]:
+    /// [`PriceLevelError::InvalidOperation`] on an unsupported format version,
+    /// [`PriceLevelError::SerializationError`] if the payload cannot be
+    /// re-encoded, and [`PriceLevelError::ChecksumMismatch`] if the stored
+    /// checksum does not match the recomputed one.
     pub fn into_snapshot(self) -> Result<PriceLevelSnapshot, PriceLevelError> {
         self.validate()?;
         Ok(self.snapshot)

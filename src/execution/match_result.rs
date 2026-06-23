@@ -61,6 +61,12 @@ impl MatchResult {
     }
 
     /// Add a trade to this match result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the trade's quantity
+    /// exceeds the remaining quantity of the incoming order (the subtraction
+    /// would underflow), which indicates an over-fill bug in the caller.
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
         self.remaining_quantity = self
             .remaining_quantity
@@ -121,6 +127,11 @@ impl MatchResult {
     }
 
     /// Get the total executed quantity
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if summing the trade
+    /// quantities overflows `u64`.
     pub fn executed_quantity(&self) -> Result<u64, PriceLevelError> {
         self.trades.as_vec().iter().try_fold(0u64, |acc, trade| {
             acc.checked_add(trade.quantity().as_u64()).ok_or_else(|| {
@@ -132,6 +143,12 @@ impl MatchResult {
     }
 
     /// Get the total value executed
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if any per-trade
+    /// `price * quantity` product overflows `u128`, or if accumulating those
+    /// products overflows `u128`.
     pub fn executed_value(&self) -> Result<u128, PriceLevelError> {
         self.trades.as_vec().iter().try_fold(0u128, |acc, trade| {
             let trade_value = trade
@@ -150,6 +167,15 @@ impl MatchResult {
     }
 
     /// Calculate the average execution price
+    ///
+    /// Returns `Ok(None)` when no quantity has been executed (no average price
+    /// exists), avoiding a division by zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the underlying
+    /// [`Self::executed_quantity`] or [`Self::executed_value`] computation
+    /// overflows.
     pub fn average_price(&self) -> Result<Option<f64>, PriceLevelError> {
         let executed_qty = self.executed_quantity()?;
         if executed_qty == 0 {
