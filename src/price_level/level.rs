@@ -240,17 +240,20 @@ impl PriceLevel {
                     if updated_order.is_none() {
                         result.add_filled_order_id(order_arc.id());
                     }
+
+                    // Update statistics only for real executions. A popped maker
+                    // can yield `consumed == 0` (e.g. a zero-quantity resting
+                    // order from `update_order`); recording it would inflate
+                    // `orders_executed` / `last_execution_time` without a trade.
+                    let _ = self.stats.record_execution(
+                        consumed,
+                        order_arc.price().as_u128(),
+                        order_arc.timestamp(),
+                        timestamp.as_u64(),
+                    );
                 }
 
                 remaining = new_remaining;
-
-                // update statistics
-                let _ = self.stats.record_execution(
-                    consumed,
-                    order_arc.price().as_u128(),
-                    order_arc.timestamp(),
-                    timestamp.as_u64(),
-                );
 
                 if let Some(updated) = updated_order {
                     if hidden_reduced > 0 {

@@ -496,13 +496,27 @@ mod tests {
         let taker_id = Id::from_u64(999);
         let timestamp = TimestampMs::new(1_716_000_000_000);
 
+        // Build makers with FIXED timestamps so both runs use truly identical
+        // input. `create_standard_order` draws from a global counter that
+        // advances on every call, which would differ between the two runs.
+        let mk = |id: u64, qty: u64| OrderType::Standard {
+            id: Id::from_u64(id),
+            price: Price::new(10000),
+            quantity: Quantity::new(qty),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_700_000_000_000 + id),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        };
+
         // Run a scenario that crosses several resting makers (partial fill of
         // the last maker) so the trade stream has multiple entries.
         let run = || {
             let price_level = PriceLevel::new(10000);
-            price_level.add_order(create_standard_order(1, 10000, 40));
-            price_level.add_order(create_standard_order(2, 10000, 30));
-            price_level.add_order(create_standard_order(3, 10000, 50));
+            price_level.add_order(mk(1, 40));
+            price_level.add_order(mk(2, 30));
+            price_level.add_order(mk(3, 50));
 
             let trade_id_generator = UuidGenerator::new(namespace);
             price_level.match_order(90, taker_id, timestamp, &trade_id_generator)

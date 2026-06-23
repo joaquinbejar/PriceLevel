@@ -126,8 +126,22 @@ impl PriceLevelStatistics {
     ) -> Result<(), PriceLevelError> {
         let current_time = execution_timestamp;
 
-        self.orders_executed.fetch_add(1, Ordering::Relaxed);
-        Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;
+        // Validate everything that can fail BEFORE mutating any counter, so a
+        // rejected record leaves the statistics untouched. `match_order` ignores
+        // the returned `Result`, so any partial side effect would silently
+        // corrupt the stats.
+        let waiting_time = if order_timestamp > 0 {
+            Some(current_time.checked_sub(order_timestamp).ok_or_else(|| {
+                PriceLevelError::InvalidOperation {
+                    message: format!(
+                        "order timestamp {} is in the future of current time {}",
+                        order_timestamp, current_time
+                    ),
+                }
+            })?)
+        } else {
+            None
+        };
 
         let value_u128 = u128::from(quantity).checked_mul(price).ok_or_else(|| {
             PriceLevelError::InvalidOperation {
@@ -140,21 +154,15 @@ impl PriceLevelStatistics {
                 message: "value_executed exceeds u64 storage".to_string(),
             })?;
 
+        // All fallible validation passed — now apply the mutations. (The only
+        // residual failure mode is a counter nearing `u64::MAX`, inherent to
+        // independent lock-free atomics.)
+        self.orders_executed.fetch_add(1, Ordering::Relaxed);
+        Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;
         Self::checked_fetch_add_u64(&self.value_executed, value_u64, "value_executed")?;
         self.last_execution_time
             .store(current_time, Ordering::Relaxed);
-
-        // Calculate waiting time for this order
-        if order_timestamp > 0 {
-            let waiting_time = current_time.checked_sub(order_timestamp).ok_or_else(|| {
-                PriceLevelError::InvalidOperation {
-                    message: format!(
-                        "order timestamp {} is in the future of current time {}",
-                        order_timestamp, current_time
-                    ),
-                }
-            })?;
-
+        if let Some(waiting_time) = waiting_time {
             Self::checked_fetch_add_u64(&self.sum_waiting_time, waiting_time, "sum_waiting_time")?;
         }
 
