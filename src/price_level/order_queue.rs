@@ -6,6 +6,7 @@ use dashmap::mapref::entry::Entry;
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Display;
 use std::marker::PhantomData;
@@ -159,22 +160,31 @@ impl OrderQueue {
     ///
     /// `set_aside` carries the insertion sequences of makers the current sweep
     /// has parked (the no-progress guard); they are skipped when choosing the
-    /// front so the sweep does not re-pick them. A `SetAside` action appends the
-    /// chosen seq to it.
+    /// front so the sweep does not re-pick them. A `SetAside` action inserts the
+    /// chosen seq into it. It is a `HashSet` so membership during the front scan
+    /// is O(1) rather than the O(n) `Vec::contains` it replaced; it is only ever
+    /// inserted into and probed, never iterated for ordering.
     ///
     /// `decide` is the pure match decision (e.g. [`OrderType::match_against`]
     /// plus trade bookkeeping). It runs while the per-entry lock is held, so it
     /// MUST NOT call back into this queue (that would deadlock on the same
-    /// shard) and MUST NOT block.
+    /// shard) and MUST NOT block. It receives the maker's insertion `seq` and an
+    /// immutable borrow of the resident order; the borrow ends before any commit
+    /// mutates the entry, so the decision must return OWNED action data and no
+    /// reference may escape it.
     ///
     /// All three mutating actions keep the maker's value **resident in `orders`
     /// until it is genuinely gone** (a full consume) — even the
     /// [`FrontAction::ReplaceAtTail`] re-prioritisation swaps the value and
     /// re-sequences it in place rather than removing-then-re-pushing — so the
     /// lost-cancel window is closed for every action, not just the partial fill.
-    pub(crate) fn match_front<F, R>(&self, set_aside: &mut Vec<u64>, decide: F) -> FrontOutcome<R>
+    pub(crate) fn match_front<F, R>(
+        &self,
+        set_aside: &mut HashSet<u64>,
+        decide: F,
+    ) -> FrontOutcome<R>
     where
-        F: FnOnce(&Arc<OrderType<()>>) -> (FrontAction, R),
+        F: FnOnce(u64, &OrderType<()>) -> (FrontAction, R),
     {
         loop {
             // Find the lowest-sequence index entry not already set aside this
@@ -204,9 +214,13 @@ impl OrderQueue {
                 }
                 Entry::Occupied(mut occupied) => {
                     // `occupied.get()` is `(stored_seq, order)`. Decide against
-                    // the live order while the entry lock is held.
-                    let order = occupied.get().1.clone();
-                    let (action, result) = decide(&order);
+                    // the live order while the entry lock is held. Borrow the
+                    // resident order rather than cloning its `Arc` on the hot
+                    // path: the immutable borrow lives only for the `decide`
+                    // call, which returns OWNED action data, so it ends before
+                    // any `get_mut()` / `remove()` commit below (no reference
+                    // escapes into a `FrontAction`).
+                    let (action, result) = decide(seq, occupied.get().1.as_ref());
 
                     match &action {
                         FrontAction::Remove => {
@@ -255,7 +269,7 @@ impl OrderQueue {
                         FrontAction::SetAside => {
                             // No progress: leave the entry untouched and park its
                             // sequence so the sweep advances past it.
-                            set_aside.push(seq);
+                            set_aside.insert(seq);
                         }
                     }
 

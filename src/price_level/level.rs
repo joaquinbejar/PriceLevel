@@ -512,7 +512,7 @@ impl PriceLevel {
         // for the iceberg/reserve states it now handles; it is defense-in-depth
         // against any future zero-progress shape (e.g. a degenerate residual
         // from `with_reduced_quantity(0)`).
-        let mut set_aside: Vec<u64> = Vec::new();
+        let mut set_aside: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
         // Per-step bookkeeping carried out of the locked decision closure. The
         // trade / stats / counter work is done AFTER the closure returns so it
@@ -537,26 +537,37 @@ impl PriceLevel {
         }
 
         // Either the maker progressed (carrying `StepData`) or it was parked by
-        // the no-progress guard (`SetAside`).
+        // the no-progress guard (`SetAside`). The parked variant threads the
+        // maker's id and insertion seq OUT of the locked decision closure so the
+        // no-progress `warn!` can name the parked maker without logging inside
+        // the per-entry lock.
         enum StepResult {
             Progressed(StepData),
-            SetAside,
+            SetAside { maker_id: Id, seq: u64 },
         }
 
         while remaining > 0 {
-            let outcome = self.orders.match_front(&mut set_aside, |order_arc| {
+            let outcome = self.orders.match_front(&mut set_aside, |seq, order_arc| {
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
                 // Detect a non-progressing maker: nothing consumed, no hidden
                 // drawn, the taker's remaining unchanged, and the maker handed
-                // back to us to re-queue. Park it and advance.
+                // back to us to re-queue. Park it and advance. Thread the maker
+                // id + seq out so the caller can name it in the no-progress
+                // `warn!` without logging under the per-entry lock.
                 if consumed == 0
                     && hidden_reduced == 0
                     && new_remaining == remaining
                     && updated_order.is_some()
                 {
-                    return (FrontAction::SetAside, StepResult::SetAside);
+                    return (
+                        FrontAction::SetAside,
+                        StepResult::SetAside {
+                            maker_id: order_arc.id(),
+                            seq,
+                        },
+                    );
                 }
 
                 let maker_id = order_arc.id();
@@ -570,7 +581,7 @@ impl PriceLevel {
                 // `match_against` chose not to refresh). Identical condition to
                 // the pre-#81 sweep's full-consume cleanup branch.
                 let hidden_stranded = if updated_order.is_none() && hidden_reduced == 0 {
-                    match &**order_arc {
+                    match order_arc {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
                         }
@@ -615,11 +626,16 @@ impl PriceLevel {
                 FrontOutcome::Empty => break,
                 FrontOutcome::Matched { result: step } => {
                     let data = match step {
-                        StepResult::SetAside => {
+                        StepResult::SetAside { maker_id, seq } => {
                             // Parked by the queue; advance to the maker behind it.
+                            // The id + seq were threaded out of the locked
+                            // decision closure so we can name the parked maker
+                            // here, outside the per-entry lock.
                             tracing::warn!(
                                 price = self.price,
                                 remaining,
+                                order_id = %maker_id,
+                                seq,
                                 "match sweep: front maker made no progress; set aside to avoid re-pop"
                             );
                             continue;
