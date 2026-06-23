@@ -285,9 +285,10 @@ impl<T: Clone> OrderType<T> {
     /// taker, i.e. a positive taker would take some quantity from it.
     ///
     /// This is the single source of truth for "matchable depth" shared by the
-    /// post-only pre-check ([`PriceLevel::has_matchable_depth`]) and the
-    /// fill-or-kill dry run ([`PriceLevel::matchable_quantity`]), so the two can
-    /// never disagree about the same level:
+    /// post-only pre-check (`has_matchable_depth`) and the fill-or-kill dry run
+    /// (`matchable_quantity`), so the two can never disagree about the same level
+    /// (those are private price-level helpers, named here as plain spans rather
+    /// than doc links):
     ///
     /// - Any order with positive **visible** quantity is matchable.
     /// - A zero-visible **iceberg** with hidden quantity is matchable: the sweep
@@ -297,9 +298,6 @@ impl<T: Clone> OrderType<T> {
     ///   dropped by the sweep without ever filling, so it is *not* matchable
     ///   depth.
     /// - Every other zero-visible order (no hidden to draw on) is not matchable.
-    ///
-    /// [`PriceLevel::has_matchable_depth`]: crate::price_level::PriceLevel
-    /// [`PriceLevel::matchable_quantity`]: crate::price_level::PriceLevel
     #[must_use]
     #[inline]
     pub fn is_matchable(&self) -> bool {

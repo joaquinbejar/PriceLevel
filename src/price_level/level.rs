@@ -279,8 +279,14 @@ impl PriceLevel {
             return 0;
         }
 
-        // Snapshot in deterministic FIFO order, mirroring the real sweep's
-        // `pop_entry` order so the dry run matches it exactly.
+        // Snapshot the resting orders. `snapshot_orders()` is ordered by
+        // `(timestamp, sequence)` whereas the real sweep pops by pure insertion
+        // sequence; these coincide when timestamps are monotonic with insertion
+        // (the normal case). The two can only differ in *visit order*, never in
+        // the fillable *total*: every maker (including a fully-drained
+        // replenishing iceberg/auto-reserve) contributes the same amount
+        // regardless of when it is visited, so the sum this returns is exactly
+        // what the sweep would consume — which is all fill-or-kill depends on.
         let mut pending: std::collections::VecDeque<Arc<OrderType<()>>> =
             self.snapshot_orders().into();
         let mut remaining = incoming_quantity;

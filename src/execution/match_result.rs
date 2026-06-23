@@ -101,13 +101,22 @@ impl MatchResult {
     /// Create a new empty match result
     #[must_use]
     pub fn new(order_id: Id, initial_quantity: u64) -> Self {
+        // A zero-quantity result is vacuously complete (nothing to fill), so keep
+        // is_complete / outcome consistent at construction — matching
+        // `finalize`'s `remaining == 0 => Filled` rule. A non-zero result starts
+        // incomplete / NotFilled until a trade or `finalize` updates it.
+        let is_complete = initial_quantity == 0;
         Self {
             order_id,
             trades: TradeList::new(),
             remaining_quantity: initial_quantity,
-            is_complete: false,
+            is_complete,
             filled_order_ids: Vec::new(),
-            outcome: MatchOutcome::NotFilled,
+            outcome: if is_complete {
+                MatchOutcome::Filled
+            } else {
+                MatchOutcome::NotFilled
+            },
         }
     }
 
@@ -120,13 +129,19 @@ impl MatchResult {
     /// per-fill reallocations on the match hot path.
     #[must_use]
     pub fn with_capacity(order_id: Id, initial_quantity: u64, capacity: usize) -> Self {
+        // Same zero-quantity consistency as `new` (see there).
+        let is_complete = initial_quantity == 0;
         Self {
             order_id,
             trades: TradeList::with_capacity(capacity),
             remaining_quantity: initial_quantity,
-            is_complete: false,
+            is_complete,
             filled_order_ids: Vec::with_capacity(capacity),
-            outcome: MatchOutcome::NotFilled,
+            outcome: if is_complete {
+                MatchOutcome::Filled
+            } else {
+                MatchOutcome::NotFilled
+            },
         }
     }
 
