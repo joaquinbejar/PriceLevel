@@ -1,6 +1,6 @@
 use criterion::Criterion;
 use pricelevel::{
-    Hash32, Id, MatchResult, OrderType, Price, PriceLevel, Quantity, Side, TimeInForce,
+    Hash32, Id, MatchResult, OrderType, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, Trade, TradeList, UuidGenerator,
 };
 use std::hint::black_box;
@@ -91,6 +91,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
     let match_result = level.match_order(
         200,
         Id::from_u64(9999),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &id_gen,
     );

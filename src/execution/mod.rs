@@ -26,8 +26,10 @@ mod trade;
 
 mod list;
 mod match_result;
+mod taker;
 mod tests;
 
 pub use list::TradeList;
-pub use match_result::MatchResult;
+pub use match_result::{MatchOutcome, MatchResult};
+pub use taker::TakerKind;
 pub use trade::Trade;

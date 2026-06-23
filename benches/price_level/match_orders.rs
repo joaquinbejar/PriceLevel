@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion};
 use pricelevel::{
-    Hash32, Id, OrderType, Price, PriceLevel, Quantity, Side, TimeInForce, TimestampMs,
+    Hash32, Id, OrderType, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce, TimestampMs,
     UuidGenerator,
 };
 use std::hint::black_box;
@@ -21,6 +21,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 50,
                 Id::from_u64(999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
@@ -36,6 +38,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 75,
                 Id::from_u64(999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
@@ -51,6 +55,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 60,
                 Id::from_u64(999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
@@ -66,6 +72,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 100,
                 Id::from_u64(999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
@@ -85,6 +93,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 5,
                 Id::from_u64(999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
@@ -102,6 +112,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     3,
                     Id::from_u64(1000 + i),
+                    TimeInForce::Gtc,
+                    TakerKind::Standard,
                     TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
@@ -123,6 +135,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     black_box(price_level.match_order(
                         match_quantity,
                         Id::from_u64(999),
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
                         TimestampMs::new(1_716_000_000_000),
                         &transaction_id_generator,
                     ));
@@ -145,6 +159,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     black_box(price_level.match_order(
                         match_quantity,
                         Id::from_u64(999),
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
                         TimestampMs::new(1_716_000_000_000),
                         &transaction_id_generator,
                     ));

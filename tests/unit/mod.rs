@@ -43,6 +43,8 @@ fn partial_fill_keeps_price_time_priority_across_calls() {
     let first = level.match_order(
         60,
         Id::from_u64(901),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &trade_ids,
     );
@@ -53,6 +55,8 @@ fn partial_fill_keeps_price_time_priority_across_calls() {
     let second = level.match_order(
         50,
         Id::from_u64(902),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &trade_ids,
     );

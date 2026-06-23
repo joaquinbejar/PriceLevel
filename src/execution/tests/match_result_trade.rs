@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::execution::match_result::MatchResult;
+    use crate::execution::match_result::{MatchOutcome, MatchResult};
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
     use crate::utils::{Price, Quantity, TimestampMs};
@@ -51,6 +51,58 @@ mod tests {
 
         assert_eq!(parsed.trades().len(), 1);
         assert_eq!(parsed.remaining_quantity(), 60);
+    }
+
+    #[test]
+    fn add_trade_keeps_outcome_in_sync() {
+        // No trades yet -> the default benign classification.
+        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        assert_eq!(result.outcome(), MatchOutcome::NotFilled);
+
+        // Partial fill.
+        assert!(result.add_trade(sample_trade(40)).is_ok());
+        assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
+        assert!(!result.was_killed());
+        assert!(!result.was_rejected());
+
+        // Complete fill.
+        assert!(result.add_trade(sample_trade(60)).is_ok());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert!(result.is_complete());
+    }
+
+    #[test]
+    fn outcome_survives_serde_json_roundtrip() {
+        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        assert!(result.add_trade(sample_trade(40)).is_ok());
+
+        let json = serde_json::to_string(&result).expect("serialize match result");
+        let parsed: MatchResult = serde_json::from_str(&json).expect("deserialize match result");
+
+        assert_eq!(parsed.outcome(), MatchOutcome::PartiallyFilled);
+        assert_eq!(parsed.remaining_quantity(), 60);
+        assert_eq!(parsed.trades().len(), 1);
+    }
+
+    #[test]
+    fn outcome_defaults_when_absent_from_json() {
+        // A JSON payload written before the `outcome` field existed must still
+        // deserialize (the field is `#[serde(default)]`). Build a current JSON,
+        // then strip the `outcome` key to emulate the legacy shape.
+        let result = MatchResult::new(Id::from_u64(10), 70);
+        let mut value: serde_json::Value =
+            serde_json::to_value(&result).expect("serialize match result");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("outcome")
+            .expect("current payload carries an outcome field");
+        let legacy = serde_json::to_string(&value).expect("re-serialize legacy payload");
+
+        let parsed: MatchResult =
+            serde_json::from_str(&legacy).expect("legacy match result must deserialize");
+        assert_eq!(parsed.outcome(), MatchOutcome::NotFilled);
+        assert_eq!(parsed.remaining_quantity(), 70);
     }
 
     #[test]

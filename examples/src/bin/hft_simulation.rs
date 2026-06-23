@@ -2,7 +2,7 @@
 
 use pricelevel::{
     Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
-    TimeInForce, TimestampMs, UuidGenerator, setup_logger,
+    TakerKind, TimeInForce, TimestampMs, UuidGenerator, setup_logger,
 };
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -141,6 +141,8 @@ fn main() {
                 let result = thread_price_level.match_order(
                     quantity,
                     taker_id,
+                    TimeInForce::Gtc,
+                    TakerKind::Standard,
                     TimestampMs::new(1_716_000_000_000),
                     &thread_tx_id_gen,
                 );

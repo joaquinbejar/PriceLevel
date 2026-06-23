@@ -5,8 +5,8 @@
 // Verifies PriceLevelError variants and panic-free overflow handling.
 
 use pricelevel::{
-    Hash32, Id, OrderType, Price, PriceLevel, PriceLevelError, Quantity, Side, TimeInForce,
-    TimestampMs, UuidGenerator,
+    Hash32, Id, OrderType, Price, PriceLevel, PriceLevelError, Quantity, Side, TakerKind,
+    TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::process;
 use uuid::Uuid;
@@ -88,6 +88,8 @@ fn test_executed_quantity_and_value(id_gen: &UuidGenerator) {
     let result = level.match_order(
         250,
         Id::from_u64(999),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -138,6 +140,8 @@ fn test_average_price(id_gen: &UuidGenerator) {
     let result = level.match_order(
         100,
         Id::from_u64(800),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -163,6 +167,8 @@ fn test_empty_match_result(id_gen: &UuidGenerator) {
     let result = empty_level.match_order(
         100,
         Id::from_u64(900),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -246,6 +252,8 @@ fn test_match_result_display_fromstr(id_gen: &UuidGenerator) {
     let result = level.match_order(
         30,
         Id::from_u64(888),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );

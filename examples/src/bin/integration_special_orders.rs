@@ -6,7 +6,7 @@
 
 use pricelevel::{
     DEFAULT_RESERVE_REPLENISH_AMOUNT, Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price,
-    PriceLevel, Quantity, Side, TimeInForce, TimestampMs, UuidGenerator,
+    PriceLevel, Quantity, Side, TakerKind, TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::num::NonZeroU64;
 use std::process;
@@ -54,6 +54,8 @@ fn test_iceberg_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         10,
         Id::from_u64(100),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -98,6 +100,8 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         8,
         Id::from_u64(200),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -142,6 +146,8 @@ fn test_post_only_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         50,
         Id::from_u64(300),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -184,6 +190,8 @@ fn test_trailing_stop_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         30,
         Id::from_u64(400),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -219,6 +227,8 @@ fn test_pegged_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         25,
         Id::from_u64(500),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
@@ -253,6 +263,8 @@ fn test_market_to_limit_order(id_gen: &UuidGenerator) {
     let result = level.match_order(
         15,
         Id::from_u64(600),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );

@@ -2,8 +2,8 @@
 
 use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
-use crate::execution::{MatchResult, Trade};
-use crate::orders::{Id, OrderType, OrderUpdate};
+use crate::execution::{MatchResult, TakerKind, Trade};
+use crate::orders::{Id, OrderType, OrderUpdate, TimeInForce};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::{Price, Quantity, TimestampMs};
@@ -243,24 +243,149 @@ impl PriceLevel {
         self.orders.snapshot_vec()
     }
 
-    /// Matches an incoming order against existing orders at this price level.
+    /// Returns `true` if any resting order has matchable depth, i.e. a positive
+    /// taker would cross at this level.
     ///
-    /// This function attempts to match the incoming order quantity against the orders present in the
-    /// `OrderQueue`. It iterates through the queue, matching orders until the incoming quantity is
-    /// fully filled or the queue is exhausted. Trades are generated for each successful match,
-    /// and filled orders are removed from the queue.  The function also updates the visible and hidden
-    /// quantity counters and records statistics for each execution.
+    /// Used by the post-only pre-check, which only needs to know whether *any*
+    /// liquidity would be taken, not how much. Short-circuits on the first
+    /// matchable order, so it is cheaper than [`Self::matchable_quantity`].
     ///
-    /// Time-in-force EXPIRY is NOT enforced here: a resting maker's
-    /// [`TimeInForce`](crate::orders::TimeInForce) (e.g. `Gtd` / `Day`) is not
-    /// consulted, so an expired maker still matches. Evicting or skipping
-    /// expired orders is the caller's / order book's responsibility, keeping
-    /// the match path a pure, deterministic sweep over the resting queue.
+    /// Matchability is delegated to [`OrderType::is_matchable`] — the single
+    /// source of truth shared with the fill-or-kill dry run — so the post-only
+    /// verdict and the fill-or-kill prediction can never disagree about the same
+    /// level. In particular a zero-visible iceberg (or auto-replenishing
+    /// reserve) backed by hidden quantity counts as matchable depth, because the
+    /// sweep will draw that hidden into visible and fill it.
+    fn has_matchable_depth(&self) -> bool {
+        self.iter_orders().any(|order| order.is_matchable())
+    }
+
+    /// Computes how much of `incoming_quantity` this level could actually fill
+    /// for a taker, in quantity units, **without mutating the queue**.
+    ///
+    /// This is a deterministic dry run of the FIFO sweep: it replays
+    /// [`OrderType::match_against`] over a snapshot of the resting queue in the
+    /// same price-time order the real sweep uses, including iceberg / reserve
+    /// replenishment (a refreshed tranche is re-queued at the tail) and the
+    /// removal of a non-replenishing reserve once its visible part is drained.
+    /// The returned value is therefore exactly what [`Self::match_order`] would
+    /// consume — never an over- or under-count — which is what fill-or-kill
+    /// (all-or-nothing) correctly depends on.
+    ///
+    /// It allocates a working snapshot and is only used on the cold
+    /// fill-or-kill path, not on the hot `Gtc` sweep.
+    fn matchable_quantity(&self, incoming_quantity: u64) -> u64 {
+        if incoming_quantity == 0 {
+            return 0;
+        }
+
+        // Snapshot in deterministic FIFO order, mirroring the real sweep's
+        // `pop_entry` order so the dry run matches it exactly.
+        let mut pending: std::collections::VecDeque<Arc<OrderType<()>>> =
+            self.snapshot_orders().into();
+        let mut remaining = incoming_quantity;
+        let mut filled: u64 = 0;
+
+        while remaining > 0 {
+            let Some(order) = pending.pop_front() else {
+                break;
+            };
+            let (consumed, updated_order, hidden_reduced, new_remaining) =
+                order.match_against(remaining);
+
+            // No-progress safety guard, identical in shape to the real sweep
+            // (see `match_order`): a front maker that consumes nothing, draws no
+            // hidden, and leaves `remaining` unchanged while handing itself back
+            // is set aside (dropped from `pending`) rather than re-queued at the
+            // front, which would spin forever. Dropping it here is the dry-run
+            // analogue of the real sweep setting it aside: it contributes
+            // nothing to `filled`, and the makers behind it are still visited.
+            // Keeping this logic identical to the real sweep is what guarantees
+            // `matchable_quantity` predicts exactly what `match_order` consumes,
+            // which fill-or-kill depends on.
+            if consumed == 0
+                && hidden_reduced == 0
+                && new_remaining == remaining
+                && updated_order.is_some()
+            {
+                continue;
+            }
+
+            // `consumed <= remaining <= incoming_quantity`, so this sum cannot
+            // overflow `u64`; checked anyway per the no-saturate/no-wrap rule.
+            filled = match filled.checked_add(consumed) {
+                Some(total) => total,
+                None => break,
+            };
+            remaining = new_remaining;
+
+            if let Some(updated) = updated_order {
+                if hidden_reduced > 0 {
+                    // Replenished tranche loses time priority -> back of queue,
+                    // exactly as the real sweep re-queues it.
+                    pending.push_back(Arc::new(updated));
+                } else {
+                    // Pure partial fill keeps front position; the taker is now
+                    // exhausted (`remaining == 0`) so the loop ends next check.
+                    pending.push_front(Arc::new(updated));
+                }
+            }
+        }
+
+        filled
+    }
+
+    /// Matches an incoming taker order against existing orders at this price level.
+    ///
+    /// The sweep consumes resting makers in strict price-time (FIFO) order until
+    /// the taker is filled or the matchable depth is exhausted. Trades are
+    /// generated for each successful match, fully-consumed makers are removed,
+    /// and the visible / hidden quantity counters and statistics are updated in
+    /// lockstep with each execution.
+    ///
+    /// # Taker time-in-force / kind semantics
+    ///
+    /// Unlike earlier versions, this method **honors the taker's**
+    /// [`TimeInForce`] and [`TakerKind`]. Let `available` be the quantity this
+    /// level can actually fill for the taker (see [`Self::matchable_quantity`]),
+    /// capped at `incoming_quantity`:
+    ///
+    /// - [`TakerKind::PostOnly`]: must never take liquidity. If `available > 0`
+    ///   the match is **rejected** — zero trades, the full `incoming_quantity`
+    ///   reported as remaining, and the resting queue left untouched
+    ///   ([`MatchResult::was_rejected`]).
+    /// - [`TimeInForce::Fok`]: all-or-nothing. If `available < incoming_quantity`
+    ///   the taker is **killed** — zero trades, full remaining, queue untouched
+    ///   ([`MatchResult::was_killed`]). Otherwise it fills completely.
+    /// - [`TimeInForce::Ioc`]: fills `available` and discards the remainder.
+    ///   The taker is never enqueued here (this layer never rests a taker), so
+    ///   the remainder is simply reported and dropped by the caller.
+    /// - [`TimeInForce::Gtc`] / [`TimeInForce::Gtd`] / [`TimeInForce::Day`]:
+    ///   fills `available`; the remainder is reported in
+    ///   [`MatchResult::remaining_quantity`] for the order book to rest.
+    /// - [`TakerKind::MarketToLimit`]: fills `available`; the remainder is
+    ///   reported for the order book to convert into a resting limit. At this
+    ///   single-level layer it fills like a standard taker.
+    ///
+    /// A post-only rejection and a fill-or-kill kill both leave zero trades and
+    /// the full remainder; use [`MatchResult::outcome`] /
+    /// [`MatchResult::was_rejected`] / [`MatchResult::was_killed`] to tell them
+    /// apart from "the level had no liquidity".
+    ///
+    /// Time-in-force EXPIRY of resting **makers** is still NOT enforced here: a
+    /// resting maker's `Gtd` / `Day` expiry is not consulted, so an expired
+    /// maker still matches. Evicting or skipping expired makers is the
+    /// caller's / order book's responsibility, keeping the match path a pure,
+    /// deterministic sweep over the resting queue.
     ///
     /// # Arguments
     ///
-    /// * `incoming_quantity`: The quantity of the incoming order to be matched.
+    /// * `incoming_quantity`: The quantity of the incoming taker order to match.
     /// * `taker_order_id`: The ID of the incoming order (the "taker" order).
+    /// * `taker_tif`: The taker's [`TimeInForce`], which governs how an unfilled
+    ///   remainder is treated (kill / discard / rest).
+    /// * `taker_kind`: The taker's [`TakerKind`] (standard / post-only /
+    ///   market-to-limit).
     /// * `timestamp`: The taker timestamp (milliseconds since epoch) stamped
     ///   onto every emitted [`Trade`] and used as the execution time for
     ///   statistics. It is threaded in from the caller so the match path never
@@ -269,13 +394,18 @@ impl PriceLevel {
     /// * `trade_id_generator`: An atomic counter used to generate unique trade IDs.
     ///
     /// [`Trade`]: crate::execution::Trade
+    /// [`TimeInForce`]: crate::orders::TimeInForce
+    /// [`TakerKind`]: crate::execution::TakerKind
+    /// [`MatchResult::was_rejected`]: crate::execution::MatchResult::was_rejected
+    /// [`MatchResult::was_killed`]: crate::execution::MatchResult::was_killed
+    /// [`MatchResult::outcome`]: crate::execution::MatchResult::outcome
+    /// [`MatchResult::remaining_quantity`]: crate::execution::MatchResult::remaining_quantity
     ///
     /// # Returns
     ///
-    /// A `MatchResult` object containing the results of the matching operation, including a list of
-    /// generated trades, the remaining unmatched quantity, a flag indicating whether the
-    /// incoming order was completely filled, and a list of IDs of orders that were completely filled
-    /// during the matching process.
+    /// A `MatchResult` carrying the generated trades, the remaining unmatched
+    /// quantity, the completion flag, the fully-filled maker IDs, and the
+    /// terminal [`MatchOutcome`](crate::execution::MatchOutcome).
     ///
     /// # Concurrency
     ///
@@ -286,14 +416,55 @@ impl PriceLevel {
     /// concurrent `match_order` calls on the *same* level — or a `match_order`
     /// racing a `cancel` of the resting order it is currently matching — must
     /// be serialized by the caller (an order book typically matches a level
-    /// from a single thread).
+    /// from a single thread). The post-only / fill-or-kill pre-checks read the
+    /// queue before the sweep; under that single-matcher assumption no
+    /// concurrent `match_order` can change the matchable depth between the
+    /// pre-check and the sweep.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
         taker_order_id: Id,
+        taker_tif: TimeInForce,
+        taker_kind: TakerKind,
         timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
+        // -------- Taker TIF / kind pre-checks (before any queue mutation) --------
+        //
+        // PostOnly: must never take liquidity. If any matchable depth exists for
+        // a positive taker, reject without touching the queue. A zero-quantity
+        // taker has nothing to cross, so it is not rejected (it falls through to
+        // the vacuous-complete sweep below).
+        if taker_kind.is_post_only() && incoming_quantity > 0 && self.has_matchable_depth() {
+            tracing::debug!(
+                taker_order_id = %taker_order_id,
+                incoming_quantity,
+                price = self.price,
+                "post-only taker rejected: would take liquidity"
+            );
+            let mut result = MatchResult::new(taker_order_id, incoming_quantity);
+            result.mark_rejected(incoming_quantity);
+            return result;
+        }
+
+        // Fill-or-kill: all-or-nothing. If the level cannot fill the taker in
+        // full, kill it without touching the queue.
+        if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
+            let available = self.matchable_quantity(incoming_quantity);
+            if available < incoming_quantity {
+                tracing::debug!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    available,
+                    price = self.price,
+                    "fill-or-kill taker killed: insufficient depth"
+                );
+                let mut result = MatchResult::new(taker_order_id, incoming_quantity);
+                result.mark_killed(incoming_quantity);
+                return result;
+            }
+        }
+
         // A single sweep emits at most one trade and at most one filled-order
         // id per resting order, so the live order count is an upper bound for
         // both vectors. Pre-size them to cut per-fill reallocations on the hot
@@ -304,10 +475,46 @@ impl PriceLevel {
         let mut result = MatchResult::with_capacity(taker_order_id, incoming_quantity, capacity);
         let mut remaining = incoming_quantity;
 
+        // No-progress safety guard. A popped maker that yields no progress
+        // (`consumed == 0`, re-queued unchanged, `remaining` not decreased)
+        // must not be re-popped this sweep, or the loop would spin forever on
+        // the same front order. Because such a dead order sits at the FRONT
+        // (FIFO), simply breaking would starve any matchable makers behind it.
+        // Instead we set the dead order ASIDE (preserving its original
+        // insertion sequence) and keep sweeping the rest of the queue; the
+        // set-aside orders are re-inserted at their original sequences after the
+        // sweep, so they stay resting in their correct price-time position with
+        // no silent loss of (hidden) quantity. `match_against`'s own progress
+        // fix means this guard should never fire for the iceberg/reserve states
+        // it now handles; it is defense-in-depth against any future
+        // zero-progress shape (e.g. a degenerate residual from
+        // `with_reduced_quantity(0)`).
+        let mut stalled: Vec<(u64, Arc<OrderType<()>>)> = Vec::new();
+
         while remaining > 0 {
             if let Some((order_seq, order_arc)) = self.orders.pop_entry() {
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
+
+                // Detect a non-progressing pop: nothing consumed, no hidden
+                // drawn, the taker's remaining unchanged, and the maker handed
+                // back to us to re-queue. Re-inserting it at its front sequence
+                // would make the next iteration pop the same id again. Set it
+                // aside and advance to the maker behind it.
+                if consumed == 0
+                    && hidden_reduced == 0
+                    && new_remaining == remaining
+                    && updated_order.is_some()
+                {
+                    tracing::warn!(
+                        order_id = %order_arc.id(),
+                        price = self.price,
+                        remaining,
+                        "match sweep: front maker made no progress; setting aside to avoid re-pop"
+                    );
+                    stalled.push((order_seq, order_arc));
+                    continue;
+                }
 
                 if consumed > 0 {
                     // Update visible quantity counter. `Relaxed`: advisory
@@ -408,6 +615,16 @@ impl PriceLevel {
             } else {
                 break;
             }
+        }
+
+        // Restore any set-aside non-progressing makers at their original
+        // insertion sequences. They were never modified, never traded against,
+        // and their visible/hidden counters were never touched, so re-inserting
+        // them leaves the queue and the atomic counters exactly as if they had
+        // simply been skipped — keeping counter <-> queue consistency intact and
+        // preserving their price-time position for the next sweep.
+        for (seq, order) in stalled {
+            self.orders.reinsert(seq, order);
         }
 
         result.finalize(remaining);
