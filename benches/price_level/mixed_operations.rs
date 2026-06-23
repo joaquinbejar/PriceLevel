@@ -32,6 +32,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 let _ = black_box(price_level.match_order(
                     50,
                     Id::from_u64(999),
+                    TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
             }
@@ -65,6 +66,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     100,
                     Id::from_u64(1000),
+                    TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
             }
@@ -90,6 +92,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     2,
                     Id::from_u64(1000 + i),
+                    TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
 
@@ -121,9 +124,24 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Execute a few large matches
-            black_box(price_level.match_order(300, Id::from_u64(1001), &transaction_id_generator));
-            black_box(price_level.match_order(400, Id::from_u64(1002), &transaction_id_generator));
-            black_box(price_level.match_order(300, Id::from_u64(1003), &transaction_id_generator));
+            black_box(price_level.match_order(
+                300,
+                Id::from_u64(1001),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
+            black_box(price_level.match_order(
+                400,
+                Id::from_u64(1002),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
+            black_box(price_level.match_order(
+                300,
+                Id::from_u64(1003),
+                TimestampMs::new(1_716_000_000_000),
+                &transaction_id_generator,
+            ));
         })
     });
 

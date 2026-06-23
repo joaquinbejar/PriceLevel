@@ -6,7 +6,7 @@ use crate::execution::{MatchResult, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate};
 use crate::price_level::order_queue::OrderQueue;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
-use crate::utils::{Price, Quantity};
+use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -173,7 +173,14 @@ impl PriceLevel {
     ///
     /// * `incoming_quantity`: The quantity of the incoming order to be matched.
     /// * `taker_order_id`: The ID of the incoming order (the "taker" order).
+    /// * `timestamp`: The taker timestamp (milliseconds since epoch) stamped
+    ///   onto every emitted [`Trade`] and used as the execution time for
+    ///   statistics. It is threaded in from the caller so the match path never
+    ///   reads the wall clock — guaranteeing a deterministic, replayable trade
+    ///   stream for a fixed input.
     /// * `trade_id_generator`: An atomic counter used to generate unique trade IDs.
+    ///
+    /// [`Trade`]: crate::execution::Trade
     ///
     /// # Returns
     ///
@@ -196,6 +203,7 @@ impl PriceLevel {
         &self,
         incoming_quantity: u64,
         taker_order_id: Id,
+        timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
         let mut result = MatchResult::new(taker_order_id, incoming_quantity);
@@ -213,13 +221,14 @@ impl PriceLevel {
                     // Use UUID generator directly
                     let trade_id = Id::from_uuid(trade_id_generator.next());
 
-                    let trade = Trade::new(
+                    let trade = Trade::with_timestamp(
                         trade_id,
                         taker_order_id,
                         order_arc.id(),
                         Price::new(self.price),
                         Quantity::new(consumed),
                         order_arc.side().opposite(),
+                        timestamp,
                     );
 
                     if result.add_trade(trade).is_err() {
@@ -240,6 +249,7 @@ impl PriceLevel {
                     consumed,
                     order_arc.price().as_u128(),
                     order_arc.timestamp(),
+                    timestamp.as_u64(),
                 );
 
                 if let Some(updated) = updated_order {

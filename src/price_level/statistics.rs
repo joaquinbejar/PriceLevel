@@ -101,14 +101,30 @@ impl PriceLevelStatistics {
         self.orders_removed.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record an order execution
+    /// Record an order execution.
+    ///
+    /// The `execution_timestamp` is the taker timestamp threaded in from the
+    /// caller (the same value stamped onto the emitted [`Trade`]s). It is used
+    /// both as the level's `last_execution_time` and as the reference time for
+    /// the per-maker waiting-time accumulation. This keeps the match path
+    /// clock-free and deterministic: no wall-clock read happens during a match.
+    ///
+    /// [`Trade`]: crate::execution::Trade
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if any of the counter
+    /// accumulations overflow, if the value (`quantity * price`) overflows
+    /// `u128`/`u64`, or if `order_timestamp` is strictly greater than
+    /// `execution_timestamp` (a maker arriving in the future of execution).
     pub fn record_execution(
         &self,
         quantity: u64,
         price: u128,
         order_timestamp: u64,
+        execution_timestamp: u64,
     ) -> Result<(), PriceLevelError> {
-        let current_time = Self::current_timestamp_milliseconds()?;
+        let current_time = execution_timestamp;
 
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
         Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;

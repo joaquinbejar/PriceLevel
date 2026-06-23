@@ -70,6 +70,7 @@ fn main() {
                         let match_result = thread_price_level.match_order(
                             5, // Match 5 units each time
                             taker_id,
+                            TimestampMs::new(1_716_000_000_000),
                             &thread_tx_id_gen,
                         );
 

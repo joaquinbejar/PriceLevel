@@ -39,7 +39,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Phase 4: Match 500 units
-            let result = level.match_order(500, Id::from_u64(9999), &id_gen);
+            let result = level.match_order(
+                500,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            );
             let _ = black_box(result.executed_quantity());
 
             // Phase 5: Read stats
@@ -59,7 +64,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             for i in 0..200_u64 {
                 if i % 5 == 0 {
                     // Match every 5th iteration
-                    black_box(level.match_order(10, Id::from_u64(10000 + i), &id_gen));
+                    black_box(level.match_order(
+                        10,
+                        Id::from_u64(10000 + i),
+                        TimestampMs::new(1_716_000_000_000),
+                        &id_gen,
+                    ));
                 } else {
                     // Add order
                     level.add_order(create_standard_order(i, 10000, 20));
@@ -102,7 +112,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Drain completely
-            let result = level.match_order(1000, Id::from_u64(9999), &id_gen);
+            let result = level.match_order(
+                1000,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            );
             black_box(result.is_complete());
             black_box(result.filled_order_ids().len());
         })
@@ -162,7 +177,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             }
 
             // Match and query stats
-            let result = level.match_order(100, Id::from_u64(9999), &id_gen);
+            let result = level.match_order(
+                100,
+                Id::from_u64(9999),
+                TimestampMs::new(1_716_000_000_000),
+                &id_gen,
+            );
             let _ = black_box(result.executed_quantity());
 
             let stats = level.stats();

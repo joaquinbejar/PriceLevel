@@ -40,12 +40,22 @@ fn partial_fill_keeps_price_time_priority_across_calls() {
     level.add_order(standard_buy(2, 10_000, 100, 1_001));
 
     // Partially fill A.
-    let first = level.match_order(60, Id::from_u64(901), &trade_ids);
+    let first = level.match_order(
+        60,
+        Id::from_u64(901),
+        TimestampMs::new(1_716_000_000_000),
+        &trade_ids,
+    );
     assert_eq!(first.trades().len(), 1);
     assert_eq!(first.trades().as_vec()[0].maker_order_id(), Id::from_u64(1));
 
     // Second aggressor must hit A's remainder (40) first, then B (10).
-    let second = level.match_order(50, Id::from_u64(902), &trade_ids);
+    let second = level.match_order(
+        50,
+        Id::from_u64(902),
+        TimestampMs::new(1_716_000_000_000),
+        &trade_ids,
+    );
     assert_eq!(second.trades().len(), 2);
     assert_eq!(
         second.trades().as_vec()[0].maker_order_id(),

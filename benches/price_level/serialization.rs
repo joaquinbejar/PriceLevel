@@ -88,7 +88,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
     let id_gen = UuidGenerator::new(namespace);
     let level = setup_standard_level(50);
-    let match_result = level.match_order(200, Id::from_u64(9999), &id_gen);
+    let match_result = level.match_order(
+        200,
+        Id::from_u64(9999),
+        TimestampMs::new(1_716_000_000_000),
+        &id_gen,
+    );
 
     // MatchResult Display
     group.bench_function("match_result_display", |b| {

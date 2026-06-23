@@ -134,7 +134,12 @@ fn main() {
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
         .unwrap_or_else(|e| exit_err(&format!("uuid: {e}")));
     let id_gen = UuidGenerator::new(namespace);
-    let result: MatchResult = price_level.match_order(50, Id::from_u64(999), &id_gen);
+    let result: MatchResult = price_level.match_order(
+        50,
+        Id::from_u64(999),
+        TimestampMs::new(1_716_000_000_000),
+        &id_gen,
+    );
 
     assert_eq_or_exit(
         result.executed_quantity().unwrap_or(0),

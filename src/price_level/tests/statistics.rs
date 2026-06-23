@@ -5,7 +5,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_new() {
@@ -29,11 +29,12 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
-        // Future timestamps should return an explicit error.
-        assert!(stats.record_execution(1, 100, now + 1_000).is_err());
+        // Future timestamps (maker arrived after execution) should return an
+        // explicit error.
+        assert!(stats.record_execution(1, 100, now + 1_000, now).is_err());
 
         // Multiplication overflow should return an explicit error.
-        assert!(stats.record_execution(u64::MAX, u128::MAX, 0).is_err());
+        assert!(stats.record_execution(u64::MAX, u128::MAX, 0, now).is_err());
     }
 
     #[test]
@@ -60,24 +61,24 @@ mod tests {
         }
         assert_eq!(stats.orders_removed(), 3);
 
+        // Deterministic execution timestamp threaded in by the caller.
+        let execution_time: u64 = 1_716_000_000_000;
+
         // Test recording executed orders
-        assert!(stats.record_execution(10, 100, 0).is_ok()); // qty=10, price=100, no timestamp
+        assert!(stats.record_execution(10, 100, 0, execution_time).is_ok()); // qty=10, price=100, no timestamp
         assert_eq!(stats.orders_executed(), 1);
         assert_eq!(stats.quantity_executed(), 10);
         assert_eq!(stats.value_executed(), 1000); // 10 * 100
         assert!(stats.last_execution_time.load(Ordering::Relaxed) > 0);
 
-        // Test with timestamp
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
-            - 1000; // 1 second ago
+        // Test with a maker timestamp 1 second before the execution time.
+        let timestamp = execution_time - 1000; // 1 second ago
 
-        // Sleep to ensure waiting time is measurable
-        thread::sleep(Duration::from_millis(10));
-
-        assert!(stats.record_execution(5, 200, timestamp).is_ok());
+        assert!(
+            stats
+                .record_execution(5, 200, timestamp, execution_time)
+                .is_ok()
+        );
         assert_eq!(stats.orders_executed(), 2);
         assert_eq!(stats.quantity_executed(), 15); // 10 + 5
         assert_eq!(stats.value_executed(), 2000); // 1000 + (5 * 200)
@@ -92,8 +93,9 @@ mod tests {
         assert_eq!(stats.average_execution_price(), None);
 
         // Test with executions
-        assert!(stats.record_execution(10, 100, 0).is_ok()); // Total value: 1000
-        assert!(stats.record_execution(20, 150, 0).is_ok()); // Total value: 3000 + 1000 = 4000
+        let execution_time: u64 = 1_716_000_000_000;
+        assert!(stats.record_execution(10, 100, 0, execution_time).is_ok()); // Total value: 1000
+        assert!(stats.record_execution(20, 150, 0, execution_time).is_ok()); // Total value: 3000 + 1000 = 4000
 
         // Average price should be 4000 / 30 = 133.33...
         let avg_price = stats.average_execution_price().unwrap();
@@ -107,14 +109,11 @@ mod tests {
         // Test with no executions
         assert_eq!(stats.average_waiting_time(), None);
 
-        // Test with executions
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        // Test with executions against a fixed execution time.
+        let now: u64 = 1_716_000_000_000;
 
-        assert!(stats.record_execution(10, 100, now - 1000).is_ok()); // 1 second ago
-        assert!(stats.record_execution(20, 150, now - 3000).is_ok()); // 3 seconds ago
+        assert!(stats.record_execution(10, 100, now - 1000, now).is_ok()); // 1 second ago
+        assert!(stats.record_execution(20, 150, now - 3000, now).is_ok()); // 3 seconds ago
 
         // Total waiting time: 1000 + 3000 = 4000ms, average = 2000ms
         let avg_wait = stats.average_waiting_time().unwrap();
@@ -128,11 +127,15 @@ mod tests {
         // Test with no executions
         assert_eq!(stats.time_since_last_execution(), None);
 
-        // Record an execution
-        assert!(stats.record_execution(10, 100, 0).is_ok());
-
-        // Sleep a bit to ensure time passes
-        thread::sleep(Duration::from_millis(10));
+        // Record an execution with an explicit execution time in the past so
+        // the wall-clock-based `time_since_last_execution` reports a positive
+        // delta deterministically (no sleep needed).
+        let past = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 1000;
+        assert!(stats.record_execution(10, 100, 0, past).is_ok());
 
         // Should return some non-zero value
         let time_since = stats.time_since_last_execution().unwrap();
@@ -146,7 +149,11 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        assert!(stats.record_execution(10, 100, 0).is_ok());
+        assert!(
+            stats
+                .record_execution(10, 100, 0, 1_716_000_000_000)
+                .is_ok()
+        );
 
         // Verify data was recorded
         assert_eq!(stats.orders_added(), 1);
@@ -174,7 +181,11 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        assert!(stats.record_execution(10, 100, 0).is_ok());
+        assert!(
+            stats
+                .record_execution(10, 100, 0, 1_716_000_000_000)
+                .is_ok()
+        );
 
         // Get display string
         let display_str = stats.to_string();
@@ -240,7 +251,11 @@ mod tests {
         // Add some data
         stats.record_order_added();
         stats.record_order_removed();
-        assert!(stats.record_execution(10, 100, 0).is_ok());
+        assert!(
+            stats
+                .record_execution(10, 100, 0, 1_716_000_000_000)
+                .is_ok()
+        );
 
         // Serialize to JSON
         let json = serde_json::to_string(&stats).unwrap();
@@ -327,7 +342,7 @@ mod tests {
                 for _ in 0..100 {
                     stats_clone.record_order_added();
                     stats_clone.record_order_removed();
-                    if let Err(error) = stats_clone.record_execution(1, 100, 0) {
+                    if let Err(error) = stats_clone.record_execution(1, 100, 0, 1_716_000_000_000) {
                         panic!("record_execution failed in thread: {error}");
                     }
                 }
@@ -356,7 +371,11 @@ mod tests {
         stats.record_order_added();
         stats.record_order_added();
         stats.record_order_removed();
-        assert!(stats.record_execution(10, 100, 0).is_ok());
+        assert!(
+            stats
+                .record_execution(10, 100, 0, 1_716_000_000_000)
+                .is_ok()
+        );
 
         // Verify stats were recorded
         assert_eq!(stats.orders_added(), 2);
