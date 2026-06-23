@@ -32,12 +32,15 @@ impl Price {
         Ok(Self(value))
     }
 
-    /// Creates a price from an `f64` value.
+    /// Creates a price from an `f64` value (rounded to the nearest integer).
     ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if `value` is not finite
-    /// (NaN or infinite) or is negative.
+    /// (NaN or infinite), is negative, or (after rounding) does not fit in a
+    /// `u128`. The range check is explicit because an `f64`-to-`u128` `as` cast
+    /// saturates rather than failing, which would silently clamp out-of-range
+    /// input to `u128::MAX`.
     pub fn from_f64(value: f64) -> Result<Self, PriceLevelError> {
         if !value.is_finite() || value < 0.0 {
             return Err(PriceLevelError::InvalidOperation {
@@ -45,7 +48,15 @@ impl Price {
             });
         }
 
-        Ok(Self(value.round() as u128))
+        let rounded = value.round();
+        // A finite, non-negative f64 fits in u128 iff it is strictly below 2^128.
+        if rounded >= 2.0_f64.powi(128) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!("price from f64 out of u128 range: {value}"),
+            });
+        }
+
+        Ok(Self(rounded as u128))
     }
 
     /// Converts the price to `f64` with potential precision loss.
@@ -109,12 +120,15 @@ impl Quantity {
         Ok(Self(value))
     }
 
-    /// Creates a quantity from an `f64` value.
+    /// Creates a quantity from an `f64` value (rounded to the nearest integer).
     ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if `value` is not finite
-    /// (NaN or infinite) or is negative.
+    /// (NaN or infinite), is negative, or (after rounding) does not fit in a
+    /// `u64`. The range check is explicit because an `f64`-to-`u64` `as` cast
+    /// saturates rather than failing, which would silently clamp out-of-range
+    /// input to `u64::MAX`.
     pub fn from_f64(value: f64) -> Result<Self, PriceLevelError> {
         if !value.is_finite() || value < 0.0 {
             return Err(PriceLevelError::InvalidOperation {
@@ -122,7 +136,15 @@ impl Quantity {
             });
         }
 
-        Ok(Self(value.round() as u64))
+        let rounded = value.round();
+        // A finite, non-negative f64 fits in u64 iff it is strictly below 2^64.
+        if rounded >= 2.0_f64.powi(64) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!("quantity from f64 out of u64 range: {value}"),
+            });
+        }
+
+        Ok(Self(rounded as u64))
     }
 
     /// Converts the quantity to `f64` with potential precision loss.
@@ -246,5 +268,29 @@ mod tests {
     fn from_f64_rejects_negative() {
         assert!(Price::from_f64(-1.0).is_err());
         assert!(Quantity::from_f64(-1.0).is_err());
+    }
+
+    #[test]
+    fn from_f64_rejects_out_of_range() {
+        // f64 -> int `as` casts saturate; from_f64 must reject instead of
+        // silently clamping to u128::MAX / u64::MAX.
+        assert!(matches!(
+            Price::from_f64(2.0_f64.powi(128)),
+            Err(PriceLevelError::InvalidOperation { .. })
+        ));
+        assert!(matches!(
+            Quantity::from_f64(2.0_f64.powi(64)),
+            Err(PriceLevelError::InvalidOperation { .. })
+        ));
+        // Just-in-range values still convert.
+        assert!(Price::from_f64(1_000_000.0).is_ok());
+        assert!(Quantity::from_f64(1_000_000.0).is_ok());
+    }
+
+    #[test]
+    fn from_f64_rejects_non_finite() {
+        assert!(Price::from_f64(f64::NAN).is_err());
+        assert!(Price::from_f64(f64::INFINITY).is_err());
+        assert!(Quantity::from_f64(f64::NAN).is_err());
     }
 }

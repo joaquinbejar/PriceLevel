@@ -76,8 +76,10 @@ impl PriceLevel {
     ///
     /// Returns [`PriceLevelError::ChecksumMismatch`] if the package's embedded
     /// SHA-256 checksum does not match its payload (tampered or corrupted
-    /// snapshot), [`PriceLevelError::InvalidOperation`] if the package carries
-    /// an unsupported snapshot format version, and propagates any
+    /// snapshot), [`PriceLevelError::SerializationError`] if re-encoding the
+    /// payload to recompute that checksum fails,
+    /// [`PriceLevelError::InvalidOperation`] if the package carries an
+    /// unsupported snapshot format version, and propagates any
     /// [`PriceLevelError`] from rebuilding the level out of the validated
     /// snapshot.
     pub fn from_snapshot_package(
@@ -93,9 +95,10 @@ impl PriceLevel {
     ///
     /// Returns [`PriceLevelError::DeserializationError`] if `data` is not a
     /// valid snapshot-package JSON document, [`PriceLevelError::ChecksumMismatch`]
-    /// if the decoded package's SHA-256 checksum does not match its payload, and
-    /// [`PriceLevelError::InvalidOperation`] on an unsupported snapshot format
-    /// version.
+    /// if the decoded package's SHA-256 checksum does not match its payload,
+    /// [`PriceLevelError::SerializationError`] if re-encoding the payload to
+    /// recompute that checksum fails, and [`PriceLevelError::InvalidOperation`]
+    /// on an unsupported snapshot format version.
     pub fn from_snapshot_json(data: &str) -> Result<Self, PriceLevelError> {
         let package = PriceLevelSnapshotPackage::from_json(data)?;
         Self::from_snapshot_package(package)
@@ -465,7 +468,8 @@ impl PriceLevel {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if computing the snapshot's
     /// aggregate quantities overflows while building the package's checksummed
-    /// payload.
+    /// payload, or [`PriceLevelError::SerializationError`] if encoding the
+    /// snapshot payload to compute its SHA-256 checksum fails.
     pub fn snapshot_package(&self) -> Result<PriceLevelSnapshotPackage, PriceLevelError> {
         PriceLevelSnapshotPackage::new(self.snapshot())
     }
