@@ -4,7 +4,7 @@
 // Validates stats deltas, queue/order count consistency, and matching correctness.
 
 use pricelevel::{
-    Hash32, Id, MatchResult, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side,
+    Hash32, Id, MatchResult, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TakerKind,
     TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::process;
@@ -127,6 +127,8 @@ fn main() {
     let match_result: MatchResult = price_level.match_order(
         200,
         taker_id,
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &trade_id_gen,
     );
@@ -157,6 +159,8 @@ fn main() {
     let partial = price_level.match_order(
         remaining_visible + 500,
         taker_id2,
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &trade_id_gen,
     );

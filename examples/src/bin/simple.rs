@@ -1,7 +1,7 @@
 // examples/src/bin/multi_threaded_price_level.rs
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, UuidGenerator, setup_logger,
 };
 use std::num::NonZeroU64;
@@ -71,6 +71,8 @@ fn main() {
                         let match_result = thread_price_level.match_order(
                             5, // Match 5 units each time
                             taker_id,
+                            TimeInForce::Gtc,
+                            TakerKind::Standard,
                             TimestampMs::new(1_716_000_000_000),
                             &thread_tx_id_gen,
                         );

@@ -6,6 +6,65 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+/// The terminal classification of a single-level matching operation.
+///
+/// This is the explicit signal a caller uses to tell apart outcomes that all
+/// look identical through `trades` / `remaining_quantity` alone — in
+/// particular, a fill-or-kill *kill* and a post-only *rejection* both leave
+/// zero trades and the full incoming quantity remaining, exactly like matching
+/// against an empty level, yet they mean very different things.
+///
+/// The outcome agrees with the rest of [`MatchResult`] by construction:
+/// `is_complete()` is `true` iff the outcome is [`MatchOutcome::Filled`], and
+/// [`MatchOutcome::Killed`] / [`MatchOutcome::Rejected`] are only ever set when
+/// no trade was emitted and the resting queue was left untouched.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchOutcome {
+    /// The incoming order was completely filled (`remaining_quantity == 0`).
+    Filled,
+
+    /// The incoming order was partially filled: at least one trade occurred but
+    /// some quantity remains. For a `Gtc` / `Gtd` / `Day` taker the order book
+    /// rests the remainder; for an `Ioc` / market-to-limit taker it is
+    /// discarded / converted by the caller.
+    PartiallyFilled,
+
+    /// No trade occurred and quantity remains because the level had nothing to
+    /// fill the taker with (empty or fully consumed by an earlier sweep). This
+    /// is the benign "no liquidity here" outcome — distinct from a kill or a
+    /// rejection.
+    #[default]
+    NotFilled,
+
+    /// A fill-or-kill (`Fok`) taker could not be filled in full at this level,
+    /// so it was killed: zero trades, full remaining quantity, resting queue
+    /// left untouched.
+    Killed,
+
+    /// A post-only taker would have taken liquidity (the level could fill some
+    /// of it), so it was rejected: zero trades, full remaining quantity,
+    /// resting queue left untouched.
+    Rejected,
+}
+
+impl MatchOutcome {
+    /// Returns `true` if the taker was killed by its fill-or-kill policy.
+    #[must_use]
+    #[inline]
+    pub fn was_killed(self) -> bool {
+        matches!(self, Self::Killed)
+    }
+
+    /// Returns `true` if the taker was rejected by its post-only policy.
+    #[must_use]
+    #[inline]
+    pub fn was_rejected(self) -> bool {
+        matches!(self, Self::Rejected)
+    }
+}
+
 /// Represents the result of a matching operation.
 ///
 /// Fields are private to enforce invariant consistency between
@@ -27,18 +86,37 @@ pub struct MatchResult {
 
     /// Any orders that were completely filled and removed from the book
     filled_order_ids: Vec<Id>,
+
+    /// Terminal classification of the match (filled / killed / rejected / ...).
+    ///
+    /// `#[serde(default)]` keeps snapshots produced before this field was added
+    /// deserializable: an older JSON payload restores as
+    /// [`MatchOutcome::NotFilled`] and is corrected by the accessors derived
+    /// from the other fields where it matters.
+    #[serde(default)]
+    outcome: MatchOutcome,
 }
 
 impl MatchResult {
     /// Create a new empty match result
     #[must_use]
     pub fn new(order_id: Id, initial_quantity: u64) -> Self {
+        // A zero-quantity result is vacuously complete (nothing to fill), so keep
+        // is_complete / outcome consistent at construction — matching
+        // `finalize`'s `remaining == 0 => Filled` rule. A non-zero result starts
+        // incomplete / NotFilled until a trade or `finalize` updates it.
+        let is_complete = initial_quantity == 0;
         Self {
             order_id,
             trades: TradeList::new(),
             remaining_quantity: initial_quantity,
-            is_complete: false,
+            is_complete,
             filled_order_ids: Vec::new(),
+            outcome: if is_complete {
+                MatchOutcome::Filled
+            } else {
+                MatchOutcome::NotFilled
+            },
         }
     }
 
@@ -51,12 +129,19 @@ impl MatchResult {
     /// per-fill reallocations on the match hot path.
     #[must_use]
     pub fn with_capacity(order_id: Id, initial_quantity: u64, capacity: usize) -> Self {
+        // Same zero-quantity consistency as `new` (see there).
+        let is_complete = initial_quantity == 0;
         Self {
             order_id,
             trades: TradeList::with_capacity(capacity),
             remaining_quantity: initial_quantity,
-            is_complete: false,
+            is_complete,
             filled_order_ids: Vec::with_capacity(capacity),
+            outcome: if is_complete {
+                MatchOutcome::Filled
+            } else {
+                MatchOutcome::NotFilled
+            },
         }
     }
 
@@ -79,6 +164,14 @@ impl MatchResult {
                 ),
             })?;
         self.is_complete = self.remaining_quantity == 0;
+        // Keep the outcome in lockstep with the fields it summarizes: a trade
+        // has now occurred, so the result is at least partially filled.
+        // `finalize` re-derives the terminal classification after the sweep.
+        self.outcome = if self.is_complete {
+            MatchOutcome::Filled
+        } else {
+            MatchOutcome::PartiallyFilled
+        };
         self.trades.add(trade);
         Ok(())
     }
@@ -118,12 +211,79 @@ impl MatchResult {
         &self.filled_order_ids
     }
 
-    /// Sets the final remaining quantity and completion flag.
+    /// Returns the terminal classification of this match.
     ///
-    /// This is used internally by the matching engine after the matching loop.
+    /// See [`MatchOutcome`] for the full set of cases and how they relate to
+    /// the other fields. This is the only way to distinguish a fill-or-kill
+    /// *kill* and a post-only *rejection* (both zero-trade, full-remainder)
+    /// from matching against an empty level.
+    #[must_use]
+    pub fn outcome(&self) -> MatchOutcome {
+        self.outcome
+    }
+
+    /// Returns `true` if the taker was killed by its fill-or-kill policy.
+    ///
+    /// A killed match has zero trades, the full incoming quantity remaining,
+    /// and left the resting queue untouched.
+    #[must_use]
+    pub fn was_killed(&self) -> bool {
+        self.outcome.was_killed()
+    }
+
+    /// Returns `true` if the taker was rejected by its post-only policy.
+    ///
+    /// A rejected match has zero trades, the full incoming quantity remaining,
+    /// and left the resting queue untouched.
+    #[must_use]
+    pub fn was_rejected(&self) -> bool {
+        self.outcome.was_rejected()
+    }
+
+    /// Sets the final remaining quantity, completion flag, and outcome.
+    ///
+    /// This is used internally by the matching engine after the matching loop
+    /// for outcomes that actually swept the queue (filled / partially filled /
+    /// no liquidity). Kill and rejection are set by their dedicated helpers
+    /// because they are decided *before* any sweep and must not be
+    /// re-derived from the (deliberately untouched) fields.
     pub(crate) fn finalize(&mut self, remaining_quantity: u64) {
         self.remaining_quantity = remaining_quantity;
         self.is_complete = remaining_quantity == 0;
+        self.outcome = if self.is_complete {
+            MatchOutcome::Filled
+        } else if self.trades.is_empty() {
+            MatchOutcome::NotFilled
+        } else {
+            MatchOutcome::PartiallyFilled
+        };
+    }
+
+    /// Marks this result as a fill-or-kill *kill*: the taker could not be
+    /// filled in full at this level, so nothing was done.
+    ///
+    /// Resets `trades` / `filled_order_ids` to empty and `remaining_quantity`
+    /// to the full incoming quantity, asserting the "no partial state" rule.
+    /// Used internally by the matching engine.
+    pub(crate) fn mark_killed(&mut self, incoming_quantity: u64) {
+        self.trades = TradeList::new();
+        self.filled_order_ids.clear();
+        self.remaining_quantity = incoming_quantity;
+        self.is_complete = false;
+        self.outcome = MatchOutcome::Killed;
+    }
+
+    /// Marks this result as a post-only *rejection*: the taker would have taken
+    /// liquidity, so nothing was done.
+    ///
+    /// Resets `trades` / `filled_order_ids` to empty and `remaining_quantity`
+    /// to the full incoming quantity. Used internally by the matching engine.
+    pub(crate) fn mark_rejected(&mut self, incoming_quantity: u64) {
+        self.trades = TradeList::new();
+        self.filled_order_ids.clear();
+        self.remaining_quantity = incoming_quantity;
+        self.is_complete = false;
+        self.outcome = MatchOutcome::Rejected;
     }
 
     /// Get the total executed quantity
@@ -390,12 +550,27 @@ impl FromStr for MatchResult {
             }
         };
 
+        // The text format predates the explicit outcome signal and does not
+        // carry it, so re-derive the benign classification from the parsed
+        // fields. A `Killed` / `Rejected` outcome cannot be recovered from text
+        // (it is indistinguishable from `NotFilled` once the trades are gone);
+        // callers that need that distinction must use the in-memory result or
+        // the JSON (serde) representation, which preserves `outcome`.
+        let outcome = if is_complete {
+            MatchOutcome::Filled
+        } else if trades.is_empty() {
+            MatchOutcome::NotFilled
+        } else {
+            MatchOutcome::PartiallyFilled
+        };
+
         Ok(MatchResult {
             order_id,
             trades,
             remaining_quantity,
             is_complete,
             filled_order_ids,
+            outcome,
         })
     }
 }

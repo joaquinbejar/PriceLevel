@@ -1,6 +1,6 @@
 use criterion::Criterion;
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, UuidGenerator,
 };
 use std::hint::black_box;
@@ -33,6 +33,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 let _ = black_box(price_level.match_order(
                     50,
                     Id::from_u64(999),
+                    TimeInForce::Gtc,
+                    TakerKind::Standard,
                     TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
@@ -67,6 +69,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     100,
                     Id::from_u64(1000),
+                    TimeInForce::Gtc,
+                    TakerKind::Standard,
                     TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
@@ -93,6 +97,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 black_box(price_level.match_order(
                     2,
                     Id::from_u64(1000 + i),
+                    TimeInForce::Gtc,
+                    TakerKind::Standard,
                     TimestampMs::new(1_716_000_000_000),
                     &transaction_id_generator,
                 ));
@@ -128,18 +134,24 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(price_level.match_order(
                 300,
                 Id::from_u64(1001),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
             black_box(price_level.match_order(
                 400,
                 Id::from_u64(1002),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));
             black_box(price_level.match_order(
                 300,
                 Id::from_u64(1003),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &transaction_id_generator,
             ));

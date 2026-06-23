@@ -7,7 +7,7 @@
 //! ```
 
 pub use crate::errors::PriceLevelError;
-pub use crate::execution::{MatchResult, Trade, TradeList};
+pub use crate::execution::{MatchOutcome, MatchResult, TakerKind, Trade, TradeList};
 pub use crate::orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use crate::orders::PegReferenceType;
 pub use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};

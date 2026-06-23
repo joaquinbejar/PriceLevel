@@ -4,7 +4,7 @@
 // Display/FromStr and serde JSON for all execution types.
 
 use pricelevel::{
-    Hash32, Id, MatchResult, OrderType, Price, PriceLevel, Quantity, Side, TimeInForce,
+    Hash32, Id, MatchResult, OrderType, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, Trade, TradeList, UuidGenerator,
 };
 use std::process;
@@ -137,6 +137,8 @@ fn main() {
     let result: MatchResult = price_level.match_order(
         50,
         Id::from_u64(999),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
         TimestampMs::new(1_716_000_000_000),
         &id_gen,
     );

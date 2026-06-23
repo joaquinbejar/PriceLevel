@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion};
 use pricelevel::{
-    Hash32, Id, OrderType, PegReferenceType, Price, PriceLevel, Quantity, Side, TimeInForce,
-    TimestampMs, UuidGenerator,
+    Hash32, Id, OrderType, PegReferenceType, Price, PriceLevel, Quantity, Side, TakerKind,
+    TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::hint::black_box;
 use uuid::Uuid;
@@ -20,6 +20,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(level.match_order(
                 50,
                 Id::from_u64(9999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &id_gen,
             ));
@@ -33,6 +35,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(level.match_order(
                 50,
                 Id::from_u64(9999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &id_gen,
             ));
@@ -46,6 +50,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(level.match_order(
                 50,
                 Id::from_u64(9999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &id_gen,
             ));
@@ -59,6 +65,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(level.match_order(
                 50,
                 Id::from_u64(9999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &id_gen,
             ));
@@ -72,6 +80,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             black_box(level.match_order(
                 100,
                 Id::from_u64(9999),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
                 TimestampMs::new(1_716_000_000_000),
                 &id_gen,
             ));
@@ -89,6 +99,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     black_box(level.match_order(
                         order_count / 2,
                         Id::from_u64(9999),
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
                         TimestampMs::new(1_716_000_000_000),
                         &id_gen,
                     ));

@@ -1,7 +1,7 @@
 // examples/src/bin/contention_test.rs
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TimeInForce,
+    Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, UuidGenerator, setup_logger,
 };
 use std::collections::HashMap;
@@ -112,6 +112,8 @@ fn test_read_write_ratio() {
                                 thread_price_level.match_order(
                                     5, // Match 5 units
                                     taker_id,
+                                    TimeInForce::Gtc,
+                                    TakerKind::Standard,
                                     TimestampMs::new(1_716_000_000_000),
                                     &thread_tx_id_gen,
                                 );

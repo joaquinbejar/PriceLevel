@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::errors::PriceLevelError;
+    use crate::execution::{MatchOutcome, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::PriceLevelSnapshotPackage;
     use crate::price_level::level::{PriceLevel, PriceLevelData};
@@ -118,9 +119,23 @@ mod tests {
         let execution_ts = TimestampMs::new(1_716_000_000_000);
 
         // First match: fully consumes maker 1 and partially maker 2.
-        let _ = price_level.match_order(150, Id::from_u64(900), execution_ts, &trade_id_generator);
+        let _ = price_level.match_order(
+            150,
+            Id::from_u64(900),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            execution_ts,
+            &trade_id_generator,
+        );
         // Second match: consumes the rest of maker 2 and part of maker 3.
-        let _ = price_level.match_order(60, Id::from_u64(901), execution_ts, &trade_id_generator);
+        let _ = price_level.match_order(
+            60,
+            Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            execution_ts,
+            &trade_id_generator,
+        );
 
         let stats = price_level.stats();
         // Sanity: stats are genuinely non-zero before we snapshot.
@@ -568,6 +583,8 @@ mod tests {
         let match_result = price_level.match_order(
             100,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -628,7 +645,14 @@ mod tests {
             price_level.add_order(mk(3, 50));
 
             let trade_id_generator = UuidGenerator::new(namespace);
-            price_level.match_order(90, taker_id, timestamp, &trade_id_generator)
+            price_level.match_order(
+                90,
+                taker_id,
+                TimeInForce::Gtc,
+                TakerKind::Standard,
+                timestamp,
+                &trade_id_generator,
+            )
         };
 
         let first = run();
@@ -665,6 +689,8 @@ mod tests {
         let match_result = price_level.match_order(
             60,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -706,6 +732,8 @@ mod tests {
         let match_result = price_level.match_order(
             150,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -747,6 +775,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -774,6 +804,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -796,6 +828,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -822,6 +856,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -849,6 +885,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -873,6 +911,8 @@ mod tests {
         let match_result = price_level.match_order(
             150,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -898,6 +938,8 @@ mod tests {
         let match_result = price_level.match_order(
             30,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -928,6 +970,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -957,6 +1001,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -992,6 +1038,8 @@ mod tests {
         let match_result = price_level.match_order(
             25,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1006,6 +1054,8 @@ mod tests {
         let match_result = price_level.match_order(
             10,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1043,6 +1093,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1072,6 +1124,8 @@ mod tests {
         let match_result = price_level.match_order(
             49,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1100,6 +1154,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1128,6 +1184,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1156,6 +1214,8 @@ mod tests {
         let match_result = price_level.match_order(
             25,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1170,6 +1230,8 @@ mod tests {
         let match_result = price_level.match_order(
             10,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1201,6 +1263,8 @@ mod tests {
         let match_result = price_level.match_order(
             80,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1228,6 +1292,8 @@ mod tests {
         let match_result = price_level.match_order(
             10,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1251,6 +1317,8 @@ mod tests {
         let match_result = price_level.match_order(
             150,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1296,6 +1364,8 @@ mod tests {
         let match_result = price_level.match_order(
             60,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1319,6 +1389,8 @@ mod tests {
         let match_result = price_level.match_order(
             100,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1342,6 +1414,8 @@ mod tests {
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1365,6 +1439,8 @@ mod tests {
         let match_result = price_level.match_order(
             100,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1384,16 +1460,14 @@ mod tests {
     // gaps for PostOnly / TrailingStop / PeggedOrder / MarketToLimit, plus the
     // `incoming_quantity == 0` boundary.
     //
-    // IMPORTANT — current engine behavior. These four order types fall through
-    // the `_ =>` arm of `OrderType::match_against` (orders/order_type.rs) and
-    // are matched as plain standard makers: their visible quantity is consumed
-    // FIFO exactly like a `Standard` order. The genuine taker-side semantics
-    // (post-only rejection, market-to-limit conversion, pegged / trailing-stop
-    // reprice) are NOT implemented in the engine yet — that is the separate,
-    // gated issue #65. The "type-branch" tests below therefore PIN the current
-    // pass-through behavior; they deliberately do NOT assert post-only /
-    // conversion semantics the engine does not have. When #65 lands, the
-    // type-branch tests are the ones that must be revisited.
+    // IMPORTANT — these test RESTING MAKERS of each order type. Post-only,
+    // market-to-limit, pegged, and trailing-stop are taker-side / order-book
+    // policies; as *resting makers* these order types are plain liquidity and
+    // are consumed FIFO exactly like a `Standard` order, at the level price. The
+    // genuine taker-side semantics (post-only rejection, market-to-limit
+    // conversion, fill-or-kill / IOC) live in `match_order` and are covered by
+    // the "TAKER TIF / KIND SEMANTICS (#65)" block further below — those tests
+    // vary the *taker's* intent, while these vary the *resting maker's* type.
     //
     // Maker sides (taken from each helper, which differ): PostOnly = Buy,
     // TrailingStop = Sell, PeggedOrder = Buy, MarketToLimit = Buy. The correct
@@ -1415,6 +1489,8 @@ mod tests {
         let result = price_level.match_order(
             60,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1441,6 +1517,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1456,13 +1534,13 @@ mod tests {
     }
 
     #[test]
-    fn test_match_post_only_type_branch_pins_passthrough() {
-        // Type-specific branch: a PostOnly maker would, under genuine post-only
-        // semantics (pending #65), reject the resting/taker interaction
-        // differently. Today it falls through the `_ =>` arm of
-        // `match_against` and fills exactly like a standard maker. This test
-        // PINS that pass-through: an over-large taker drains the maker and
-        // leaves a positive remainder, identical to a `Standard` maker.
+    fn test_match_post_only_resting_maker_consumed_like_standard() {
+        // Post-only is a TAKER-side policy: a PostOnly order resting as a
+        // *maker* is just ordinary liquidity and is consumed exactly like a
+        // `Standard` maker. (The real post-only rejection — a post-only TAKER
+        // refusing to cross — is covered by the taker-side tests below.) An
+        // over-large `Gtc` taker drains the PostOnly maker and leaves a
+        // positive remainder.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
@@ -1472,6 +1550,8 @@ mod tests {
         let result = price_level.match_order(
             150,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1498,6 +1578,8 @@ mod tests {
         let result = price_level.match_order(
             75,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1523,6 +1605,8 @@ mod tests {
         let result = price_level.match_order(
             40,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1550,6 +1634,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1565,12 +1651,11 @@ mod tests {
     }
 
     #[test]
-    fn test_match_trailing_stop_type_branch_pins_passthrough() {
-        // Type-specific branch: genuine trailing-stop reprice semantics are
-        // pending #65. Today a TrailingStop maker falls through the `_ =>` arm
-        // of `match_against` and fills like a standard maker with no reprice.
-        // PIN that pass-through: an over-large taker drains the maker and
-        // leaves a positive remainder.
+    fn test_match_trailing_stop_resting_maker_consumed_like_standard() {
+        // A resting TrailingStop maker is matched as ordinary liquidity: trail
+        // repricing is the order book's job, not the single-level match. An
+        // over-large `Gtc` taker drains the maker at the level price and leaves
+        // a positive remainder.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
@@ -1580,6 +1665,8 @@ mod tests {
         let result = price_level.match_order(
             120,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1604,6 +1691,8 @@ mod tests {
         let result = price_level.match_order(
             55,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1629,6 +1718,8 @@ mod tests {
         let result = price_level.match_order(
             50,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1655,6 +1746,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1670,11 +1763,10 @@ mod tests {
     }
 
     #[test]
-    fn test_match_pegged_type_branch_pins_passthrough() {
-        // Type-specific branch: genuine pegged reprice semantics (peg to a
-        // reference price) are pending #65. Today a PeggedOrder maker falls
-        // through the `_ =>` arm and fills like a standard maker at the level
-        // price with no reprice. PIN that pass-through with an over-large taker.
+    fn test_match_pegged_resting_maker_consumed_like_standard() {
+        // A resting PeggedOrder maker is matched as ordinary liquidity at the
+        // level price; pegging to a reference price is the order book's job, not
+        // the single-level match. An over-large `Gtc` taker drains the maker.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
@@ -1684,6 +1776,8 @@ mod tests {
         let result = price_level.match_order(
             130,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1710,6 +1804,8 @@ mod tests {
         let result = price_level.match_order(
             33,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1735,6 +1831,8 @@ mod tests {
         let result = price_level.match_order(
             70,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1761,6 +1859,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1776,13 +1876,11 @@ mod tests {
     }
 
     #[test]
-    fn test_match_market_to_limit_type_branch_pins_passthrough() {
-        // Type-specific branch: genuine market-to-limit conversion semantics
-        // (an unfilled remainder converting to a resting limit) are pending
-        // #65. Today a MarketToLimit maker falls through the `_ =>` arm and
-        // fills like a standard maker; the taker's unfilled remainder is simply
-        // reported as `remaining_quantity`, NOT converted. PIN that
-        // pass-through with an over-large taker.
+    fn test_match_market_to_limit_resting_maker_consumed_like_standard() {
+        // A resting MarketToLimit maker is matched as ordinary liquidity.
+        // Market-to-limit is a TAKER-side policy (converting the taker's unfilled
+        // remainder into a resting limit); as a maker it is consumed like a
+        // `Standard` order. An over-large `Gtc` taker drains it.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
@@ -1792,6 +1890,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1816,6 +1916,8 @@ mod tests {
         let result = price_level.match_order(
             90,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1846,6 +1948,8 @@ mod tests {
         let result = price_level.match_order(
             0,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -1864,64 +1968,382 @@ mod tests {
     }
 
     #[test]
-    fn test_match_fill_or_kill_order() {
-        // NOTE: the FOK time-in-force on the resting *maker* is NOT enforced at
-        // this layer. `match_order` does not consult the maker's TIF — the FOK
-        // order matches exactly like a `TimeInForce::Gtc` standard order. This
-        // test only pins that "a resting FOK maker is consumable like any
-        // other"; it does NOT assert all-or-nothing "kill" semantics, because
-        // the engine cannot enforce them here. Real FOK/IOC *taker* semantics
-        // (all-or-nothing fill, discard-remainder) require `match_order` to
-        // accept a taker TIF and are gated on issue #65.
+    fn test_match_fill_or_kill_taker_fully_filled() {
+        // FOK TAKER, sufficient depth: the level can fill the taker in full
+        // (available == incoming == 100), so it fills completely like any other.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_fill_or_kill_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(1, 10000, 100));
 
-        // For the price level, FOK behaves like standard orders
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(
             100,
             taker_id,
+            TimeInForce::Fok,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
+        assert_eq!(match_result.outcome(), MatchOutcome::Filled);
+        assert!(!match_result.was_killed());
+        assert_eq!(match_result.trades().len(), 1);
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
     }
 
     #[test]
-    fn test_match_immediate_or_cancel_order() {
-        // NOTE: the IOC time-in-force on the resting *maker* is NOT enforced at
-        // this layer. `match_order` does not consult the maker's TIF — the IOC
-        // order matches and the unfilled remainder keeps resting exactly like a
-        // `TimeInForce::Gtc` standard order. This test only pins that "a resting
-        // IOC maker is partially consumable like any other and the unmatched
-        // part stays in the queue"; it does NOT assert IOC discard semantics on
-        // the maker. Real FOK/IOC *taker* semantics (the taker discarding its
-        // own remainder rather than the maker) require `match_order` to accept a
-        // taker TIF and are gated on issue #65.
+    fn test_match_immediate_or_cancel_taker_fills_available_and_discards() {
+        // IOC TAKER smaller than resting depth: fills fully, nothing discarded.
         let price_level = PriceLevel::new(10000);
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_immediate_or_cancel_order(1, 10000, 100));
+        price_level.add_order(create_standard_order(1, 10000, 100));
 
-        // For the price level, IOC behaves like standard orders
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(
             50,
             taker_id,
+            TimeInForce::Ioc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
 
         assert_eq!(match_result.remaining_quantity(), 0);
         assert!(match_result.is_complete());
+        assert_eq!(match_result.outcome(), MatchOutcome::Filled);
+        // The maker keeps the unmatched 50 resting; the IOC taker is never
+        // enqueued by this layer.
+        assert_eq!(price_level.visible_quantity(), 50);
+        assert_eq!(price_level.order_count(), 1);
+    }
+
+    // --------------------------------- TAKER TIF / KIND SEMANTICS (#65) --------
+    //
+    // `match_order` honors the taker's TimeInForce and TakerKind. These tests
+    // pin the single-level semantics: FOK fills-completely-or-kills, IOC
+    // fills-available-and-discards, PostOnly rejects on cross, MarketToLimit
+    // fills-available. Resting makers are plain `Standard` Buy orders so the
+    // only variable is the taker's intent.
+
+    fn fok_namespace_gen() -> UuidGenerator {
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        UuidGenerator::new(namespace)
+    }
+
+    // ----- FOK boundary: fills completely or kills (both sides) -----
+
+    #[test]
+    fn test_match_fok_taker_exactly_fillable_fills_completely() {
+        // available (100) == incoming (100): on the fill side of the boundary.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 60));
+        price_level.add_order(create_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert!(!result.was_killed());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.executed_quantity().expect("ok"), 100);
+        assert_eq!(result.filled_order_ids().len(), 2);
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+    }
+
+    #[test]
+    fn test_match_fok_taker_one_short_is_killed() {
+        // available (100) < incoming (101): on the kill side of the boundary by
+        // exactly one unit. Zero trades, full remainder, queue untouched.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 60));
+        price_level.add_order(create_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            101,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(!result.is_complete());
+        assert!(result.was_killed());
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert_eq!(result.remaining_quantity(), 101);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(result.executed_quantity().expect("ok"), 0);
+        // No partial state: the resting depth is fully intact.
+        assert_eq!(price_level.order_count(), 2);
+        assert_eq!(price_level.visible_quantity(), 100);
+    }
+
+    #[test]
+    fn test_match_fok_taker_killed_against_empty_level() {
+        // Empty level cannot fill any positive FOK taker -> killed.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+
+        let result = price_level.match_order(
+            10,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.was_killed());
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.trades().len(), 0);
+    }
+
+    #[test]
+    fn test_match_fok_taker_drains_iceberg_hidden_then_fills() {
+        // `available` must count replenishable hidden depth the single sweep
+        // would draw: an iceberg with visible 10 + hidden 40 can fill a FOK
+        // taker of 50, so it fills rather than (wrongly) being killed.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_iceberg_order(1, 10000, 10, 40));
+
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert_eq!(result.executed_quantity().expect("ok"), 50);
+        assert_eq!(price_level.order_count(), 0);
+    }
+
+    // ----- IOC: fills available and discards remainder -----
+
+    #[test]
+    fn test_match_ioc_taker_fills_available_and_discards_remainder() {
+        // available (100) < incoming (150): fill 100, discard 50. The taker is
+        // never enqueued; the level is emptied of makers.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 60));
+        price_level.add_order(create_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            150,
+            Id::from_u64(999),
+            TimeInForce::Ioc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
+        assert!(!result.was_killed());
+        assert!(!result.was_rejected());
+        assert_eq!(result.executed_quantity().expect("ok"), 100);
+        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.filled_order_ids().len(), 2);
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+    }
+
+    // ----- PostOnly: rejects on cross -----
+
+    #[test]
+    fn test_match_post_only_taker_rejected_on_cross() {
+        // The level has matchable depth, so a post-only taker would take
+        // liquidity -> rejected: zero trades, full remainder, queue untouched.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            60,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.was_rejected());
+        assert_eq!(result.outcome(), MatchOutcome::Rejected);
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 60);
+        assert_eq!(result.trades().len(), 0);
+        assert_eq!(result.filled_order_ids().len(), 0);
+        assert_eq!(result.executed_quantity().expect("ok"), 0);
+        // Resting maker untouched.
+        assert_eq!(price_level.order_count(), 1);
+        assert_eq!(price_level.visible_quantity(), 100);
+    }
+
+    #[test]
+    fn test_match_post_only_taker_accepted_on_empty_level() {
+        // No matchable depth -> the post-only taker does not cross and is NOT
+        // rejected. It simply finds nothing to fill (NotFilled).
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+
+        let result = price_level.match_order(
+            60,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(!result.was_rejected());
+        assert_eq!(result.outcome(), MatchOutcome::NotFilled);
+        assert!(!result.is_complete());
+        assert_eq!(result.remaining_quantity(), 60);
+        assert_eq!(result.trades().len(), 0);
+    }
+
+    #[test]
+    fn test_match_post_only_taker_zero_quantity_not_rejected() {
+        // A zero-quantity post-only taker has nothing to cross -> not rejected;
+        // it falls through to the vacuous-complete sweep.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            0,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(!result.was_rejected());
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(price_level.order_count(), 1);
+        assert_eq!(price_level.visible_quantity(), 100);
+    }
+
+    // ----- MarketToLimit: fills available, reports remainder -----
+
+    #[test]
+    fn test_match_market_to_limit_taker_fills_available_reports_remainder() {
+        // available (100) < incoming (130): fill 100, report 40 for the order
+        // book to convert/rest. At this layer it behaves like a standard taker.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            140,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::MarketToLimit,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(!result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
+        assert!(!result.was_killed());
+        assert!(!result.was_rejected());
+        assert_eq!(result.executed_quantity().expect("ok"), 100);
+        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.filled_order_ids().len(), 1);
+        assert_eq!(price_level.order_count(), 0);
+    }
+
+    #[test]
+    fn test_match_market_to_limit_taker_full_fill() {
+        // available (100) == incoming (100): fully filled, no remainder.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_standard_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::MarketToLimit,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.executed_quantity().expect("ok"), 100);
+    }
+
+    // ----- resting FOK / IOC makers are consumed like any other liquidity -----
+
+    #[test]
+    fn test_match_resting_fok_maker_consumed_by_standard_taker() {
+        // A resting maker tagged FOK is just liquidity here; a Gtc taker
+        // consumes it normally. (FOK is a taker-side policy.)
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_fill_or_kill_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert_eq!(price_level.order_count(), 0);
+    }
+
+    #[test]
+    fn test_match_resting_ioc_maker_partially_consumed_by_standard_taker() {
+        // A resting maker tagged IOC is just liquidity; a smaller Gtc taker
+        // partially consumes it and the remainder keeps resting.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = fok_namespace_gen();
+        price_level.add_order(create_immediate_or_cancel_order(1, 10000, 100));
+
+        let result = price_level.match_order(
+            50,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.order_count(), 1);
     }
@@ -1939,6 +2361,8 @@ mod tests {
         let match_result = price_level.match_order(
             100,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -1949,23 +2373,18 @@ mod tests {
         assert_eq!(price_level.order_count(), 0);
     }
 
-    /// Pin the de-facto IOC behavior of `match_order` for a taker larger than
-    /// the available resting depth.
+    /// A `Gtc` taker larger than the available resting depth fills everything it
+    /// can and reports the unfilled remainder.
     ///
-    /// `match_order` takes no taker `TimeInForce` and NEVER enqueues the taker:
-    /// it fills every unit it can against the resting queue and reports the
-    /// unfilled remainder via `remaining_quantity()`. With a taker (150) that
-    /// exceeds total depth (100), this is exactly the observable IOC outcome —
-    /// "fill what you can, discard the rest" — even though no IOC flag is
-    /// consulted: the resting depth is fully consumed, `remaining_quantity()`
-    /// stays positive, `is_complete()` is false, and nothing of the taker is
-    /// left resting at the level (the level only holds makers, and `match_order`
-    /// adds no new order).
-    ///
-    /// Explicit IOC/FOK *taker* semantics — distinguishing "discard remainder"
-    /// (IOC) from "all-or-nothing kill" (FOK) — require `match_order` to accept
-    /// a taker TIF and are gated on issue #65; they are intentionally NOT
-    /// asserted here.
+    /// `match_order` NEVER enqueues the taker: it fills every unit it can
+    /// against the resting queue and reports the unfilled remainder via
+    /// `remaining_quantity()`. With a taker (150) that exceeds total depth
+    /// (100), the resting depth is fully consumed, `remaining_quantity()` stays
+    /// positive, `is_complete()` is false, and nothing of the taker is left
+    /// resting at the level (the level only holds makers, and `match_order` adds
+    /// no new order). For a `Gtc` taker the order book rests the 50 remainder;
+    /// distinguishing that from an `Ioc` discard or a `Fok` kill is the job of
+    /// the taker-TIF tests above.
     #[test]
     fn test_match_order_taker_exceeds_depth_fills_available_and_reports_remainder() {
         let price_level = PriceLevel::new(10000);
@@ -1983,6 +2402,8 @@ mod tests {
         let result = price_level.match_order(
             150,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -2049,6 +2470,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(match_ts),
             &trade_id_generator,
         );
@@ -2078,6 +2501,8 @@ mod tests {
         let match_result = price_level.match_order(
             140,
             taker_id,
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -2268,8 +2693,14 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
         let execution_ts = TimestampMs::new(1_716_000_000_000);
-        let match_result =
-            price_level.match_order(40, Id::from_u64(900), execution_ts, &trade_id_generator);
+        let match_result = price_level.match_order(
+            40,
+            Id::from_u64(900),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            execution_ts,
+            &trade_id_generator,
+        );
 
         let trades = match_result.trades().as_vec();
         assert_eq!(trades.len(), 1);
@@ -2303,8 +2734,14 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
         let execution_ts = TimestampMs::new(1_716_000_000_000);
-        let match_result =
-            price_level.match_order(100, Id::from_u64(900), execution_ts, &trade_id_generator);
+        let match_result = price_level.match_order(
+            100,
+            Id::from_u64(900),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            execution_ts,
+            &trade_id_generator,
+        );
 
         let trades = match_result.trades().as_vec();
         assert_eq!(trades.len(), 1);
@@ -2679,6 +3116,8 @@ mod tests {
         let match_result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
@@ -3063,6 +3502,8 @@ mod tests {
         let first = price_level.match_order(
             60,
             Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3081,6 +3522,8 @@ mod tests {
         let second = price_level.match_order(
             50,
             Id::from_u64(902),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3123,6 +3566,8 @@ mod tests {
         let _ = price_level.match_order(
             60,
             Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3152,6 +3597,8 @@ mod tests {
         let first = price_level.match_order(
             50,
             Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3163,6 +3610,8 @@ mod tests {
         let second = price_level.match_order(
             50,
             Id::from_u64(902),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3186,6 +3635,8 @@ mod tests {
         let _ = price_level.match_order(
             60,
             Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_ids,
         );
@@ -3205,6 +3656,8 @@ mod tests {
         let result = restored.match_order(
             50,
             Id::from_u64(903),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &restored_trade_ids,
         );
@@ -3300,6 +3753,8 @@ mod tests {
                     let _ = level.match_order(
                         3,
                         taker_id,
+                        TimeInForce::Gtc,
+                        TakerKind::Standard,
                         TimestampMs::new(1_716_000_000_000),
                         &generator,
                     );
@@ -3470,6 +3925,8 @@ mod tests {
         let result = price_level.match_order(
             40,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3498,6 +3955,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3523,6 +3982,8 @@ mod tests {
         let result = price_level.match_order(
             100,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3550,6 +4011,8 @@ mod tests {
         let result = price_level.match_order(
             90,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3572,6 +4035,8 @@ mod tests {
         let result = price_level.match_order(
             50,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3600,6 +4065,8 @@ mod tests {
         let result = price_level.match_order(
             50,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3626,6 +4093,8 @@ mod tests {
         let result = price_level.match_order(
             50,
             Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
             TimestampMs::new(1_716_000_000_000),
             &trade_id_generator,
         );
@@ -3665,7 +4134,14 @@ mod tests {
             let trade_id_generator = UuidGenerator::new(namespace);
             // Cross more than the visible tranche to force replenishment and a
             // multi-trade stream.
-            price_level.match_order(120, taker_id, timestamp, &trade_id_generator)
+            price_level.match_order(
+                120,
+                taker_id,
+                TimeInForce::Gtc,
+                TakerKind::Standard,
+                timestamp,
+                &trade_id_generator,
+            )
         };
 
         let first = run();
@@ -3674,6 +4150,443 @@ mod tests {
         assert_eq!(first.trades().as_vec(), second.trades().as_vec());
         assert_match_result_consistent(&first, 10000, Side::Sell);
         assert_match_result_consistent(&second, 10000, Side::Sell);
+    }
+
+    // ============================================================
+    // Regression tests for issue #65: zero-visible iceberg / reserve
+    // at the FRONT of the queue must not cause an infinite match loop.
+    //
+    // Each of these tests would HANG before the fix: a zero-visible
+    // iceberg/reserve with hidden depth returned no-progress from
+    // `match_against`, so the sweep (and the FOK dry run) re-popped the
+    // same front order forever. A normal matchable maker is parked
+    // BEHIND the dead order to prove the sweep still reaches makers
+    // behind a non-progressing front order (FIFO, no starvation).
+    // All makers rest on Side::Sell so `assert_match_result_consistent`
+    // sees a single, known maker side.
+    // ============================================================
+
+    /// Sell-side standard maker (the queue-behind liquidity). The shared
+    /// `create_standard_order` rests on Side::Buy; these regression tests need
+    /// the behind maker on the same side as the zero-visible iceberg/reserve.
+    fn create_sell_standard_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        OrderType::Standard {
+            id: Id::from_u64(id),
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(timestamp),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        }
+    }
+
+    fn new_trade_id_generator() -> UuidGenerator {
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        UuidGenerator::new(namespace)
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_front_gtc_taker_terminates_and_fills_behind() {
+        // Front: zero-visible iceberg with 30 hidden (id 1).
+        // Behind: standard sell maker of 40 (id 2).
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        // Counters reflect both orders: visible 0+40, hidden 30+0.
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 30);
+        assert_eq!(price_level.order_count(), 2);
+
+        // A GTC taker of 70 must drain both: 40 from the standard maker and
+        // 30 replenished from the iceberg's hidden. This call MUST terminate.
+        let result = price_level.match_order(
+            70,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
+        // Both makers are fully consumed and removed.
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.hidden_quantity(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_front_fok_prediction_matches_sweep() {
+        // FOK taker of exactly 70 fits (40 + 30 hidden) -> fills fully.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            70,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        // FOK must fill, not kill: matchable_quantity(70) == 70 == sweep.
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert!(!result.was_killed());
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_front_fok_killed_when_too_large() {
+        // FOK taker of 71 exceeds available depth (70) -> killed, queue intact.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            71,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.was_killed());
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert_eq!(result.remaining_quantity(), 71);
+        assert_eq!(result.trades().len(), 0);
+        // Queue untouched.
+        assert_eq!(price_level.order_count(), 2);
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 30);
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_front_ioc_taker_fills_available() {
+        // IOC taker of 200 fills the available 70 and discards the rest.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            200,
+            Id::from_u64(999),
+            TimeInForce::Ioc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
+        assert_eq!(result.remaining_quantity(), 130);
+        assert!(!result.is_complete());
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.hidden_quantity(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_front_post_only_rejected_consistent_depth() {
+        // PostOnly taker must be rejected because the level has matchable depth:
+        // both the zero-visible iceberg (hidden 30) and the standard maker count.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            10,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.was_rejected());
+        assert_eq!(result.outcome(), MatchOutcome::Rejected);
+        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.trades().len(), 0);
+        // Queue untouched by the rejection.
+        assert_eq!(price_level.order_count(), 2);
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 30);
+    }
+
+    #[test]
+    fn test_zero_visible_iceberg_alone_post_only_rejected_hidden_only() {
+        // A level whose ONLY resting order is a zero-visible iceberg with hidden
+        // depth still has matchable depth: PostOnly must be rejected, and FOK of
+        // the hidden size must fill. Proves `has_matchable_depth` and
+        // `matchable_quantity` agree on the degenerate hidden-only state.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_iceberg_order(1, 10000, 0, 25));
+
+        let rejected = price_level.match_order(
+            5,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+        assert!(rejected.was_rejected());
+        assert_eq!(price_level.order_count(), 1);
+
+        // FOK of exactly the hidden size must fill (depth == 25).
+        let filled = price_level.match_order(
+            25,
+            Id::from_u64(998),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_001),
+            &trade_gen,
+        );
+        assert!(filled.is_complete());
+        assert_eq!(filled.executed_quantity().expect("executed_quantity"), 25);
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.hidden_quantity(), 0);
+        assert_match_result_consistent(&filled, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_reserve_auto_front_gtc_terminates_and_fills_behind() {
+        // Front: zero-visible reserve, auto_replenish=true, hidden 50,
+        // replenish_amount=20 (id 1). Behind: standard sell maker of 40 (id 2).
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 50);
+        assert_eq!(price_level.order_count(), 2);
+
+        // GTC taker large enough to drain everything (40 + 50). MUST terminate.
+        let result = price_level.match_order(
+            200,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        // 40 from the standard maker + 50 from the reserve (drained tranche by
+        // tranche). Total available depth is 90.
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 90);
+        assert_eq!(result.remaining_quantity(), 110);
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.hidden_quantity(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_reserve_auto_front_fok_prediction_matches_sweep() {
+        // FOK of exactly the available depth (40 + 50 = 90) must fill.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        let result = price_level.match_order(
+            90,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        assert!(result.is_complete());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        assert!(!result.was_killed());
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 90);
+        assert_eq!(price_level.order_count(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+
+        // And FOK of 91 (one over) must be killed with the queue intact.
+        let price_level2 = PriceLevel::new(10000);
+        let trade_gen2 = new_trade_id_generator();
+        price_level2.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
+        price_level2.add_order(create_sell_standard_order(2, 10000, 40));
+        let killed = price_level2.match_order(
+            91,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen2,
+        );
+        assert!(killed.was_killed());
+        assert_eq!(price_level2.order_count(), 2);
+        assert_eq!(price_level2.visible_quantity(), 40);
+        assert_eq!(price_level2.hidden_quantity(), 50);
+    }
+
+    #[test]
+    fn test_zero_visible_reserve_no_auto_front_dropped_behind_fills() {
+        // Front: zero-visible reserve, auto_replenish=FALSE, hidden 50 (id 1).
+        // This reserve cannot replenish, so the sweep DROPS it (returns None)
+        // without filling. Its hidden quantity is removed from the level. The
+        // standard maker behind it (id 2, qty 40) must still match.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        assert_eq!(price_level.visible_quantity(), 40);
+        assert_eq!(price_level.hidden_quantity(), 50);
+        assert_eq!(price_level.order_count(), 2);
+
+        let result = price_level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        // Only the standard maker (40) is matchable; the non-replenishing,
+        // zero-visible reserve is dropped without a trade.
+        assert_eq!(result.executed_quantity().expect("executed_quantity"), 40);
+        assert_eq!(result.remaining_quantity(), 60);
+        // Both orders are gone from the queue (one filled, one dropped) and the
+        // counters are consistent: hidden of the dropped reserve was removed.
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_eq!(price_level.hidden_quantity(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+    }
+
+    #[test]
+    fn test_zero_visible_reserve_no_auto_alone_depth_definitions_agree() {
+        // A non-replenishing zero-visible reserve is NOT matchable depth: the
+        // sweep would drop it (returns None) without ever filling. The two depth
+        // views must AGREE on this: FOK's `matchable_quantity` sees 0 (kills,
+        // leaving the queue intact since FOK is a pure pre-check), and PostOnly's
+        // `has_matchable_depth` is false (so PostOnly is NOT rejected).
+
+        // FOK pre-check: 0 matchable depth -> killed, queue untouched.
+        let fok_level = PriceLevel::new(10000);
+        let fok_gen = new_trade_id_generator();
+        fok_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
+
+        let fok = fok_level.match_order(
+            5,
+            Id::from_u64(998),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_001),
+            &fok_gen,
+        );
+        assert!(fok.was_killed());
+        assert_eq!(fok.remaining_quantity(), 5);
+        // FOK is a pre-check: the dead reserve is left resting, queue intact.
+        assert_eq!(fok_level.order_count(), 1);
+        assert_eq!(fok_level.hidden_quantity(), 50);
+
+        // PostOnly on a fresh level: no matchable depth -> not rejected. It then
+        // falls through to the sweep as an ordinary (zero-taking) taker, which
+        // garbage-collects the unmatchable reserve with no trade and keeps the
+        // counters consistent with the queue.
+        let po_level = PriceLevel::new(10000);
+        let po_gen = new_trade_id_generator();
+        po_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
+
+        let post_only = po_level.match_order(
+            5,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_716_000_000_000),
+            &po_gen,
+        );
+        assert!(!post_only.was_rejected());
+        assert_eq!(post_only.trades().len(), 0);
+        assert_eq!(post_only.executed_quantity().expect("executed_quantity"), 0);
+        // The non-matchable reserve is dropped by the fall-through sweep; the
+        // hidden counter is decremented in lockstep with the queue removal.
+        assert_eq!(po_level.order_count(), 0);
+        assert_eq!(po_level.visible_quantity(), 0);
+        assert_eq!(po_level.hidden_quantity(), 0);
+    }
+
+    #[test]
+    fn test_update_quantity_zero_on_iceberg_then_match_terminates() {
+        // Drive the iceberg into the degenerate zero-visible state via
+        // update_order(UpdateQuantity { new_quantity: 0 }), then match. The
+        // matcher must terminate and the maker behind must still fill.
+        let price_level = PriceLevel::new(10000);
+        let trade_gen = new_trade_id_generator();
+
+        // Iceberg with 20 visible / 30 hidden, then a standard maker behind it.
+        price_level.add_order(create_iceberg_order(1, 10000, 20, 30));
+        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+
+        // Reduce the iceberg's quantity to 0 (degenerate zero-visible state).
+        price_level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(1),
+                new_quantity: Quantity::new(0),
+            })
+            .expect("update to zero quantity must succeed");
+
+        // The matcher MUST terminate. A GTC taker drains whatever is matchable.
+        let result = price_level.match_order(
+            500,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_gen,
+        );
+
+        // The standard maker (40) is matched regardless of how the zeroed
+        // iceberg is resolved; the call terminates and counters stay consistent.
+        assert!(result.executed_quantity().expect("executed_quantity") >= 40);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert_match_result_consistent(&result, 10000, Side::Sell);
+
+        // Snapshot round-trip must still hold after the degenerate match.
+        let json = price_level
+            .snapshot_to_json()
+            .expect("snapshot_to_json after degenerate match");
+        let restored =
+            PriceLevel::from_snapshot_json(&json).expect("from_snapshot_json round-trip");
+        assert_eq!(restored.visible_quantity(), price_level.visible_quantity());
+        assert_eq!(restored.hidden_quantity(), price_level.hidden_quantity());
+        assert_eq!(restored.order_count(), price_level.order_count());
     }
 }
 

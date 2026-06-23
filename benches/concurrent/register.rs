@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use pricelevel::{
     Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
-    TimeInForce, TimestampMs, UuidGenerator,
+    TakerKind, TimeInForce, TimestampMs, UuidGenerator,
 };
 use std::num::NonZeroU64;
 use std::sync::{Arc, Barrier};
@@ -76,6 +76,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
                             price_level.match_order(
                                 5,
                                 taker_id,
+                                TimeInForce::Gtc,
+                                TakerKind::Standard,
                                 TimestampMs::new(1_716_000_000_000),
                                 &transaction_id_generator,
                             );
@@ -315,6 +317,8 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                         thread_price_level.match_order(
                             5,
                             taker_id,
+                            TimeInForce::Gtc,
+                            TakerKind::Standard,
                             TimestampMs::new(1_716_000_000_000),
                             &thread_transaction_id_gen,
                         );

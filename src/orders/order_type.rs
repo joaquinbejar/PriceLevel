@@ -281,6 +281,42 @@ impl<T: Clone> OrderType<T> {
         }
     }
 
+    /// Returns `true` if this resting order can yield a fill for a crossing
+    /// taker, i.e. a positive taker would take some quantity from it.
+    ///
+    /// This is the single source of truth for "matchable depth" shared by the
+    /// post-only pre-check (`has_matchable_depth`) and the fill-or-kill dry run
+    /// (`matchable_quantity`), so the two can never disagree about the same level
+    /// (those are private price-level helpers, named here as plain spans rather
+    /// than doc links):
+    ///
+    /// - Any order with positive **visible** quantity is matchable.
+    /// - A zero-visible **iceberg** with hidden quantity is matchable: the sweep
+    ///   replenishes its entire hidden into visible and then fills it.
+    /// - A zero-visible **reserve** with hidden quantity is matchable **only if**
+    ///   `auto_replenish` is set; without auto-replenish a drained reserve is
+    ///   dropped by the sweep without ever filling, so it is *not* matchable
+    ///   depth.
+    /// - Every other zero-visible order (no hidden to draw on) is not matchable.
+    #[must_use]
+    #[inline]
+    pub fn is_matchable(&self) -> bool {
+        if self.visible_quantity() > 0 {
+            return true;
+        }
+        match self {
+            Self::IcebergOrder {
+                hidden_quantity, ..
+            } => hidden_quantity.as_u64() > 0,
+            Self::ReserveOrder {
+                hidden_quantity,
+                auto_replenish,
+                ..
+            } => *auto_replenish && hidden_quantity.as_u64() > 0,
+            _ => false,
+        }
+    }
+
     /// Get the order side
     #[must_use]
     #[inline]
@@ -565,9 +601,25 @@ impl<T: Clone> OrderType<T> {
                     let remaining = incoming_quantity - consumed;
 
                     if hidden_quantity.as_u64() > 0 {
-                        // Refresh visible portion from hidden
-                        let refresh_qty =
-                            std::cmp::min(hidden_quantity.as_u64(), visible_quantity.as_u64());
+                        // Refresh visible portion from hidden. The tranche size
+                        // is the order's current visible quantity (each iceberg
+                        // tranche mirrors the original visible size).
+                        //
+                        // Degenerate guard: a zero-visible iceberg (constructible
+                        // via `add_order` with `visible_quantity: 0` or
+                        // `update_order(UpdateQuantity { new_quantity: 0 })`) has
+                        // a tranche size of 0, which `min(hidden, visible)` would
+                        // make a no-op refresh — the order would re-queue
+                        // unchanged and the sweep would re-pop it forever. Draw
+                        // the entire remaining hidden into visible so the order
+                        // becomes matchable, `hidden_reduced > 0`, and the sweep
+                        // makes forward progress instead of looping.
+                        let tranche = if visible_quantity.as_u64() == 0 {
+                            hidden_quantity.as_u64()
+                        } else {
+                            visible_quantity.as_u64()
+                        };
+                        let refresh_qty = std::cmp::min(hidden_quantity.as_u64(), tranche);
                         let new_hidden = hidden_quantity.as_u64() - refresh_qty;
 
                         // Create updated order with refreshed quantities

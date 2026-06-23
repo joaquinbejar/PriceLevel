@@ -378,6 +378,53 @@
 //! Pass the taker's arrival timestamp (or any deterministic value for
 //! tests/replay), e.g. [`TimestampMs::new`].
 //!
+//! ## Migration Guide (taker time-in-force / kind semantics — breaking)
+//!
+//! [`PriceLevel::match_order`] now **honors the taker's** [`TimeInForce`] and a
+//! new [`TakerKind`]. Two parameters are inserted **between** `taker_order_id`
+//! and `timestamp`:
+//!
+//! | Before | After |
+//! |--------|-------|
+//! | `level.match_order(qty, taker_id, ts, &gen)` | `level.match_order(qty, taker_id, tif, kind, ts, &gen)` |
+//!
+//! To preserve the previous "fill what you can, report the remainder" behavior,
+//! pass [`TimeInForce::Gtc`] and [`TakerKind::Standard`].
+//!
+//! **New single-level semantics.** Let `available` be the quantity this level
+//! can actually fill for the taker, capped at the incoming quantity:
+//!
+//! - [`TakerKind::PostOnly`]: rejected if `available > 0` (would take
+//!   liquidity) — zero trades, full remainder, queue untouched.
+//! - [`TimeInForce::Fok`]: killed if `available < incoming` — zero trades, full
+//!   remainder, queue untouched; otherwise filled completely.
+//! - [`TimeInForce::Ioc`]: fills `available`, discards the remainder (the taker
+//!   is never rested by this layer).
+//! - [`TimeInForce::Gtc`] / [`TimeInForce::Gtd`] / [`TimeInForce::Day`] and
+//!   [`TakerKind::MarketToLimit`]: fill `available`, report the remainder in
+//!   [`MatchResult::remaining_quantity`] for the order book to rest / convert.
+//!
+//! **New `MatchResult` signal.** A fill-or-kill *kill* and a post-only
+//! *rejection* both leave zero trades and the full remainder — indistinguishable
+//! through the old fields from "the level had no liquidity". [`MatchResult`]
+//! gains an additive [`MatchOutcome`] (`Filled` / `PartiallyFilled` /
+//! `NotFilled` / `Killed` / `Rejected`), read via
+//! [`MatchResult::outcome`](crate::execution::MatchResult::outcome),
+//! [`MatchResult::was_killed`](crate::execution::MatchResult::was_killed), and
+//! [`MatchResult::was_rejected`](crate::execution::MatchResult::was_rejected).
+//! All existing fields and accessors are unchanged. The field is
+//! `#[serde(default)]` so older JSON deserializes (as `NotFilled`); the text
+//! `Display` / `FromStr` format is unchanged and re-derives the benign outcome
+//! on parse (a `Killed` / `Rejected` signal is not carried by the text format).
+//!
+//! Resting-maker time-in-force expiry is still **not** enforced by the match
+//! path — only the *taker's* intent is honored here. Skipping / evicting expired
+//! makers remains the order book's responsibility.
+//!
+//! [`TakerKind`]: crate::execution::TakerKind
+//! [`MatchOutcome`]: crate::execution::MatchOutcome
+//! [`MatchResult::remaining_quantity`]: crate::execution::MatchResult::remaining_quantity
+//!
 //! ## Migration Guide (snapshot format v1 → v2)
 //!
 //! The checksum-protected snapshot format now persists per-level statistics
@@ -418,7 +465,7 @@ mod execution;
 pub mod prelude;
 
 pub use errors::PriceLevelError;
-pub use execution::{MatchResult, Trade, TradeList};
+pub use execution::{MatchOutcome, MatchResult, TakerKind, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
 pub use orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
