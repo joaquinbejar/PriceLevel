@@ -3,7 +3,6 @@ mod tests {
     use crate::price_level::PriceLevelStatistics;
     use std::str::FromStr;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,9 +14,9 @@ mod tests {
         assert_eq!(stats.orders_executed(), 0);
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
-        assert_eq!(stats.last_execution_time.load(Ordering::Relaxed), 0);
-        assert!(stats.first_arrival_time.load(Ordering::Relaxed) > 0);
-        assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.last_execution_time(), 0);
+        assert!(stats.first_arrival_time() > 0);
+        assert_eq!(stats.sum_waiting_time(), 0);
     }
 
     #[test]
@@ -69,7 +68,7 @@ mod tests {
         assert_eq!(stats.orders_executed(), 1);
         assert_eq!(stats.quantity_executed(), 10);
         assert_eq!(stats.value_executed(), 1000); // 10 * 100
-        assert!(stats.last_execution_time.load(Ordering::Relaxed) > 0);
+        assert!(stats.last_execution_time() > 0);
 
         // Test with a maker timestamp 1 second before the execution time.
         let timestamp = execution_time - 1000; // 1 second ago
@@ -82,7 +81,7 @@ mod tests {
         assert_eq!(stats.orders_executed(), 2);
         assert_eq!(stats.quantity_executed(), 15); // 10 + 5
         assert_eq!(stats.value_executed(), 2000); // 1000 + (5 * 200)
-        assert!(stats.sum_waiting_time.load(Ordering::Relaxed) >= 1000); // At least 1 second waiting time
+        assert!(stats.sum_waiting_time() >= 1000); // At least 1 second waiting time
     }
 
     #[test]
@@ -169,9 +168,9 @@ mod tests {
         assert_eq!(stats.orders_executed(), 0);
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
-        assert_eq!(stats.last_execution_time.load(Ordering::Relaxed), 0);
-        assert!(stats.first_arrival_time.load(Ordering::Relaxed) > 0);
-        assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.last_execution_time(), 0);
+        assert!(stats.first_arrival_time() > 0);
+        assert_eq!(stats.sum_waiting_time(), 0);
     }
 
     #[test]
@@ -213,15 +212,9 @@ mod tests {
         assert_eq!(stats.orders_executed(), 2);
         assert_eq!(stats.quantity_executed(), 15);
         assert_eq!(stats.value_executed(), 2000);
-        assert_eq!(
-            stats.last_execution_time.load(Ordering::Relaxed),
-            1616823000000
-        );
-        assert_eq!(
-            stats.first_arrival_time.load(Ordering::Relaxed),
-            1616823000001
-        );
-        assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 1000);
+        assert_eq!(stats.last_execution_time(), 1616823000000);
+        assert_eq!(stats.first_arrival_time(), 1616823000001);
+        assert_eq!(stats.sum_waiting_time(), 1000);
     }
 
     #[test]
@@ -280,27 +273,16 @@ mod tests {
 
     #[test]
     fn test_round_trip_display_parse() {
-        let stats = PriceLevelStatistics::new();
-
-        // Use precise timestamps to avoid timing issues
+        // Build a fully-populated statistics value through the public `FromStr`
+        // path (the counters are private and have no public mutator), with
+        // predictable, precise values in every field to avoid timing issues.
         let current_time: u64 = 1616823000000;
-        stats
-            .last_execution_time
-            .store(current_time, Ordering::Relaxed);
-        stats
-            .first_arrival_time
-            .store(current_time + 1, Ordering::Relaxed);
-
-        // Add some data
-        stats.record_order_added();
-        stats.record_order_added();
-        stats.record_order_removed();
-
-        // Manual record to have predictable values
-        stats.orders_executed.store(2, Ordering::Relaxed);
-        stats.quantity_executed.store(15, Ordering::Relaxed);
-        stats.value_executed.store(2000, Ordering::Relaxed);
-        stats.sum_waiting_time.store(1000, Ordering::Relaxed);
+        let input = format!(
+            "PriceLevelStatistics:orders_added=2;orders_removed=1;orders_executed=2;quantity_executed=15;value_executed=2000;last_execution_time={};first_arrival_time={};sum_waiting_time=1000",
+            current_time,
+            current_time + 1
+        );
+        let stats = PriceLevelStatistics::from_str(&input).unwrap();
 
         // Convert to string
         let string_representation = stats.to_string();
@@ -314,18 +296,9 @@ mod tests {
         assert_eq!(parsed.orders_executed(), stats.orders_executed());
         assert_eq!(parsed.quantity_executed(), stats.quantity_executed());
         assert_eq!(parsed.value_executed(), stats.value_executed());
-        assert_eq!(
-            parsed.last_execution_time.load(Ordering::Relaxed),
-            stats.last_execution_time.load(Ordering::Relaxed)
-        );
-        assert_eq!(
-            parsed.first_arrival_time.load(Ordering::Relaxed),
-            stats.first_arrival_time.load(Ordering::Relaxed)
-        );
-        assert_eq!(
-            parsed.sum_waiting_time.load(Ordering::Relaxed),
-            stats.sum_waiting_time.load(Ordering::Relaxed)
-        );
+        assert_eq!(parsed.last_execution_time(), stats.last_execution_time());
+        assert_eq!(parsed.first_arrival_time(), stats.first_arrival_time());
+        assert_eq!(parsed.sum_waiting_time(), stats.sum_waiting_time());
     }
 
     #[test]
@@ -391,24 +364,17 @@ mod tests {
         assert_eq!(stats.orders_executed(), 0);
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
-        assert_eq!(stats.last_execution_time.load(Ordering::Relaxed), 0);
-        assert!(stats.first_arrival_time.load(Ordering::Relaxed) > 0);
-        assert_eq!(stats.sum_waiting_time.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.last_execution_time(), 0);
+        assert!(stats.first_arrival_time() > 0);
+        assert_eq!(stats.sum_waiting_time(), 0);
     }
 
     #[test]
     fn test_statistics_serialize_deserialize_fields() {
-        let stats = PriceLevelStatistics::new();
-
-        // Set and verify each field
-        stats.orders_added.store(1, Ordering::Relaxed);
-        stats.orders_removed.store(2, Ordering::Relaxed);
-        stats.orders_executed.store(3, Ordering::Relaxed);
-        stats.quantity_executed.store(4, Ordering::Relaxed);
-        stats.value_executed.store(5, Ordering::Relaxed);
-        stats.last_execution_time.store(6, Ordering::Relaxed);
-        stats.first_arrival_time.store(7, Ordering::Relaxed);
-        stats.sum_waiting_time.store(8, Ordering::Relaxed);
+        // Populate every field with a distinct value through the public
+        // `FromStr` path (the counters are private and have no public mutator).
+        let input = "PriceLevelStatistics:orders_added=1;orders_removed=2;orders_executed=3;quantity_executed=4;value_executed=5;last_execution_time=6;first_arrival_time=7;sum_waiting_time=8";
+        let stats = PriceLevelStatistics::from_str(input).unwrap();
 
         // Serialize to JSON
         let serialized = serde_json::to_string(&stats).unwrap();
@@ -432,9 +398,9 @@ mod tests {
         assert_eq!(deserialized.orders_executed(), 3);
         assert_eq!(deserialized.quantity_executed(), 4);
         assert_eq!(deserialized.value_executed(), 5);
-        assert_eq!(deserialized.last_execution_time.load(Ordering::Relaxed), 6);
-        assert_eq!(deserialized.first_arrival_time.load(Ordering::Relaxed), 7);
-        assert_eq!(deserialized.sum_waiting_time.load(Ordering::Relaxed), 8);
+        assert_eq!(deserialized.last_execution_time(), 6);
+        assert_eq!(deserialized.first_arrival_time(), 7);
+        assert_eq!(deserialized.sum_waiting_time(), 8);
     }
 
     #[test]

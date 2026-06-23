@@ -157,17 +157,14 @@ mod tests {
         );
         // The raw timestamp / waiting-time aggregates round-trip exactly too.
         assert_eq!(
-            restored_stats.last_execution_time.load(Ordering::Relaxed),
-            stats.last_execution_time.load(Ordering::Relaxed)
+            restored_stats.last_execution_time(),
+            stats.last_execution_time()
         );
         assert_eq!(
-            restored_stats.first_arrival_time.load(Ordering::Relaxed),
-            stats.first_arrival_time.load(Ordering::Relaxed)
+            restored_stats.first_arrival_time(),
+            stats.first_arrival_time()
         );
-        assert_eq!(
-            restored_stats.sum_waiting_time.load(Ordering::Relaxed),
-            stats.sum_waiting_time.load(Ordering::Relaxed)
-        );
+        assert_eq!(restored_stats.sum_waiting_time(), stats.sum_waiting_time());
     }
 
     #[test]

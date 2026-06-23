@@ -7,32 +7,40 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Tracks performance statistics for a price level
+/// Tracks performance statistics for a price level.
+///
+/// All counters are private atomics so that no external consumer can
+/// `.store()` / `.fetch_add()` directly and desync them from the order queue
+/// or from the checked-arithmetic invariants enforced in
+/// [`record_execution`](Self::record_execution). Mutation happens only through
+/// the `record_*` / [`reset`](Self::reset) methods; reads happen only through
+/// the public accessors.
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
-    pub orders_added: AtomicUsize,
+    orders_added: AtomicUsize,
 
     /// Number of orders removed
-    pub orders_removed: AtomicUsize,
+    orders_removed: AtomicUsize,
 
     /// Number of orders executed
-    pub orders_executed: AtomicUsize,
+    orders_executed: AtomicUsize,
 
     /// Total quantity executed
-    pub quantity_executed: AtomicU64,
+    quantity_executed: AtomicU64,
 
     /// Total value executed
-    pub value_executed: AtomicU64,
+    value_executed: AtomicU64,
 
     /// Last execution timestamp
-    pub last_execution_time: AtomicU64,
+    last_execution_time: AtomicU64,
 
-    /// First order arrival timestamp
-    pub first_arrival_time: AtomicU64,
+    /// Statistics initialization timestamp (set at construction / reset).
+    /// Not updated on order arrival — see `first_arrival_time()`.
+    first_arrival_time: AtomicU64,
 
     /// Sum of waiting times for orders
-    pub sum_waiting_time: AtomicU64,
+    sum_waiting_time: AtomicU64,
 }
 
 impl PriceLevelStatistics {
@@ -197,6 +205,39 @@ impl PriceLevelStatistics {
     #[must_use]
     pub fn value_executed(&self) -> u64 {
         self.value_executed.load(Ordering::Relaxed)
+    }
+
+    /// Get the timestamp of the most recent execution, in milliseconds since
+    /// the Unix epoch.
+    ///
+    /// Returns `0` when no execution has been recorded yet.
+    #[must_use]
+    pub fn last_execution_time(&self) -> u64 {
+        self.last_execution_time.load(Ordering::Relaxed)
+    }
+
+    /// Get the statistics initialization timestamp, in milliseconds since the
+    /// Unix epoch.
+    ///
+    /// Set when the statistics are created and on [`reset`](Self::reset) with the
+    /// current wall-clock time (`0` if the system clock could not be read). It is
+    /// **not** updated on order arrival, so it marks when statistics tracking
+    /// began for this level, not the first order's actual arrival time.
+    #[must_use]
+    pub fn first_arrival_time(&self) -> u64 {
+        self.first_arrival_time.load(Ordering::Relaxed)
+    }
+
+    /// Get the accumulated waiting time across all executed orders, in
+    /// milliseconds.
+    ///
+    /// This is the sum of `execution_timestamp - order_timestamp` over every
+    /// recorded execution that carried a non-zero maker timestamp. Divide by
+    /// [`orders_executed`](Self::orders_executed) for the average; see
+    /// [`average_waiting_time`](Self::average_waiting_time).
+    #[must_use]
+    pub fn sum_waiting_time(&self) -> u64 {
+        self.sum_waiting_time.load(Ordering::Relaxed)
     }
 
     /// Get average execution price
