@@ -303,14 +303,58 @@ impl PriceLevel {
     }
 
     /// Create a snapshot of the current price level state
+    ///
+    /// All aggregates are derived from a single materialized order vector so the
+    /// snapshot is internally consistent under concurrent mutation: the counter
+    /// fields can never disagree with a sum over the snapshot's own `orders`. We
+    /// fold the vector instead of reading the live atomic counters separately,
+    /// which would be a torn read (the atomics could advance between the counter
+    /// load and the order materialization).
     #[must_use]
     pub fn snapshot(&self) -> PriceLevelSnapshot {
+        // Materialize the orders exactly once; every aggregate is derived from
+        // this snapshot so they are mutually consistent by construction.
+        let orders = self.snapshot_orders();
+
+        let order_count = orders.len();
+
+        let mut visible_quantity: u64 = 0;
+        let mut hidden_quantity: u64 = 0;
+
+        for order in &orders {
+            // Checked arithmetic per the crate's no-saturate/no-wrap rule.
+            // `snapshot()` is infallible (changing it would ripple to
+            // `snapshot_package` / `snapshot_to_json` and every caller), so the
+            // overflow branch needs a value, not a `Result`. That branch is
+            // unreachable for any state the level can represent: the level tracks
+            // the same running total in a `u64` atomic counter, so a sum that
+            // overflows `u64` here is one the level itself could never have held.
+            // On that impossible branch we fall back to the live atomic counter —
+            // the engine's own authoritative `u64` total (best-effort, since the
+            // branch cannot occur for representable state).
+            match visible_quantity.checked_add(order.visible_quantity()) {
+                Some(total) => visible_quantity = total,
+                None => {
+                    debug_assert!(false, "snapshot visible quantity overflow is unreachable");
+                    visible_quantity = self.visible_quantity();
+                }
+            }
+
+            match hidden_quantity.checked_add(order.hidden_quantity()) {
+                Some(total) => hidden_quantity = total,
+                None => {
+                    debug_assert!(false, "snapshot hidden quantity overflow is unreachable");
+                    hidden_quantity = self.hidden_quantity();
+                }
+            }
+        }
+
         PriceLevelSnapshot::from_raw_parts(
             self.price,
-            self.visible_quantity(),
-            self.hidden_quantity(),
-            self.order_count(),
-            self.snapshot_orders(),
+            visible_quantity,
+            hidden_quantity,
+            order_count,
+            orders,
         )
     }
 
