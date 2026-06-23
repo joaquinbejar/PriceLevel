@@ -36,3 +36,6 @@ jobs:
 
       - name: Lint
         run: make lint
+
+      - name: Doc lint (missing-docs)
+        run: make doc

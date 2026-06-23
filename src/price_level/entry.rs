@@ -36,6 +36,11 @@ impl OrderBookEntry {
     }
 
     /// Get the total quantity at this entry
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the underlying level's
+    /// `visible + hidden` quantity overflows `u64`.
     pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
         self.level.total_quantity()
     }

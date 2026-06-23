@@ -1,5 +1,6 @@
 #![allow(unknown_lints)]
 #![allow(clippy::literal_string_with_formatting_args)]
+#![warn(clippy::missing_errors_doc)]
 
 //!  # PriceLevel
 //!

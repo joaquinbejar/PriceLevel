@@ -21,11 +21,23 @@ impl Price {
     }
 
     /// Creates a validated price from a raw integer value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidFieldValue`] if `value` ever fails the
+    /// price invariant. Every `u128` is currently a valid price, so this
+    /// constructor is presently infallible; the `Result` is part of its stable
+    /// contract so validation can be tightened without a breaking change.
     pub fn try_new(value: u128) -> Result<Self, PriceLevelError> {
         Ok(Self(value))
     }
 
     /// Creates a price from an `f64` value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `value` is not finite
+    /// (NaN or infinite) or is negative.
     pub fn from_f64(value: f64) -> Result<Self, PriceLevelError> {
         if !value.is_finite() || value < 0.0 {
             return Err(PriceLevelError::InvalidOperation {
@@ -86,11 +98,23 @@ impl Quantity {
     }
 
     /// Creates a validated quantity from a raw integer value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidFieldValue`] if `value` ever fails the
+    /// quantity invariant. Every `u64` is currently a valid quantity, so this
+    /// constructor is presently infallible; the `Result` is part of its stable
+    /// contract so validation can be tightened without a breaking change.
     pub fn try_new(value: u64) -> Result<Self, PriceLevelError> {
         Ok(Self(value))
     }
 
     /// Creates a quantity from an `f64` value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `value` is not finite
+    /// (NaN or infinite) or is negative.
     pub fn from_f64(value: f64) -> Result<Self, PriceLevelError> {
         if !value.is_finite() || value < 0.0 {
             return Err(PriceLevelError::InvalidOperation {
@@ -151,6 +175,14 @@ impl TimestampMs {
     }
 
     /// Creates a validated timestamp from milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidFieldValue`] if `value` ever fails the
+    /// timestamp invariant. Every `u64` is currently a valid millisecond
+    /// timestamp, so this constructor is presently infallible; the `Result` is
+    /// part of its stable contract so validation can be tightened without a
+    /// breaking change.
     pub fn try_new(value: u64) -> Result<Self, PriceLevelError> {
         Ok(Self(value))
     }
