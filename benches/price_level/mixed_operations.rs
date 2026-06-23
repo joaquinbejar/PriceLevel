@@ -4,6 +4,7 @@ use pricelevel::{
     TimestampMs, UuidGenerator,
 };
 use std::hint::black_box;
+use std::num::NonZeroU64;
 use uuid::Uuid;
 
 /// Register benchmarks for mixed/realistic price level operations
@@ -211,7 +212,7 @@ fn create_reserve_order(
         timestamp: TimestampMs::new(1616823000000 + id),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: Quantity::new(threshold),
-        replenish_amount: replenish_amount.map(Quantity::new),
+        replenish_amount: replenish_amount.and_then(NonZeroU64::new),
         auto_replenish,
         extra_fields: (),
     }

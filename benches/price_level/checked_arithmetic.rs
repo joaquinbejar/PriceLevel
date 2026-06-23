@@ -4,6 +4,7 @@ use pricelevel::{
     TimestampMs, Trade, UuidGenerator,
 };
 use std::hint::black_box;
+use std::num::NonZeroU64;
 use uuid::Uuid;
 
 /// Register benchmarks for checked arithmetic APIs and error-path performance.
@@ -172,7 +173,7 @@ fn setup_mixed_level(order_count: u64) -> PriceLevel {
                 timestamp: TimestampMs::new(1_616_823_000_000 + i),
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: Quantity::new(5),
-                replenish_amount: Some(Quantity::new(10)),
+                replenish_amount: NonZeroU64::new(10),
                 auto_replenish: true,
                 extra_fields: (),
             },

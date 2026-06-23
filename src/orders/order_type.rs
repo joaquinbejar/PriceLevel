@@ -6,6 +6,7 @@ use crate::orders::{Hash32, Id, PegReferenceType, Side, TimeInForce};
 use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::num::NonZeroU64;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -17,8 +18,20 @@ fn user_id_from_str(value: &str) -> Result<Hash32, PriceLevelError> {
     })
 }
 
-/// Default amount to replenish the reserve with.
-pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: u64 = 80;
+/// Default amount to replenish the reserve with, in quantity units.
+///
+/// A replenish amount is structurally non-zero: a zero replenish would draw an
+/// empty visible tranche from hidden, silently leaving nothing visible. The
+/// type therefore is [`NonZeroU64`] rather than a raw `u64`. The constant is
+/// built in a `const`-evaluable form (a `match` on [`NonZeroU64::new`]) so it
+/// carries no runtime `unwrap`/`expect`.
+pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: NonZeroU64 = match NonZeroU64::new(80) {
+    Some(value) => value,
+    // Unreachable: 80 is a non-zero literal, so `NonZeroU64::new` is always
+    // `Some` here. The branch is resolved at compile time, so this carries no
+    // runtime `unwrap`/`expect`.
+    None => unreachable!(),
+};
 
 /// Represents different types of limit orders
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -177,8 +190,11 @@ pub enum OrderType<T> {
         time_in_force: TimeInForce,
         /// Threshold at which to replenish
         replenish_threshold: Quantity,
-        /// Optional amount to replenish by. If None, uses DEFAULT_RESERVE_REPLENISH_AMOUNT
-        replenish_amount: Option<Quantity>,
+        /// Optional amount to replenish by, in quantity units. If `None`, uses
+        /// [`DEFAULT_RESERVE_REPLENISH_AMOUNT`]. A replenish amount is
+        /// structurally non-zero ([`NonZeroU64`]): a zero replenish would draw
+        /// an empty visible tranche from hidden.
+        replenish_amount: Option<NonZeroU64>,
         /// Whether to replenish automatically when below threshold. If false, only replenish on next match
         auto_replenish: bool,
         /// Additional custom fields
@@ -393,9 +409,19 @@ impl<T: Clone> OrderType<T> {
         }
     }
 
-    /// Update an iceberg order, refreshing visible part from hidden
+    /// Update an iceberg or reserve order, refreshing the visible part from
+    /// hidden.
+    ///
+    /// `refresh_amount` is the tranche size to draw from the hidden quantity,
+    /// in quantity units. It is [`NonZeroU64`] because a zero refresh would
+    /// draw an empty visible tranche, silently leaving nothing visible. The
+    /// amount actually drawn is capped at the remaining hidden quantity.
+    ///
+    /// Returns the refreshed order and the quantity drawn from hidden. For a
+    /// non-iceberg / non-reserve order the order is returned unchanged with a
+    /// drawn quantity of `0`.
     #[must_use]
-    pub fn refresh_iceberg(&self, refresh_amount: u64) -> (Self, u64) {
+    pub fn refresh_iceberg(&self, refresh_amount: NonZeroU64) -> (Self, u64) {
         match self {
             Self::IcebergOrder {
                 id,
@@ -408,7 +434,7 @@ impl<T: Clone> OrderType<T> {
                 time_in_force,
                 extra_fields,
             } => {
-                let used_hidden = refresh_amount.min(hidden_quantity.as_u64());
+                let used_hidden = refresh_amount.get().min(hidden_quantity.as_u64());
                 let new_hidden = hidden_quantity.as_u64() - used_hidden;
 
                 (
@@ -440,7 +466,7 @@ impl<T: Clone> OrderType<T> {
                 auto_replenish,
                 extra_fields,
             } => {
-                let used_hidden = refresh_amount.min(hidden_quantity.as_u64());
+                let used_hidden = refresh_amount.get().min(hidden_quantity.as_u64());
                 let new_hidden = hidden_quantity.as_u64() - used_hidden;
 
                 (
@@ -604,8 +630,8 @@ impl<T: Clone> OrderType<T> {
                 };
 
                 let replenish_qty = replenish_amount
-                    .unwrap_or(Quantity::new(DEFAULT_RESERVE_REPLENISH_AMOUNT))
-                    .as_u64()
+                    .unwrap_or(DEFAULT_RESERVE_REPLENISH_AMOUNT)
+                    .get()
                     .min(hidden_quantity.as_u64());
 
                 if visible_quantity.as_u64() <= incoming_quantity {
@@ -1140,7 +1166,17 @@ impl<T: Default> FromStr for OrderType<T> {
                 let replenish_amount = if replenish_amount_str == "None" {
                     None
                 } else {
-                    Some(parse_quantity("replenish_amount", replenish_amount_str)?)
+                    // A replenish amount is structurally non-zero. Parse into
+                    // `NonZeroU64` so a literal `0` (or a non-numeric value) is
+                    // surfaced as a typed `InvalidFieldValue` rather than a
+                    // silently-accepted empty tranche.
+                    let value = replenish_amount_str.parse::<NonZeroU64>().map_err(|_| {
+                        PriceLevelError::InvalidFieldValue {
+                            field: "replenish_amount".to_string(),
+                            value: replenish_amount_str.to_string(),
+                        }
+                    })?;
+                    Some(value)
                 };
                 let auto_replenish_str = get_field("auto_replenish")?;
                 let auto_replenish = match auto_replenish_str {

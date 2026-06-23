@@ -8,6 +8,7 @@ use pricelevel::{
     DEFAULT_RESERVE_REPLENISH_AMOUNT, Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price,
     PriceLevel, Quantity, Side, TimeInForce, TimestampMs, UuidGenerator,
 };
+use std::num::NonZeroU64;
 use std::process;
 use uuid::Uuid;
 
@@ -85,7 +86,7 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
         timestamp: TimestampMs::new(1_000_001),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: Quantity::new(2),
-        replenish_amount: Some(Quantity::new(10)),
+        replenish_amount: NonZeroU64::new(10),
         auto_replenish: true,
         extra_fields: (),
     });
@@ -109,9 +110,10 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
         "reserve should not be fully filled",
     );
 
-    // Verify default replenish amount constant is accessible
+    // Verify default replenish amount constant is accessible. The constant is a
+    // `NonZeroU64`, so a zero replenish is structurally impossible.
     assert_or_exit(
-        DEFAULT_RESERVE_REPLENISH_AMOUNT > 0,
+        DEFAULT_RESERVE_REPLENISH_AMOUNT.get() > 0,
         "DEFAULT_RESERVE_REPLENISH_AMOUNT should be positive",
     );
 

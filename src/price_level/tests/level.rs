@@ -7,6 +7,7 @@ mod tests {
     use crate::price_level::snapshot::SNAPSHOT_FORMAT_VERSION;
     use crate::utils::{Price, Quantity, TimestampMs};
     use crate::{DEFAULT_RESERVE_REPLENISH_AMOUNT, UuidGenerator};
+    use std::num::NonZeroU64;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use tracing::error;
@@ -368,7 +369,8 @@ mod tests {
             timestamp: TimestampMs::new(timestamp),
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: Quantity::new(threshold),
-            replenish_amount: replenish_amount.map(Quantity::new),
+            replenish_amount: replenish_amount
+                .map(|amount| NonZeroU64::new(amount).expect("test replenish amount must be > 0")),
             auto_replenish,
             extra_fields: (),
         }
@@ -964,11 +966,11 @@ mod tests {
         // The order should be replenished with the default amount
         assert_eq!(
             price_level.visible_quantity(),
-            DEFAULT_RESERVE_REPLENISH_AMOUNT
+            DEFAULT_RESERVE_REPLENISH_AMOUNT.get()
         );
         assert_eq!(
             price_level.hidden_quantity(),
-            150 - DEFAULT_RESERVE_REPLENISH_AMOUNT
+            150 - DEFAULT_RESERVE_REPLENISH_AMOUNT.get()
         );
         assert_eq!(price_level.order_count(), 1);
     }
