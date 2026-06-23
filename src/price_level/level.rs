@@ -312,6 +312,15 @@ impl PriceLevel {
                     // Use UUID generator directly
                     let trade_id = Id::from_uuid(trade_id_generator.next());
 
+                    // A resting maker must never be the taker that is matching
+                    // against it. Debug-only guard: the type system cannot
+                    // encode this, and it is a logic invariant of the caller
+                    // (the order book never routes an order against itself).
+                    debug_assert!(
+                        order_arc.id() != taker_order_id,
+                        "self-fill: maker == taker"
+                    );
+
                     let trade = Trade::with_timestamp(
                         trade_id,
                         taker_order_id,
