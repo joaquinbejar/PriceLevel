@@ -188,13 +188,24 @@ impl Serialize for OrderQueue {
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.len()))?;
-        // Emit in insertion-sequence order so the round-trip preserves time
-        // priority (the DashMap alone has no deterministic iteration order).
-        for index_entry in self.index.iter() {
-            if let Some(order_entry) = self.orders.get(index_entry.value()) {
-                seq.serialize_element(order_entry.value().1.as_ref())?;
-            }
+        // Materialize the ordered view first so the length hint always matches
+        // the number of elements emitted. Iterating `index` while hinting
+        // `self.len()` (from `orders`) could disagree in a transient state
+        // where an order is in one structure but not yet the other.
+        // Insertion-sequence order keeps the round-trip price-time priority
+        // (the DashMap alone has no deterministic iteration order).
+        let ordered: Vec<Arc<OrderType<()>>> = self
+            .index
+            .iter()
+            .filter_map(|index_entry| {
+                self.orders
+                    .get(index_entry.value())
+                    .map(|order_entry| order_entry.value().1.clone())
+            })
+            .collect();
+        let mut seq = serializer.serialize_seq(Some(ordered.len()))?;
+        for order in &ordered {
+            seq.serialize_element(order.as_ref())?;
         }
         seq.end()
     }
