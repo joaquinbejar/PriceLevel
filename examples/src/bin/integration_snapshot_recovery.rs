@@ -110,14 +110,18 @@ fn main() {
 
     // Verify snapshot accessors
     let snap: &PriceLevelSnapshot = restored_package.snapshot();
-    assert_eq_or_exit(snap.price(), orig_price, "snapshot price");
+    assert_eq_or_exit(snap.price().as_u128(), orig_price, "snapshot price");
     assert_eq_or_exit(snap.order_count(), orig_order_count, "snapshot order_count");
     assert_eq_or_exit(
-        snap.visible_quantity(),
+        snap.visible_quantity().as_u64(),
         orig_visible,
         "snapshot visible_qty",
     );
-    assert_eq_or_exit(snap.hidden_quantity(), orig_hidden, "snapshot hidden_qty");
+    assert_eq_or_exit(
+        snap.hidden_quantity().as_u64(),
+        orig_hidden,
+        "snapshot hidden_qty",
+    );
     assert_eq_or_exit(snap.orders().len(), orig_order_count, "snapshot orders len");
     println!("  ✓ Restored snapshot aggregates match original.");
 
@@ -214,7 +218,11 @@ fn main() {
     let total = snap2
         .total_quantity()
         .unwrap_or_else(|e| exit_err(&format!("total_quantity: {e}")));
-    assert_eq_or_exit(total, orig_visible + orig_hidden, "snapshot total_quantity");
+    assert_eq_or_exit(
+        total.as_u64(),
+        orig_visible + orig_hidden,
+        "snapshot total_quantity",
+    );
     println!(
         "  ✓ Snapshot total_quantity = {} (visible {} + hidden {}).",
         total, orig_visible, orig_hidden

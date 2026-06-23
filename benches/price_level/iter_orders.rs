@@ -25,7 +25,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total: u64 = 0;
                     for order in price_level.iter_orders() {
-                        total = total.wrapping_add(black_box(order.visible_quantity()));
+                        total = total.wrapping_add(black_box(order.visible_quantity().as_u64()));
                     }
                     black_box(total)
                 })

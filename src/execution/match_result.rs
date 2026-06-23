@@ -2,6 +2,7 @@ use crate::errors::PriceLevelError;
 use crate::execution::list::TradeList;
 use crate::execution::trade::Trade;
 use crate::orders::Id;
+use crate::utils::Quantity;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -98,18 +99,19 @@ pub struct MatchResult {
 }
 
 impl MatchResult {
-    /// Create a new empty match result
+    /// Create a new empty match result for an incoming taker of
+    /// `initial_quantity` quantity units.
     #[must_use]
-    pub fn new(order_id: Id, initial_quantity: u64) -> Self {
+    pub fn new(order_id: Id, initial_quantity: Quantity) -> Self {
         // A zero-quantity result is vacuously complete (nothing to fill), so keep
         // is_complete / outcome consistent at construction — matching
         // `finalize`'s `remaining == 0 => Filled` rule. A non-zero result starts
         // incomplete / NotFilled until a trade or `finalize` updates it.
-        let is_complete = initial_quantity == 0;
+        let is_complete = initial_quantity.as_u64() == 0;
         Self {
             order_id,
             trades: TradeList::new(),
-            remaining_quantity: initial_quantity,
+            remaining_quantity: initial_quantity.as_u64(),
             is_complete,
             filled_order_ids: Vec::new(),
             outcome: if is_complete {
@@ -128,13 +130,13 @@ impl MatchResult {
     /// the level's resting order count. Pre-sizing both vectors removes the
     /// per-fill reallocations on the match hot path.
     #[must_use]
-    pub fn with_capacity(order_id: Id, initial_quantity: u64, capacity: usize) -> Self {
+    pub fn with_capacity(order_id: Id, initial_quantity: Quantity, capacity: usize) -> Self {
         // Same zero-quantity consistency as `new` (see there).
-        let is_complete = initial_quantity == 0;
+        let is_complete = initial_quantity.as_u64() == 0;
         Self {
             order_id,
             trades: TradeList::with_capacity(capacity),
-            remaining_quantity: initial_quantity,
+            remaining_quantity: initial_quantity.as_u64(),
             is_complete,
             filled_order_ids: Vec::with_capacity(capacity),
             outcome: if is_complete {
@@ -193,10 +195,11 @@ impl MatchResult {
         &self.trades
     }
 
-    /// Returns the remaining quantity of the incoming order after matching.
+    /// Returns the remaining quantity of the incoming order after matching, in
+    /// quantity units.
     #[must_use]
-    pub fn remaining_quantity(&self) -> u64 {
-        self.remaining_quantity
+    pub fn remaining_quantity(&self) -> Quantity {
+        Quantity::new(self.remaining_quantity)
     }
 
     /// Returns whether the order was completely filled.
@@ -247,9 +250,9 @@ impl MatchResult {
     /// no liquidity). Kill and rejection are set by their dedicated helpers
     /// because they are decided *before* any sweep and must not be
     /// re-derived from the (deliberately untouched) fields.
-    pub(crate) fn finalize(&mut self, remaining_quantity: u64) {
-        self.remaining_quantity = remaining_quantity;
-        self.is_complete = remaining_quantity == 0;
+    pub(crate) fn finalize(&mut self, remaining_quantity: Quantity) {
+        self.remaining_quantity = remaining_quantity.as_u64();
+        self.is_complete = self.remaining_quantity == 0;
         self.outcome = if self.is_complete {
             MatchOutcome::Filled
         } else if self.trades.is_empty() {
@@ -286,20 +289,24 @@ impl MatchResult {
         self.outcome = MatchOutcome::Rejected;
     }
 
-    /// Get the total executed quantity
+    /// Get the total executed quantity, in quantity units.
     ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if summing the trade
     /// quantities overflows `u64`.
-    pub fn executed_quantity(&self) -> Result<u64, PriceLevelError> {
-        self.trades.as_vec().iter().try_fold(0u64, |acc, trade| {
-            acc.checked_add(trade.quantity().as_u64()).ok_or_else(|| {
-                PriceLevelError::InvalidOperation {
-                    message: "executed quantity overflow".to_string(),
-                }
+    pub fn executed_quantity(&self) -> Result<Quantity, PriceLevelError> {
+        self.trades
+            .as_vec()
+            .iter()
+            .try_fold(0u64, |acc, trade| {
+                acc.checked_add(trade.quantity().as_u64()).ok_or_else(|| {
+                    PriceLevelError::InvalidOperation {
+                        message: "executed quantity overflow".to_string(),
+                    }
+                })
             })
-        })
+            .map(Quantity::new)
     }
 
     /// Get the total value executed
@@ -337,7 +344,7 @@ impl MatchResult {
     /// [`Self::executed_quantity`] or [`Self::executed_value`] computation
     /// overflows.
     pub fn average_price(&self) -> Result<Option<f64>, PriceLevelError> {
-        let executed_qty = self.executed_quantity()?;
+        let executed_qty = self.executed_quantity()?.as_u64();
         if executed_qty == 0 {
             Ok(None)
         } else {

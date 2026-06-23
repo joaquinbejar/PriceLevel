@@ -81,7 +81,7 @@ fn main() {
                             info!(
                                 "Thread {} match result: executed={}, remaining={}, complete={}",
                                 thread_id,
-                                match_result.executed_quantity().unwrap_or(0),
+                                match_result.executed_quantity().unwrap_or(Quantity::ZERO),
                                 match_result.remaining_quantity(),
                                 match_result.is_complete()
                             );

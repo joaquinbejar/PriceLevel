@@ -53,9 +53,9 @@ impl PriceLevel {
         snapshot.refresh_aggregates()?;
 
         let order_count = snapshot.orders().len();
-        let visible_quantity = snapshot.visible_quantity();
-        let hidden_quantity = snapshot.hidden_quantity();
-        let price = snapshot.price();
+        let visible_quantity = snapshot.visible_quantity().as_u64();
+        let hidden_quantity = snapshot.hidden_quantity().as_u64();
+        let price = snapshot.price().as_u128();
         // Clone the persisted statistics before consuming the snapshot's orders.
         let stats = (*snapshot.statistics()).clone();
         let queue = OrderQueue::from(snapshot.into_orders());
@@ -198,8 +198,8 @@ impl PriceLevel {
     /// Add an order to this price level
     pub fn add_order(&self, order: OrderType<()>) -> Arc<OrderType<()>> {
         // Calculate quantities
-        let visible_qty = order.visible_quantity();
-        let hidden_qty = order.hidden_quantity();
+        let visible_qty = order.visible_quantity().as_u64();
+        let hidden_qty = order.hidden_quantity().as_u64();
 
         // On this path, publish to the queue FIRST, then bump the counters, so a
         // concurrent reader of this add tends to see the order resting before it
@@ -448,7 +448,7 @@ impl PriceLevel {
                 price = self.price,
                 "post-only taker rejected: would take liquidity"
             );
-            let mut result = MatchResult::new(taker_order_id, incoming_quantity);
+            let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             result.mark_rejected(incoming_quantity);
             return result;
         }
@@ -465,7 +465,7 @@ impl PriceLevel {
                     price = self.price,
                     "fill-or-kill taker killed: insufficient depth"
                 );
-                let mut result = MatchResult::new(taker_order_id, incoming_quantity);
+                let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
                 result.mark_killed(incoming_quantity);
                 return result;
             }
@@ -478,7 +478,8 @@ impl PriceLevel {
         // concurrent `add_order` lands mid-sweep — capacity is a hint, not a
         // bound.
         let capacity = self.order_count();
-        let mut result = MatchResult::with_capacity(taker_order_id, incoming_quantity, capacity);
+        let mut result =
+            MatchResult::with_capacity(taker_order_id, Quantity::new(incoming_quantity), capacity);
         let mut remaining = incoming_quantity;
 
         // No-progress safety guard. A popped maker that yields no progress
@@ -567,7 +568,7 @@ impl PriceLevel {
                     let _ = self.stats.record_execution(
                         consumed,
                         order_arc.price().as_u128(),
-                        order_arc.timestamp(),
+                        order_arc.timestamp().as_u64(),
                         timestamp.as_u64(),
                     );
                 }
@@ -633,7 +634,7 @@ impl PriceLevel {
             self.orders.reinsert(seq, order);
         }
 
-        result.finalize(remaining);
+        result.finalize(Quantity::new(remaining));
 
         result
     }
@@ -668,7 +669,7 @@ impl PriceLevel {
             // On that impossible branch we fall back to the live atomic counter —
             // the engine's own authoritative `u64` total (best-effort, since the
             // branch cannot occur for representable state).
-            match visible_quantity.checked_add(order.visible_quantity()) {
+            match visible_quantity.checked_add(order.visible_quantity().as_u64()) {
                 Some(total) => visible_quantity = total,
                 None => {
                     debug_assert!(false, "snapshot visible quantity overflow is unreachable");
@@ -676,7 +677,7 @@ impl PriceLevel {
                 }
             }
 
-            match hidden_quantity.checked_add(order.hidden_quantity()) {
+            match hidden_quantity.checked_add(order.hidden_quantity().as_u64()) {
                 Some(total) => hidden_quantity = total,
                 None => {
                     debug_assert!(false, "snapshot hidden quantity overflow is unreachable");
@@ -691,9 +692,9 @@ impl PriceLevel {
         // other read path); statistics are independent counters, not part of
         // the queue / counter consistency invariant.
         PriceLevelSnapshot::from_raw_parts_with_stats(
-            self.price,
-            visible_quantity,
-            hidden_quantity,
+            Price::new(self.price),
+            Quantity::new(visible_quantity),
+            Quantity::new(hidden_quantity),
             order_count,
             orders,
             (*self.stats).clone(),
@@ -773,8 +774,8 @@ impl PriceLevel {
                         // from the queue above. `Relaxed` on all three: advisory
                         // counters (issue #68); the `OrderQueue::remove` carries
                         // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity();
-                        let hidden_qty = order_arc.hidden_quantity();
+                        let visible_qty = order_arc.visible_quantity().as_u64();
+                        let hidden_qty = order_arc.hidden_quantity().as_u64();
 
                         self.visible_quantity
                             .fetch_sub(visible_qty, Ordering::Relaxed);
@@ -811,7 +812,8 @@ impl PriceLevel {
 
                 let prev_total = order
                     .visible_quantity()
-                    .checked_add(order.hidden_quantity())
+                    .as_u64()
+                    .checked_add(order.hidden_quantity().as_u64())
                     .ok_or_else(|| PriceLevelError::InvalidOperation {
                         message: "order total quantity overflow".to_string(),
                     })?;
@@ -822,8 +824,8 @@ impl PriceLevel {
                 // to an unchanged clone, so `new_total` equals the old total for
                 // them and they take the position-preserving in-place branch.
                 let new_order = order.with_reduced_quantity(new_quantity.as_u64());
-                let new_visible = new_order.visible_quantity();
-                let new_hidden = new_order.hidden_quantity();
+                let new_visible = new_order.visible_quantity().as_u64();
+                let new_hidden = new_order.hidden_quantity().as_u64();
                 let new_total = new_visible.checked_add(new_hidden).ok_or_else(|| {
                     PriceLevelError::InvalidOperation {
                         message: "order total quantity overflow".to_string(),
@@ -863,8 +865,8 @@ impl PriceLevel {
                 // direction even when the total shrinks or is unchanged, because
                 // quantity can shift between the visible and hidden portions, so
                 // handle both signs.
-                let old_visible = old.visible_quantity();
-                let old_hidden = old.hidden_quantity();
+                let old_visible = old.visible_quantity().as_u64();
+                let old_hidden = old.hidden_quantity().as_u64();
                 // `Relaxed` on both branches: advisory counters (issue #68); the
                 // queue mutation above (`update_in_place` / `remove` + `push`)
                 // carries the happens-before, not these counter RMWs.
@@ -895,8 +897,8 @@ impl PriceLevel {
                         // from the queue above. `Relaxed` on all three: advisory
                         // counters (issue #68); the `OrderQueue::remove` carries
                         // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity();
-                        let hidden_qty = order_arc.hidden_quantity();
+                        let visible_qty = order_arc.visible_quantity().as_u64();
+                        let hidden_qty = order_arc.hidden_quantity().as_u64();
 
                         self.visible_quantity
                             .fetch_sub(visible_qty, Ordering::Relaxed);
@@ -926,8 +928,8 @@ impl PriceLevel {
                     // the queue above. `Relaxed` on all three: advisory counters
                     // (issue #68); the `OrderQueue::remove` carries the
                     // happens-before, not these counters.
-                    let visible_qty = order_arc.visible_quantity();
-                    let hidden_qty = order_arc.hidden_quantity();
+                    let visible_qty = order_arc.visible_quantity().as_u64();
+                    let hidden_qty = order_arc.hidden_quantity().as_u64();
 
                     self.visible_quantity
                         .fetch_sub(visible_qty, Ordering::Relaxed);
@@ -958,8 +960,8 @@ impl PriceLevel {
                         // from the queue above. `Relaxed` on all three: advisory
                         // counters (issue #68); the `OrderQueue::remove` carries
                         // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity();
-                        let hidden_qty = order_arc.hidden_quantity();
+                        let visible_qty = order_arc.visible_quantity().as_u64();
+                        let hidden_qty = order_arc.hidden_quantity().as_u64();
 
                         self.visible_quantity
                             .fetch_sub(visible_qty, Ordering::Relaxed);
@@ -1021,9 +1023,9 @@ impl From<&PriceLevelSnapshot> for PriceLevel {
         let _ = snapshot.refresh_aggregates();
 
         let order_count = snapshot.orders().len();
-        let visible_quantity = snapshot.visible_quantity();
-        let hidden_quantity = snapshot.hidden_quantity();
-        let price = snapshot.price();
+        let visible_quantity = snapshot.visible_quantity().as_u64();
+        let hidden_quantity = snapshot.hidden_quantity().as_u64();
+        let price = snapshot.price().as_u128();
         // Preserve the persisted statistics instead of resetting them.
         let stats = (*snapshot.statistics()).clone();
         let queue = OrderQueue::from(snapshot.into_orders());

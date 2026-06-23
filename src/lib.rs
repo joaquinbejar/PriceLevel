@@ -454,6 +454,42 @@
 //! which previously used an unchecked `*` that could panic in debug or wrap in
 //! release. Callers must handle the `Result` (e.g. `trade.total_value()?`).
 //!
+//! ## Migration Guide (newtypes at the accessor boundary — breaking)
+//!
+//! Accessors that previously returned raw integers for a domain concept now
+//! return the crate newtype, so raw `u64` / `u128` no longer leak across module
+//! boundaries (`OrderType::price` / `id` / `side` already returned newtypes —
+//! this completes the quantity / timestamp surface). Call `.as_u64()` /
+//! `.as_u128()` to recover the primitive, or keep working in the newtype.
+//!
+//! | Method | Before | After |
+//! |--------|--------|-------|
+//! | [`OrderType::visible_quantity`] | `u64` | [`Quantity`] |
+//! | [`OrderType::hidden_quantity`] | `u64` | [`Quantity`] |
+//! | [`OrderType::timestamp`] | `u64` | [`TimestampMs`] |
+//! | [`MatchResult::new`] (`initial_quantity`) | `u64` | [`Quantity`] |
+//! | [`MatchResult::with_capacity`] (`initial_quantity`) | `u64` | [`Quantity`] |
+//! | [`MatchResult::remaining_quantity`] | `u64` | [`Quantity`] |
+//! | [`MatchResult::executed_quantity`] | `Result<u64, _>` | `Result<`[`Quantity`]`, _>` |
+//! | [`PriceLevelSnapshot::new`] (`price`) | `u128` | [`Price`] |
+//! | [`PriceLevelSnapshot::with_orders`] (`price`) | `u128` | [`Price`] |
+//! | [`PriceLevelSnapshot::with_orders_and_stats`] (`price`) | `u128` | [`Price`] |
+//! | [`PriceLevelSnapshot::price`] | `u128` | [`Price`] |
+//! | [`PriceLevelSnapshot::visible_quantity`] | `u64` | [`Quantity`] |
+//! | [`PriceLevelSnapshot::hidden_quantity`] | `u64` | [`Quantity`] |
+//! | [`PriceLevelSnapshot::total_quantity`] | `Result<u64, _>` | `Result<`[`Quantity`]`, _>` |
+//!
+//! [`MatchResult::executed_value`] / [`Trade::total_value`](crate::execution::Trade::total_value)
+//! still return `u128` — there is no monetary newtype. [`PriceLevel::match_order`]
+//! keeps its `incoming_quantity: u64` input (it is converted to [`Quantity`] at
+//! the [`MatchResult`] boundary internally); its 124 call sites are unchanged.
+//!
+//! **Snapshot wire format is unchanged.** [`Price`] and [`Quantity`] are
+//! `#[serde(transparent)]`, so a snapshot serializes the same JSON numbers as
+//! before; the snapshot format version is **not** bumped and the SHA-256
+//! checksum over an unchanged payload still validates. Existing snapshot JSON
+//! restores without migration.
+//!
 
 mod orders;
 mod price_level;
