@@ -22,6 +22,18 @@ impl TradeList {
         Self { trades: Vec::new() }
     }
 
+    /// Create a new empty trade list with space reserved for `n` trades.
+    ///
+    /// Pre-allocates the backing vector to avoid repeated reallocations when
+    /// the number of trades produced by a single match sweep is known or
+    /// estimable (e.g. bounded by the resting order count at a level).
+    #[must_use]
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            trades: Vec::with_capacity(n),
+        }
+    }
+
     /// Create a trade list from an existing vector
     #[must_use]
     pub fn from_vec(trades: Vec<Trade>) -> Self {

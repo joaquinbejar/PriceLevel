@@ -263,7 +263,14 @@ impl PriceLevel {
         timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
-        let mut result = MatchResult::new(taker_order_id, incoming_quantity);
+        // A single sweep emits at most one trade and at most one filled-order
+        // id per resting order, so the live order count is an upper bound for
+        // both vectors. Pre-size them to cut per-fill reallocations on the hot
+        // path; the count is advisory (`Relaxed`) so the `Vec` still grows if a
+        // concurrent `add_order` lands mid-sweep — capacity is a hint, not a
+        // bound.
+        let capacity = self.order_count();
+        let mut result = MatchResult::with_capacity(taker_order_id, incoming_quantity, capacity);
         let mut remaining = incoming_quantity;
 
         while remaining > 0 {

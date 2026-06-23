@@ -42,6 +42,24 @@ impl MatchResult {
         }
     }
 
+    /// Create a new empty match result with the `trades` and `filled_order_ids`
+    /// vectors pre-sized for up to `capacity` entries.
+    ///
+    /// A single match sweep at one price level produces at most one trade and
+    /// at most one filled order id per resting order, so `capacity` is normally
+    /// the level's resting order count. Pre-sizing both vectors removes the
+    /// per-fill reallocations on the match hot path.
+    #[must_use]
+    pub fn with_capacity(order_id: Id, initial_quantity: u64, capacity: usize) -> Self {
+        Self {
+            order_id,
+            trades: TradeList::with_capacity(capacity),
+            remaining_quantity: initial_quantity,
+            is_complete: false,
+            filled_order_ids: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Add a trade to this match result.
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
         self.remaining_quantity = self
