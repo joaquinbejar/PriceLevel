@@ -361,6 +361,25 @@ snapshot/replay equivalence.
 Pass the taker's arrival timestamp (or any deterministic value for
 tests/replay), e.g. [`TimestampMs::new`].
 
+### Migration Guide (snapshot format v1 → v2)
+
+The checksum-protected snapshot format now persists per-level statistics
+(issue #63). [`PriceLevelSnapshot`] carries the eight `PriceLevelStatistics`
+counters — orders added / removed / executed, quantity and value executed,
+last-execution and first-arrival timestamps, and the waiting-time sum — and
+[`PriceLevel::from_snapshot_json`] / [`PriceLevel::from_snapshot`] restore
+them instead of resetting to a fresh, zeroed set. The new field is covered by
+the package SHA-256 checksum automatically.
+
+The snapshot format version (`SNAPSHOT_FORMAT_VERSION`) is bumped from `1` to
+`2`. Snapshot packages written by an earlier release carry `version: 1` and
+no statistics; they are **no longer accepted** —
+[`PriceLevelSnapshotPackage::validate`] rejects them up-front with a
+[`PriceLevelError::InvalidOperation`] version mismatch (not a confusing
+checksum error). Re-take any persisted snapshots with this release. No code
+changes are required at the call sites: `snapshot_to_json()` /
+`from_snapshot_json()` keep the same signatures.
+
 
  ## Setup Instructions
 
