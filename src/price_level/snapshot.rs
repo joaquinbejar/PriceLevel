@@ -1,6 +1,7 @@
 use crate::errors::PriceLevelError;
 use crate::orders::OrderType;
 use crate::price_level::statistics::PriceLevelStatistics;
+use crate::utils::{Price, Quantity};
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -14,12 +15,12 @@ use std::sync::Arc;
 /// at that level, and the per-level execution statistics.
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
-    /// The price of this level.
-    price: u128,
-    /// Total visible quantity at this level in the smallest unit.
-    visible_quantity: u64,
-    /// Total hidden quantity at this level in the smallest unit.
-    hidden_quantity: u64,
+    /// The price of this level, in price ticks.
+    price: Price,
+    /// Total visible quantity at this level, in quantity units.
+    visible_quantity: Quantity,
+    /// Total hidden quantity at this level, in quantity units.
+    hidden_quantity: Quantity,
     /// Number of orders at this level.
     order_count: usize,
     /// Orders at this level.
@@ -37,11 +38,11 @@ pub struct PriceLevelSnapshot {
 impl PriceLevelSnapshot {
     /// Create a new empty snapshot at the given price.
     #[must_use]
-    pub fn new(price: u128) -> Self {
+    pub fn new(price: Price) -> Self {
         Self {
             price,
-            visible_quantity: 0,
-            hidden_quantity: 0,
+            visible_quantity: Quantity::ZERO,
+            hidden_quantity: Quantity::ZERO,
             order_count: 0,
             orders: Vec::new(),
             statistics: PriceLevelStatistics::new(),
@@ -58,7 +59,7 @@ impl PriceLevelSnapshot {
     /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
     /// visible / hidden quantities overflows `u64`.
     pub fn with_orders(
-        price: u128,
+        price: Price,
         orders: Vec<Arc<OrderType<()>>>,
     ) -> Result<Self, PriceLevelError> {
         Self::with_orders_and_stats(price, orders, PriceLevelStatistics::new())
@@ -72,14 +73,14 @@ impl PriceLevelSnapshot {
     /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
     /// visible / hidden quantities overflows `u64`.
     pub fn with_orders_and_stats(
-        price: u128,
+        price: Price,
         orders: Vec<Arc<OrderType<()>>>,
         statistics: PriceLevelStatistics,
     ) -> Result<Self, PriceLevelError> {
         let mut snapshot = Self {
             price,
-            visible_quantity: 0,
-            hidden_quantity: 0,
+            visible_quantity: Quantity::ZERO,
+            hidden_quantity: Quantity::ZERO,
             order_count: 0,
             orders,
             statistics,
@@ -88,21 +89,21 @@ impl PriceLevelSnapshot {
         Ok(snapshot)
     }
 
-    /// Returns the price of this level.
+    /// Returns the price of this level, in price ticks.
     #[must_use]
-    pub fn price(&self) -> u128 {
+    pub fn price(&self) -> Price {
         self.price
     }
 
-    /// Returns the total visible quantity.
+    /// Returns the total visible quantity, in quantity units.
     #[must_use]
-    pub fn visible_quantity(&self) -> u64 {
+    pub fn visible_quantity(&self) -> Quantity {
         self.visible_quantity
     }
 
-    /// Returns the total hidden quantity.
+    /// Returns the total hidden quantity, in quantity units.
     #[must_use]
-    pub fn hidden_quantity(&self) -> u64 {
+    pub fn hidden_quantity(&self) -> Quantity {
         self.hidden_quantity
     }
 
@@ -139,9 +140,9 @@ impl PriceLevelSnapshot {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn from_raw_parts(
-        price: u128,
-        visible_quantity: u64,
-        hidden_quantity: u64,
+        price: Price,
+        visible_quantity: Quantity,
+        hidden_quantity: Quantity,
         order_count: usize,
         orders: Vec<Arc<OrderType<()>>>,
     ) -> Self {
@@ -162,9 +163,9 @@ impl PriceLevelSnapshot {
     /// preserve the level's execution statistics through the snapshot.
     #[must_use]
     pub(crate) fn from_raw_parts_with_stats(
-        price: u128,
-        visible_quantity: u64,
-        hidden_quantity: u64,
+        price: Price,
+        visible_quantity: Quantity,
+        hidden_quantity: Quantity,
         order_count: usize,
         orders: Vec<Arc<OrderType<()>>>,
         statistics: PriceLevelStatistics,
@@ -185,9 +186,11 @@ impl PriceLevelSnapshot {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if `visible + hidden`
     /// overflows `u64`.
-    pub fn total_quantity(&self) -> Result<u64, PriceLevelError> {
+    pub fn total_quantity(&self) -> Result<Quantity, PriceLevelError> {
         self.visible_quantity
-            .checked_add(self.hidden_quantity)
+            .as_u64()
+            .checked_add(self.hidden_quantity.as_u64())
+            .map(Quantity::new)
             .ok_or_else(|| PriceLevelError::InvalidOperation {
                 message: "snapshot total quantity overflow".to_string(),
             })
@@ -212,20 +215,20 @@ impl PriceLevelSnapshot {
 
         for order in &self.orders {
             visible_total = visible_total
-                .checked_add(order.visible_quantity())
+                .checked_add(order.visible_quantity().as_u64())
                 .ok_or_else(|| PriceLevelError::InvalidOperation {
                     message: "snapshot visible quantity overflow".to_string(),
                 })?;
 
             hidden_total = hidden_total
-                .checked_add(order.hidden_quantity())
+                .checked_add(order.hidden_quantity().as_u64())
                 .ok_or_else(|| PriceLevelError::InvalidOperation {
                     message: "snapshot hidden quantity overflow".to_string(),
                 })?;
         }
 
-        self.visible_quantity = visible_total;
-        self.hidden_quantity = hidden_total;
+        self.visible_quantity = Quantity::new(visible_total);
+        self.hidden_quantity = Quantity::new(hidden_total);
 
         Ok(())
     }
@@ -666,9 +669,9 @@ impl FromStr for PriceLevelSnapshot {
         // serialized/deserialized in this simple, human-readable format. Use the
         // JSON snapshot package for a lossless round-trip.
         Ok(PriceLevelSnapshot {
-            price,
-            visible_quantity,
-            hidden_quantity,
+            price: Price::new(price),
+            visible_quantity: Quantity::new(visible_quantity),
+            hidden_quantity: Quantity::new(hidden_quantity),
             order_count,
             orders: Vec::new(),
             statistics: PriceLevelStatistics::new(),

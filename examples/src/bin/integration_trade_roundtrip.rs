@@ -144,7 +144,10 @@ fn main() {
     );
 
     assert_eq_or_exit(
-        result.executed_quantity().unwrap_or(0),
+        result
+            .executed_quantity()
+            .unwrap_or(Quantity::ZERO)
+            .as_u64(),
         50,
         "executed_quantity",
     );

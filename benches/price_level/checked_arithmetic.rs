@@ -73,7 +73,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
     // Benchmark MatchResult::new + add_trade sequence
     group.bench_function("match_result_add_trades", |b| {
         b.iter(|| {
-            let mut mr = MatchResult::new(Id::from_u64(1), 1000);
+            let mut mr = MatchResult::new(Id::from_u64(1), Quantity::new(1000));
             for i in 0..50_u64 {
                 let trade = Trade::new(
                     Id::from_u64(100 + i),

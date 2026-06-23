@@ -136,8 +136,12 @@ fn main() {
     let executed_qty = match_result
         .executed_quantity()
         .unwrap_or_else(|e| exit_err(&format!("executed_quantity: {e}")));
-    assert_eq_or_exit(executed_qty, 200, "executed_quantity");
-    assert_eq_or_exit(match_result.remaining_quantity(), 0, "remaining_quantity");
+    assert_eq_or_exit(executed_qty.as_u64(), 200, "executed_quantity");
+    assert_eq_or_exit(
+        match_result.remaining_quantity().as_u64(),
+        0,
+        "remaining_quantity",
+    );
     assert_or_exit(match_result.is_complete(), "match should be complete");
     assert_or_exit(
         !match_result.trades().as_vec().is_empty(),
@@ -170,7 +174,7 @@ fn main() {
         "partial match should not be complete",
     );
     assert_or_exit(
-        partial.remaining_quantity() > 0,
+        partial.remaining_quantity().as_u64() > 0,
         "should have remaining quantity",
     );
     println!(

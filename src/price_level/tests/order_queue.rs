@@ -75,10 +75,14 @@ mod tests {
 
         // Verify individual orders (order might not be preserved)
         let has_order1 = orders.iter().any(|o| {
-            o.id() == Id::from_u64(1) && o.price() == Price::new(1000) && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1)
+                && o.price() == Price::new(1000)
+                && o.visible_quantity() == Quantity::new(10)
         });
         let has_order2 = orders.iter().any(|o| {
-            o.id() == Id::from_u64(2) && o.price() == Price::new(1100) && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2)
+                && o.price() == Price::new(1100)
+                && o.visible_quantity() == Quantity::new(20)
         });
 
         assert!(has_order1, "First order not found or incorrect");
@@ -95,10 +99,14 @@ mod tests {
         );
 
         let round_trip_has_order1 = round_trip_orders.iter().any(|o| {
-            o.id() == Id::from_u64(1) && o.price() == Price::new(1000) && o.visible_quantity() == 10
+            o.id() == Id::from_u64(1)
+                && o.price() == Price::new(1000)
+                && o.visible_quantity() == Quantity::new(10)
         });
         let round_trip_has_order2 = round_trip_orders.iter().any(|o| {
-            o.id() == Id::from_u64(2) && o.price() == Price::new(1100) && o.visible_quantity() == 20
+            o.id() == Id::from_u64(2)
+                && o.price() == Price::new(1100)
+                && o.visible_quantity() == Quantity::new(20)
         });
 
         assert!(

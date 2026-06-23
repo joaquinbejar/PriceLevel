@@ -470,7 +470,7 @@ mod tests {
         // Verify the returned Arc contains the expected order
         assert_eq!(order_arc.id(), Id::from_u64(1));
         assert_eq!(order_arc.price(), Price::new(10000));
-        assert_eq!(order_arc.visible_quantity(), 100);
+        assert_eq!(order_arc.visible_quantity().as_u64(), 100);
 
         // Verify stats
         assert_eq!(price_level.stats().orders_added(), 1);
@@ -590,7 +590,7 @@ mod tests {
         );
 
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
@@ -663,8 +663,8 @@ mod tests {
 
         // Crossed two full makers (40 + 30) and partially filled the third (20).
         assert_eq!(first_trades.len(), 3);
-        assert_eq!(first.executed_quantity().unwrap_or_default(), 90);
-        assert_eq!(second.executed_quantity().unwrap_or_default(), 90);
+        assert_eq!(first.executed_quantity().unwrap_or_default().as_u64(), 90);
+        assert_eq!(second.executed_quantity().unwrap_or_default().as_u64(), 90);
 
         // Byte-identical trade streams (Trade derives PartialEq over every
         // field, including the timestamp).
@@ -697,7 +697,7 @@ mod tests {
 
         // Verificar el resultado de matching
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.order_count(), 1);
@@ -739,7 +739,7 @@ mod tests {
         );
 
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 50); // 150 - 100 = 50 remaining
+        assert_eq!(match_result.remaining_quantity().as_u64(), 50); // 150 - 100 = 50 remaining
         assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
@@ -783,7 +783,7 @@ mod tests {
 
         // Assertions to validate the match result.
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
@@ -809,7 +809,7 @@ mod tests {
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 0); // Hidden quantity reduced
@@ -833,7 +833,7 @@ mod tests {
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -864,7 +864,7 @@ mod tests {
 
         // Assertions to validate the match result.
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity reduced
@@ -890,7 +890,7 @@ mod tests {
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50); // Visible quantity replenished
         assert_eq!(price_level.hidden_quantity(), 50); // Hidden quantity reduced
@@ -916,7 +916,7 @@ mod tests {
             TimestampMs::new(1_716_000_000_000),
             &transaction_id_generator,
         );
-        assert_eq!(match_result.remaining_quantity(), 50);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 50);
         assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -944,7 +944,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 20);
         assert_eq!(price_level.hidden_quantity(), 150); // Hidden unchanged
@@ -976,7 +976,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // The order should be removed since the visible quantity reached 0 and auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1007,7 +1007,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // The order should be replenished with the default amount
         assert_eq!(
@@ -1044,7 +1044,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 25); // 50 - 25 = 25
         assert_eq!(price_level.hidden_quantity(), 150); // No change to hidden quantity
@@ -1060,7 +1060,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // No automatic replenishment because auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 15); // 25 - 10 = 15, no replenishment
@@ -1099,7 +1099,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // The order should be replenished with the custom amount
         assert_eq!(price_level.visible_quantity(), custom_amount);
@@ -1130,7 +1130,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // 1 visible unit will remain, which equals the safe threshold (1), so no replenishment occurs
         assert_eq!(price_level.visible_quantity(), 1);
@@ -1160,7 +1160,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // The order should be removed from the price level
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1190,7 +1190,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // The order should be removed from the price level
         assert_eq!(price_level.visible_quantity(), 0);
@@ -1220,7 +1220,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 25); // 50 - 25 = 25
         assert_eq!(price_level.hidden_quantity(), 150); // No replenishment yet
@@ -1236,7 +1236,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         // No automatic replenishment because auto_replenish is false
         assert_eq!(price_level.visible_quantity(), 15); // 25 - 10 = 15
@@ -1271,7 +1271,7 @@ mod tests {
 
         // Validate the match result
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 20); // 100 - 80 = 20
         assert_eq!(price_level.hidden_quantity(), 100); // Hidden quantity unchanged (still above threshold)
@@ -1298,7 +1298,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 90); // 20 - 10 = 10, then replenished to 90 (10 + 80)
         assert_eq!(price_level.hidden_quantity(), 20); // 100 - 80 (replenish amount) = 20
@@ -1323,7 +1323,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 40); // 150 - 90 - 20 = 40
+        assert_eq!(match_result.remaining_quantity().as_u64(), 40); // 150 - 90 - 20 = 40
         assert!(!match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -1370,7 +1370,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.order_count(), 1);
@@ -1395,7 +1395,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
@@ -1420,7 +1420,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.order_count(), 1);
@@ -1445,7 +1445,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
@@ -1496,7 +1496,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_eq!(price_level.visible_quantity(), 40);
@@ -1524,7 +1524,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 1);
         assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
@@ -1558,7 +1558,7 @@ mod tests {
 
         // Pass-through: maker fully consumed, 50 left over on the taker.
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.remaining_quantity().as_u64(), 50);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(100));
         assert_eq!(result.filled_order_ids().len(), 1);
@@ -1585,7 +1585,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 75);
+        assert_eq!(result.remaining_quantity().as_u64(), 75);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
     }
@@ -1612,7 +1612,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_eq!(price_level.visible_quantity(), 60);
@@ -1641,7 +1641,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 1);
         assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
@@ -1672,7 +1672,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.remaining_quantity().as_u64(), 40);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(80));
         assert_eq!(result.filled_order_ids().len(), 1);
@@ -1698,7 +1698,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 55);
+        assert_eq!(result.remaining_quantity().as_u64(), 55);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
     }
@@ -1725,7 +1725,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_eq!(price_level.visible_quantity(), 50);
@@ -1753,7 +1753,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 1);
         assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
@@ -1783,7 +1783,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.remaining_quantity().as_u64(), 40);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(90));
         // Pass-through fills at the level price, NOT a pegged reference price.
@@ -1811,7 +1811,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 33);
+        assert_eq!(result.remaining_quantity().as_u64(), 33);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
     }
@@ -1838,7 +1838,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_eq!(price_level.visible_quantity(), 30);
@@ -1866,7 +1866,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.filled_order_ids().len(), 1);
         assert_eq!(result.filled_order_ids()[0], Id::from_u64(1));
@@ -1897,7 +1897,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.remaining_quantity().as_u64(), 40);
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(60));
         assert_eq!(result.filled_order_ids().len(), 1);
@@ -1923,7 +1923,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 90);
+        assert_eq!(result.remaining_quantity().as_u64(), 90);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
     }
@@ -1958,10 +1958,10 @@ mod tests {
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
         // remaining == 0 and is_complete agree (vacuously complete).
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert!(result.is_complete());
         // executed_quantity is 0 and matches the (empty) trade sum.
-        assert!(matches!(result.executed_quantity(), Ok(0)));
+        assert!(matches!(result.executed_quantity(), Ok(q) if q.as_u64() == 0));
         // Resting depth untouched: both makers still rest at full size.
         assert_eq!(price_level.order_count(), 2);
         assert_eq!(price_level.visible_quantity(), 150);
@@ -1987,7 +1987,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(match_result.outcome(), MatchOutcome::Filled);
         assert!(!match_result.was_killed());
@@ -2015,7 +2015,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(match_result.outcome(), MatchOutcome::Filled);
         // The maker keeps the unmatched 50 resting; the IOC taker is never
@@ -2059,8 +2059,8 @@ mod tests {
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
         assert!(!result.was_killed());
-        assert_eq!(result.remaining_quantity(), 0);
-        assert_eq!(result.executed_quantity().expect("ok"), 100);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 100);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
@@ -2087,10 +2087,10 @@ mod tests {
         assert!(!result.is_complete());
         assert!(result.was_killed());
         assert_eq!(result.outcome(), MatchOutcome::Killed);
-        assert_eq!(result.remaining_quantity(), 101);
+        assert_eq!(result.remaining_quantity().as_u64(), 101);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
-        assert_eq!(result.executed_quantity().expect("ok"), 0);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 0);
         // No partial state: the resting depth is fully intact.
         assert_eq!(price_level.order_count(), 2);
         assert_eq!(price_level.visible_quantity(), 100);
@@ -2113,7 +2113,7 @@ mod tests {
 
         assert!(result.was_killed());
         assert_eq!(result.outcome(), MatchOutcome::Killed);
-        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.remaining_quantity().as_u64(), 10);
         assert_eq!(result.trades().len(), 0);
     }
 
@@ -2137,7 +2137,7 @@ mod tests {
 
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
-        assert_eq!(result.executed_quantity().expect("ok"), 50);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 50);
         assert_eq!(price_level.order_count(), 0);
     }
 
@@ -2165,8 +2165,8 @@ mod tests {
         assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
         assert!(!result.was_killed());
         assert!(!result.was_rejected());
-        assert_eq!(result.executed_quantity().expect("ok"), 100);
-        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 100);
+        assert_eq!(result.remaining_quantity().as_u64(), 50);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
@@ -2194,10 +2194,10 @@ mod tests {
         assert!(result.was_rejected());
         assert_eq!(result.outcome(), MatchOutcome::Rejected);
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 60);
+        assert_eq!(result.remaining_quantity().as_u64(), 60);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
-        assert_eq!(result.executed_quantity().expect("ok"), 0);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 0);
         // Resting maker untouched.
         assert_eq!(price_level.order_count(), 1);
         assert_eq!(price_level.visible_quantity(), 100);
@@ -2222,7 +2222,7 @@ mod tests {
         assert!(!result.was_rejected());
         assert_eq!(result.outcome(), MatchOutcome::NotFilled);
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 60);
+        assert_eq!(result.remaining_quantity().as_u64(), 60);
         assert_eq!(result.trades().len(), 0);
     }
 
@@ -2246,7 +2246,7 @@ mod tests {
         assert!(!result.was_rejected());
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(price_level.order_count(), 1);
         assert_eq!(price_level.visible_quantity(), 100);
     }
@@ -2274,8 +2274,8 @@ mod tests {
         assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
         assert!(!result.was_killed());
         assert!(!result.was_rejected());
-        assert_eq!(result.executed_quantity().expect("ok"), 100);
-        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 100);
+        assert_eq!(result.remaining_quantity().as_u64(), 40);
         assert_eq!(result.filled_order_ids().len(), 1);
         assert_eq!(price_level.order_count(), 0);
     }
@@ -2298,8 +2298,8 @@ mod tests {
 
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
-        assert_eq!(result.remaining_quantity(), 0);
-        assert_eq!(result.executed_quantity().expect("ok"), 100);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
+        assert_eq!(result.executed_quantity().expect("ok").as_u64(), 100);
     }
 
     // ----- resting FOK / IOC makers are consumed like any other liquidity -----
@@ -2367,7 +2367,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.order_count(), 0);
@@ -2409,10 +2409,16 @@ mod tests {
         );
 
         // All available depth filled (100 of 150); 50 reported as remainder.
-        assert_eq!(result.executed_quantity().expect("real output is Ok"), 100);
-        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("real output is Ok")
+                .as_u64(),
+            100
+        );
+        assert_eq!(result.remaining_quantity().as_u64(), 50);
         assert!(
-            result.remaining_quantity() > 0,
+            result.remaining_quantity().as_u64() > 0,
             "taker remainder must be strictly positive"
         );
         assert!(
@@ -2476,7 +2482,7 @@ mod tests {
             &trade_id_generator,
         );
 
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert!(result.is_complete());
         assert_eq!(result.trades().len(), 1);
         assert_eq!(price_level.visible_quantity(), 0);
@@ -2509,7 +2515,7 @@ mod tests {
 
         // Verificar el resultado de matching
         assert_eq!(match_result.order_id(), taker_id);
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 10); // 25 - (140 - 50 - 75) = 10
         assert_eq!(price_level.order_count(), 1);
@@ -2538,8 +2544,8 @@ mod tests {
         let orders = price_level.snapshot_orders();
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(3));
-        assert_eq!(orders[0].visible_quantity(), 10);
-        assert_eq!(orders[0].hidden_quantity(), 0);
+        assert_eq!(orders[0].visible_quantity().as_u64(), 10);
+        assert_eq!(orders[0].hidden_quantity().as_u64(), 0);
     }
 
     #[test]
@@ -2554,9 +2560,9 @@ mod tests {
         let snapshot = price_level.snapshot();
 
         // Verify snapshot data
-        assert_eq!(snapshot.price(), 10000);
-        assert_eq!(snapshot.visible_quantity(), 150); // 100 + 50
-        assert_eq!(snapshot.hidden_quantity(), 0);
+        assert_eq!(snapshot.price().as_u128(), 10000);
+        assert_eq!(snapshot.visible_quantity().as_u64(), 150); // 100 + 50
+        assert_eq!(snapshot.hidden_quantity().as_u64(), 0);
         assert_eq!(snapshot.order_count(), 2);
         assert_eq!(snapshot.orders().len(), 2);
 
@@ -2634,7 +2640,7 @@ mod tests {
         assert!(result.is_ok());
         let updated_order = result.unwrap();
         assert!(updated_order.is_some());
-        assert_eq!(updated_order.unwrap().visible_quantity(), 150);
+        assert_eq!(updated_order.unwrap().visible_quantity().as_u64(), 150);
 
         // The price level should reflect the new quantity
         assert_eq!(price_level.visible_quantity(), 150);
@@ -2652,7 +2658,7 @@ mod tests {
         assert!(result.is_ok());
         let updated_order = result.unwrap();
         assert!(updated_order.is_some());
-        assert_eq!(updated_order.unwrap().visible_quantity(), 50);
+        assert_eq!(updated_order.unwrap().visible_quantity().as_u64(), 50);
 
         // The price level should reflect the new quantity
         assert_eq!(price_level.visible_quantity(), 50);
@@ -2686,7 +2692,7 @@ mod tests {
         assert!(result.is_ok());
         let updated = result.unwrap();
         assert!(updated.is_some());
-        assert_eq!(updated.unwrap().visible_quantity(), 40);
+        assert_eq!(updated.unwrap().visible_quantity().as_u64(), 40);
 
         // Match a quantity that only consumes the first resting order. A (id 1)
         // must be hit before B (id 2).
@@ -2727,7 +2733,7 @@ mod tests {
         assert!(result.is_ok());
         let updated = result.unwrap();
         assert!(updated.is_some());
-        assert_eq!(updated.unwrap().visible_quantity(), 150);
+        assert_eq!(updated.unwrap().visible_quantity().as_u64(), 150);
 
         // A subsequent match that only consumes the first resting order must
         // now hit B (id 2) before the resized A (id 1).
@@ -2785,8 +2791,8 @@ mod tests {
 
         // Atomic counters must equal the sum over the live queue contents.
         let snapshot = price_level.snapshot_orders();
-        let expected_visible: u64 = snapshot.iter().map(|o| o.visible_quantity()).sum();
-        let expected_hidden: u64 = snapshot.iter().map(|o| o.hidden_quantity()).sum();
+        let expected_visible: u64 = snapshot.iter().map(|o| o.visible_quantity().as_u64()).sum();
+        let expected_hidden: u64 = snapshot.iter().map(|o| o.hidden_quantity().as_u64()).sum();
 
         assert_eq!(price_level.order_count(), snapshot.len());
         assert_eq!(price_level.visible_quantity(), expected_visible);
@@ -2842,7 +2848,7 @@ mod tests {
         assert!(result.is_ok());
         let updated_order = result.unwrap();
         assert!(updated_order.is_some());
-        assert_eq!(updated_order.unwrap().visible_quantity(), 150);
+        assert_eq!(updated_order.unwrap().visible_quantity().as_u64(), 150);
 
         // The price level should reflect the new quantity
         assert_eq!(price_level.visible_quantity(), 150);
@@ -2894,7 +2900,7 @@ mod tests {
         assert!(result.is_ok());
         let updated_order = result.unwrap();
         assert!(updated_order.is_some());
-        assert_eq!(updated_order.unwrap().visible_quantity(), 150);
+        assert_eq!(updated_order.unwrap().visible_quantity().as_u64(), 150);
 
         // The price level should reflect the new quantity
         assert_eq!(price_level.visible_quantity(), 150);
@@ -3011,7 +3017,7 @@ mod tests {
         assert_eq!(orders.len(), 5);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
-        assert_eq!(orders[0].visible_quantity(), 50);
+        assert_eq!(orders[0].visible_quantity().as_u64(), 50);
     }
 
     // Test serialization and deserialization for PriceLevel
@@ -3044,7 +3050,7 @@ mod tests {
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
-        assert_eq!(orders[0].visible_quantity(), 100);
+        assert_eq!(orders[0].visible_quantity().as_u64(), 100);
     }
 
     // `PriceLevelData` is a plain input/transfer DTO: with `deny_unknown_fields`
@@ -3122,7 +3128,7 @@ mod tests {
             &transaction_id_generator,
         );
 
-        assert_eq!(match_result.remaining_quantity(), 0);
+        assert_eq!(match_result.remaining_quantity().as_u64(), 0);
         assert!(match_result.is_complete());
         assert_eq!(price_level.visible_quantity(), 100); // 200 - 100 = 100
         assert_eq!(price_level.order_count(), 1);
@@ -3163,7 +3169,7 @@ mod tests {
 
         assert!(result.is_ok());
         let updated_order = result.unwrap().unwrap();
-        assert_eq!(updated_order.visible_quantity(), 150);
+        assert_eq!(updated_order.visible_quantity().as_u64(), 150);
         assert_eq!(price_level.visible_quantity(), 150);
         assert_eq!(price_level.order_count(), 1);
     }
@@ -3672,16 +3678,22 @@ mod tests {
     fn assert_snapshot_internally_consistent(snapshot: &crate::price_level::PriceLevelSnapshot) {
         let orders = snapshot.orders();
 
-        let visible_sum: u64 = orders.iter().map(|order| order.visible_quantity()).sum();
-        let hidden_sum: u64 = orders.iter().map(|order| order.hidden_quantity()).sum();
+        let visible_sum: u64 = orders
+            .iter()
+            .map(|order| order.visible_quantity().as_u64())
+            .sum();
+        let hidden_sum: u64 = orders
+            .iter()
+            .map(|order| order.hidden_quantity().as_u64())
+            .sum();
 
         assert_eq!(
-            snapshot.visible_quantity(),
+            snapshot.visible_quantity().as_u64(),
             visible_sum,
             "snapshot visible_quantity must equal the sum over its own orders"
         );
         assert_eq!(
-            snapshot.hidden_quantity(),
+            snapshot.hidden_quantity().as_u64(),
             hidden_sum,
             "snapshot hidden_quantity must equal the sum over its own orders"
         );
@@ -3812,7 +3824,7 @@ mod tests {
         // is_complete <=> remaining_quantity == 0
         assert_eq!(
             result.is_complete(),
-            result.remaining_quantity() == 0,
+            result.remaining_quantity().as_u64() == 0,
             "is_complete must agree with remaining_quantity == 0"
         );
 
@@ -3826,7 +3838,7 @@ mod tests {
             .try_fold(0u64, |acc, t| acc.checked_add(t.quantity().as_u64()))
             .expect("summing trade quantities must not overflow u64");
         let executed_qty = match result.executed_quantity() {
-            Ok(q) => q,
+            Ok(q) => q.as_u64(),
             Err(e) => panic!("executed_quantity must not error on real output: {e}"),
         };
         assert_eq!(
@@ -3933,7 +3945,7 @@ mod tests {
 
         // The taker (40) is exhausted against the maker (100): complete.
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 1);
         // The maker is only partially filled and remains resting.
         assert_eq!(result.filled_order_ids().len(), 0);
@@ -3962,7 +3974,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 2);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_match_result_consistent(&result, 10000, Side::Buy);
@@ -3989,7 +4001,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 40);
+        assert_eq!(result.remaining_quantity().as_u64(), 40);
         assert_eq!(result.trades().len(), 2);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_eq!(price_level.order_count(), 0);
@@ -4018,7 +4030,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert_eq!(result.trades().len(), 3);
         assert_eq!(result.filled_order_ids().len(), 2);
         assert_match_result_consistent(&result, 10000, Side::Buy);
@@ -4042,7 +4054,7 @@ mod tests {
         );
 
         assert!(!result.is_complete());
-        assert_eq!(result.remaining_quantity(), 50);
+        assert_eq!(result.remaining_quantity().as_u64(), 50);
         assert_eq!(result.trades().len(), 0);
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_match_result_consistent(&result, 10000, Side::Buy);
@@ -4072,7 +4084,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert!(!result.trades().as_vec().is_empty());
         assert_eq!(result.filled_order_ids().len(), 0);
         assert_match_result_consistent(&result, 10000, Side::Sell);
@@ -4100,7 +4112,7 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
         assert!(!result.trades().as_vec().is_empty());
         assert_match_result_consistent(&result, 10000, Side::Sell);
     }
@@ -4215,8 +4227,14 @@ mod tests {
         );
 
         assert!(result.is_complete());
-        assert_eq!(result.remaining_quantity(), 0);
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
+        assert_eq!(result.remaining_quantity().as_u64(), 0);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            70
+        );
         // Both makers are fully consumed and removed.
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
@@ -4246,7 +4264,13 @@ mod tests {
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
         assert!(!result.was_killed());
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            70
+        );
         assert_eq!(price_level.order_count(), 0);
         assert_match_result_consistent(&result, 10000, Side::Sell);
     }
@@ -4271,7 +4295,7 @@ mod tests {
 
         assert!(result.was_killed());
         assert_eq!(result.outcome(), MatchOutcome::Killed);
-        assert_eq!(result.remaining_quantity(), 71);
+        assert_eq!(result.remaining_quantity().as_u64(), 71);
         assert_eq!(result.trades().len(), 0);
         // Queue untouched.
         assert_eq!(price_level.order_count(), 2);
@@ -4297,8 +4321,14 @@ mod tests {
             &trade_gen,
         );
 
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 70);
-        assert_eq!(result.remaining_quantity(), 130);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            70
+        );
+        assert_eq!(result.remaining_quantity().as_u64(), 130);
         assert!(!result.is_complete());
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
@@ -4327,7 +4357,7 @@ mod tests {
 
         assert!(result.was_rejected());
         assert_eq!(result.outcome(), MatchOutcome::Rejected);
-        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.remaining_quantity().as_u64(), 10);
         assert_eq!(result.trades().len(), 0);
         // Queue untouched by the rejection.
         assert_eq!(price_level.order_count(), 2);
@@ -4367,7 +4397,13 @@ mod tests {
             &trade_gen,
         );
         assert!(filled.is_complete());
-        assert_eq!(filled.executed_quantity().expect("executed_quantity"), 25);
+        assert_eq!(
+            filled
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            25
+        );
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -4400,8 +4436,14 @@ mod tests {
 
         // 40 from the standard maker + 50 from the reserve (drained tranche by
         // tranche). Total available depth is 90.
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 90);
-        assert_eq!(result.remaining_quantity(), 110);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            90
+        );
+        assert_eq!(result.remaining_quantity().as_u64(), 110);
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -4429,7 +4471,13 @@ mod tests {
         assert!(result.is_complete());
         assert_eq!(result.outcome(), MatchOutcome::Filled);
         assert!(!result.was_killed());
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 90);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            90
+        );
         assert_eq!(price_level.order_count(), 0);
         assert_match_result_consistent(&result, 10000, Side::Sell);
 
@@ -4479,8 +4527,14 @@ mod tests {
 
         // Only the standard maker (40) is matchable; the non-replenishing,
         // zero-visible reserve is dropped without a trade.
-        assert_eq!(result.executed_quantity().expect("executed_quantity"), 40);
-        assert_eq!(result.remaining_quantity(), 60);
+        assert_eq!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            40
+        );
+        assert_eq!(result.remaining_quantity().as_u64(), 60);
         // Both orders are gone from the queue (one filled, one dropped) and the
         // counters are consistent: hidden of the dropped reserve was removed.
         assert_eq!(price_level.order_count(), 0);
@@ -4511,7 +4565,7 @@ mod tests {
             &fok_gen,
         );
         assert!(fok.was_killed());
-        assert_eq!(fok.remaining_quantity(), 5);
+        assert_eq!(fok.remaining_quantity().as_u64(), 5);
         // FOK is a pre-check: the dead reserve is left resting, queue intact.
         assert_eq!(fok_level.order_count(), 1);
         assert_eq!(fok_level.hidden_quantity(), 50);
@@ -4534,7 +4588,13 @@ mod tests {
         );
         assert!(!post_only.was_rejected());
         assert_eq!(post_only.trades().len(), 0);
-        assert_eq!(post_only.executed_quantity().expect("executed_quantity"), 0);
+        assert_eq!(
+            post_only
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64(),
+            0
+        );
         // The non-matchable reserve is dropped by the fall-through sweep; the
         // hidden counter is decremented in lockstep with the queue removal.
         assert_eq!(po_level.order_count(), 0);
@@ -4574,7 +4634,13 @@ mod tests {
 
         // The standard maker (40) is matched regardless of how the zeroed
         // iceberg is resolved; the call terminates and counters stay consistent.
-        assert!(result.executed_quantity().expect("executed_quantity") >= 40);
+        assert!(
+            result
+                .executed_quantity()
+                .expect("executed_quantity")
+                .as_u64()
+                >= 40
+        );
         assert_eq!(price_level.visible_quantity(), 0);
         assert_match_result_consistent(&result, 10000, Side::Sell);
 

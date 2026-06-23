@@ -247,37 +247,39 @@ impl<T: Clone> OrderType<T> {
         }
     }
 
-    /// Get the visible quantity
+    /// Get the visible quantity, in quantity units.
     #[must_use]
     #[inline]
-    pub fn visible_quantity(&self) -> u64 {
+    pub fn visible_quantity(&self) -> Quantity {
         match self {
-            Self::Standard { quantity, .. } => quantity.as_u64(),
+            Self::Standard { quantity, .. } => *quantity,
             Self::IcebergOrder {
                 visible_quantity, ..
-            } => visible_quantity.as_u64(),
-            Self::PostOnly { quantity, .. } => quantity.as_u64(),
-            Self::TrailingStop { quantity, .. } => quantity.as_u64(),
-            Self::PeggedOrder { quantity, .. } => quantity.as_u64(),
-            Self::MarketToLimit { quantity, .. } => quantity.as_u64(),
+            } => *visible_quantity,
+            Self::PostOnly { quantity, .. } => *quantity,
+            Self::TrailingStop { quantity, .. } => *quantity,
+            Self::PeggedOrder { quantity, .. } => *quantity,
+            Self::MarketToLimit { quantity, .. } => *quantity,
             Self::ReserveOrder {
                 visible_quantity, ..
-            } => visible_quantity.as_u64(),
+            } => *visible_quantity,
         }
     }
 
-    /// Get the hidden quantity
+    /// Get the hidden quantity, in quantity units.
+    ///
+    /// Order types without a hidden tranche return [`Quantity::ZERO`].
     #[must_use]
     #[inline]
-    pub fn hidden_quantity(&self) -> u64 {
+    pub fn hidden_quantity(&self) -> Quantity {
         match self {
             Self::IcebergOrder {
                 hidden_quantity, ..
-            } => hidden_quantity.as_u64(),
+            } => *hidden_quantity,
             Self::ReserveOrder {
                 hidden_quantity, ..
-            } => hidden_quantity.as_u64(),
-            _ => 0,
+            } => *hidden_quantity,
+            _ => Quantity::ZERO,
         }
     }
 
@@ -301,7 +303,7 @@ impl<T: Clone> OrderType<T> {
     #[must_use]
     #[inline]
     pub fn is_matchable(&self) -> bool {
-        if self.visible_quantity() > 0 {
+        if self.visible_quantity().as_u64() > 0 {
             return true;
         }
         match self {
@@ -346,18 +348,18 @@ impl<T: Clone> OrderType<T> {
         }
     }
 
-    /// Get the timestamp
+    /// Get the timestamp at which the order was created, in milliseconds.
     #[must_use]
     #[inline]
-    pub fn timestamp(&self) -> u64 {
+    pub fn timestamp(&self) -> TimestampMs {
         match self {
-            Self::Standard { timestamp, .. } => timestamp.as_u64(),
-            Self::IcebergOrder { timestamp, .. } => timestamp.as_u64(),
-            Self::PostOnly { timestamp, .. } => timestamp.as_u64(),
-            Self::TrailingStop { timestamp, .. } => timestamp.as_u64(),
-            Self::PeggedOrder { timestamp, .. } => timestamp.as_u64(),
-            Self::MarketToLimit { timestamp, .. } => timestamp.as_u64(),
-            Self::ReserveOrder { timestamp, .. } => timestamp.as_u64(),
+            Self::Standard { timestamp, .. } => *timestamp,
+            Self::IcebergOrder { timestamp, .. } => *timestamp,
+            Self::PostOnly { timestamp, .. } => *timestamp,
+            Self::TrailingStop { timestamp, .. } => *timestamp,
+            Self::PeggedOrder { timestamp, .. } => *timestamp,
+            Self::MarketToLimit { timestamp, .. } => *timestamp,
+            Self::ReserveOrder { timestamp, .. } => *timestamp,
         }
     }
 
@@ -784,7 +786,7 @@ impl<T: Clone> OrderType<T> {
 
             // For all other order types, use standard matching logic
             _ => {
-                let visible_qty = self.visible_quantity();
+                let visible_qty = self.visible_quantity().as_u64();
 
                 if visible_qty <= incoming_quantity {
                     // Full match

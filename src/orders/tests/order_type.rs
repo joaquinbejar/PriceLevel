@@ -142,24 +142,27 @@ mod tests {
 
     #[test]
     fn test_visible_quantity() {
-        assert_eq!(create_standard_order().visible_quantity(), 5);
-        assert_eq!(create_iceberg_order().visible_quantity(), 1);
-        assert_eq!(create_post_only_order().visible_quantity(), 5);
-        assert_eq!(create_trailing_stop_order().visible_quantity(), 5);
-        assert_eq!(create_pegged_order().visible_quantity(), 5);
-        assert_eq!(create_market_to_limit_order().visible_quantity(), 5);
-        assert_eq!(create_reserve_order().visible_quantity(), 1);
+        assert_eq!(create_standard_order().visible_quantity().as_u64(), 5);
+        assert_eq!(create_iceberg_order().visible_quantity().as_u64(), 1);
+        assert_eq!(create_post_only_order().visible_quantity().as_u64(), 5);
+        assert_eq!(create_trailing_stop_order().visible_quantity().as_u64(), 5);
+        assert_eq!(create_pegged_order().visible_quantity().as_u64(), 5);
+        assert_eq!(
+            create_market_to_limit_order().visible_quantity().as_u64(),
+            5
+        );
+        assert_eq!(create_reserve_order().visible_quantity().as_u64(), 1);
     }
 
     #[test]
     fn test_hidden_quantity() {
-        assert_eq!(create_standard_order().hidden_quantity(), 0);
-        assert_eq!(create_iceberg_order().hidden_quantity(), 4);
-        assert_eq!(create_post_only_order().hidden_quantity(), 0);
-        assert_eq!(create_trailing_stop_order().hidden_quantity(), 0);
-        assert_eq!(create_pegged_order().hidden_quantity(), 0);
-        assert_eq!(create_market_to_limit_order().hidden_quantity(), 0);
-        assert_eq!(create_reserve_order().hidden_quantity(), 4);
+        assert_eq!(create_standard_order().hidden_quantity().as_u64(), 0);
+        assert_eq!(create_iceberg_order().hidden_quantity().as_u64(), 4);
+        assert_eq!(create_post_only_order().hidden_quantity().as_u64(), 0);
+        assert_eq!(create_trailing_stop_order().hidden_quantity().as_u64(), 0);
+        assert_eq!(create_pegged_order().hidden_quantity().as_u64(), 0);
+        assert_eq!(create_market_to_limit_order().hidden_quantity().as_u64(), 0);
+        assert_eq!(create_reserve_order().hidden_quantity().as_u64(), 4);
     }
 
     #[test]
@@ -192,13 +195,19 @@ mod tests {
 
     #[test]
     fn test_timestamp() {
-        assert_eq!(create_standard_order().timestamp(), 1616823000000);
-        assert_eq!(create_iceberg_order().timestamp(), 1616823000000);
-        assert_eq!(create_post_only_order().timestamp(), 1616823000000);
-        assert_eq!(create_trailing_stop_order().timestamp(), 1616823000000);
-        assert_eq!(create_pegged_order().timestamp(), 1616823000000);
-        assert_eq!(create_market_to_limit_order().timestamp(), 1616823000000);
-        assert_eq!(create_reserve_order().timestamp(), 1616823000000);
+        assert_eq!(create_standard_order().timestamp().as_u64(), 1616823000000);
+        assert_eq!(create_iceberg_order().timestamp().as_u64(), 1616823000000);
+        assert_eq!(create_post_only_order().timestamp().as_u64(), 1616823000000);
+        assert_eq!(
+            create_trailing_stop_order().timestamp().as_u64(),
+            1616823000000
+        );
+        assert_eq!(create_pegged_order().timestamp().as_u64(), 1616823000000);
+        assert_eq!(
+            create_market_to_limit_order().timestamp().as_u64(),
+            1616823000000
+        );
+        assert_eq!(create_reserve_order().timestamp().as_u64(), 1616823000000);
     }
 
     #[test]

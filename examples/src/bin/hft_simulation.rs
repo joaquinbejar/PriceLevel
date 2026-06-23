@@ -148,7 +148,12 @@ fn main() {
                 );
 
                 // Count successful matches
-                if result.executed_quantity().unwrap_or(0) > 0 {
+                if result
+                    .executed_quantity()
+                    .unwrap_or(Quantity::ZERO)
+                    .as_u64()
+                    > 0
+                {
                     local_counter += 1;
                 }
 

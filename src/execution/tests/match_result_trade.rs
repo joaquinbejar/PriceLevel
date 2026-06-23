@@ -28,17 +28,17 @@ mod tests {
 
     #[test]
     fn add_trade_updates_remaining_and_trades() {
-        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(result.add_trade(sample_trade(25)).is_ok());
 
-        assert_eq!(result.remaining_quantity(), 75);
+        assert_eq!(result.remaining_quantity().as_u64(), 75);
         assert_eq!(result.trades().len(), 1);
         assert!(!result.is_complete());
     }
 
     #[test]
     fn display_and_parse_use_trades_field() {
-        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(result.add_trade(sample_trade(40)).is_ok());
 
         let rendered = result.to_string();
@@ -50,13 +50,13 @@ mod tests {
         };
 
         assert_eq!(parsed.trades().len(), 1);
-        assert_eq!(parsed.remaining_quantity(), 60);
+        assert_eq!(parsed.remaining_quantity().as_u64(), 60);
     }
 
     #[test]
     fn add_trade_keeps_outcome_in_sync() {
         // No trades yet -> the default benign classification.
-        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert_eq!(result.outcome(), MatchOutcome::NotFilled);
 
         // Partial fill.
@@ -73,14 +73,14 @@ mod tests {
 
     #[test]
     fn outcome_survives_serde_json_roundtrip() {
-        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(result.add_trade(sample_trade(40)).is_ok());
 
         let json = serde_json::to_string(&result).expect("serialize match result");
         let parsed: MatchResult = serde_json::from_str(&json).expect("deserialize match result");
 
         assert_eq!(parsed.outcome(), MatchOutcome::PartiallyFilled);
-        assert_eq!(parsed.remaining_quantity(), 60);
+        assert_eq!(parsed.remaining_quantity().as_u64(), 60);
         assert_eq!(parsed.trades().len(), 1);
     }
 
@@ -89,7 +89,7 @@ mod tests {
         // A JSON payload written before the `outcome` field existed must still
         // deserialize (the field is `#[serde(default)]`). Build a current JSON,
         // then strip the `outcome` key to emulate the legacy shape.
-        let result = MatchResult::new(Id::from_u64(10), 70);
+        let result = MatchResult::new(Id::from_u64(10), Quantity::new(70));
         let mut value: serde_json::Value =
             serde_json::to_value(&result).expect("serialize match result");
         value
@@ -102,7 +102,7 @@ mod tests {
         let parsed: MatchResult =
             serde_json::from_str(&legacy).expect("legacy match result must deserialize");
         assert_eq!(parsed.outcome(), MatchOutcome::NotFilled);
-        assert_eq!(parsed.remaining_quantity(), 70);
+        assert_eq!(parsed.remaining_quantity().as_u64(), 70);
     }
 
     #[test]
@@ -114,16 +114,16 @@ mod tests {
 
     #[test]
     fn add_trade_rejects_underflow() {
-        let mut result = MatchResult::new(Id::from_u64(10), 10);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(10));
         let error = result.add_trade(sample_trade(11));
         assert!(error.is_err());
-        assert_eq!(result.remaining_quantity(), 10);
+        assert_eq!(result.remaining_quantity().as_u64(), 10);
         assert_eq!(result.trades().len(), 0);
     }
 
     #[test]
     fn executed_value_rejects_overflow() {
-        let mut result = MatchResult::new(Id::from_u64(10), 4);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(4));
 
         let trade = Trade::with_timestamp(
             Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
@@ -153,7 +153,7 @@ mod tests {
     /// (never an error, never a division by zero, never NaN).
     #[test]
     fn test_average_price_zero_executed_quantity_returns_none() {
-        let result = MatchResult::new(Id::from_u64(10), 100);
+        let result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
 
         match result.average_price() {
             Ok(None) => {}
@@ -166,7 +166,7 @@ mod tests {
     /// never NaN/Inf.
     #[test]
     fn test_average_price_exact_small_values_is_precise() {
-        let mut result = MatchResult::new(Id::from_u64(10), 100);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
 
         // price 1000, quantity 30 -> value 30_000, avg 1000.0 exactly.
         assert!(result.add_trade(sample_trade(30)).is_ok());
@@ -200,7 +200,7 @@ mod tests {
         const PRICE: u128 = (1_u128 << 53) + 1; // 9_007_199_254_740_993
         const EXACT_INT_AVG: u128 = PRICE; // quantity == 1, so average == price
 
-        let mut result = MatchResult::new(Id::from_u64(10), 1);
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(1));
         let trade = Trade::with_timestamp(
             Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
             Id::from_u64(10),
@@ -255,7 +255,7 @@ mod tests {
         ];
 
         for (idx, (price, quantity)) in cases.into_iter().enumerate() {
-            let mut result = MatchResult::new(Id::from_u64(10), quantity);
+            let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(quantity));
             let trade = Trade::with_timestamp(
                 Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
                 Id::from_u64(10),

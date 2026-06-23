@@ -59,7 +59,10 @@ fn test_iceberg_order(id_gen: &UuidGenerator) {
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
-    let executed = result.executed_quantity().unwrap_or(0);
+    let executed = result
+        .executed_quantity()
+        .unwrap_or(Quantity::ZERO)
+        .as_u64();
     assert_eq_or_exit(executed, 10, "iceberg match executed");
     assert_or_exit(result.is_complete(), "taker should be fully filled");
 
@@ -105,7 +108,10 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
         TimestampMs::new(1_716_000_000_000),
         id_gen,
     );
-    let executed = result.executed_quantity().unwrap_or(0);
+    let executed = result
+        .executed_quantity()
+        .unwrap_or(Quantity::ZERO)
+        .as_u64();
     assert_eq_or_exit(executed, 8, "reserve match executed");
 
     // Reserve order should still be present (not fully consumed)
@@ -152,7 +158,10 @@ fn test_post_only_order(id_gen: &UuidGenerator) {
         id_gen,
     );
     assert_eq_or_exit(
-        result.executed_quantity().unwrap_or(0),
+        result
+            .executed_quantity()
+            .unwrap_or(Quantity::ZERO)
+            .as_u64(),
         50,
         "postonly match executed",
     );
@@ -196,7 +205,10 @@ fn test_trailing_stop_order(id_gen: &UuidGenerator) {
         id_gen,
     );
     assert_eq_or_exit(
-        result.executed_quantity().unwrap_or(0),
+        result
+            .executed_quantity()
+            .unwrap_or(Quantity::ZERO)
+            .as_u64(),
         30,
         "trailing match executed",
     );
@@ -233,7 +245,10 @@ fn test_pegged_order(id_gen: &UuidGenerator) {
         id_gen,
     );
     assert_eq_or_exit(
-        result.executed_quantity().unwrap_or(0),
+        result
+            .executed_quantity()
+            .unwrap_or(Quantity::ZERO)
+            .as_u64(),
         25,
         "pegged match executed",
     );
@@ -269,7 +284,10 @@ fn test_market_to_limit_order(id_gen: &UuidGenerator) {
         id_gen,
     );
     assert_eq_or_exit(
-        result.executed_quantity().unwrap_or(0),
+        result
+            .executed_quantity()
+            .unwrap_or(Quantity::ZERO)
+            .as_u64(),
         15,
         "m2l partial match",
     );

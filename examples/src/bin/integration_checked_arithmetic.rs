@@ -97,7 +97,7 @@ fn test_executed_quantity_and_value(id_gen: &UuidGenerator) {
     let executed_qty = result
         .executed_quantity()
         .unwrap_or_else(|e| exit_err(&format!("executed_quantity: {e}")));
-    assert_eq_or_exit(executed_qty, 250, "executed_quantity");
+    assert_eq_or_exit(executed_qty.as_u64(), 250, "executed_quantity");
 
     let executed_val = result
         .executed_value()
@@ -106,7 +106,11 @@ fn test_executed_quantity_and_value(id_gen: &UuidGenerator) {
     assert_eq_or_exit(executed_val, 1_250_000, "executed_value");
 
     // Verify remaining
-    assert_eq_or_exit(result.remaining_quantity(), 0, "remaining_quantity");
+    assert_eq_or_exit(
+        result.remaining_quantity().as_u64(),
+        0,
+        "remaining_quantity",
+    );
     assert_or_exit(result.is_complete(), "should be complete");
 
     // Verify filled_order_ids: first 2 orders fully filled (100 each), third partially filled
@@ -176,8 +180,12 @@ fn test_empty_match_result(id_gen: &UuidGenerator) {
     let executed = result
         .executed_quantity()
         .unwrap_or_else(|e| exit_err(&format!("executed_quantity: {e}")));
-    assert_eq_or_exit(executed, 0, "empty level executed_quantity");
-    assert_eq_or_exit(result.remaining_quantity(), 100, "empty level remaining");
+    assert_eq_or_exit(executed.as_u64(), 0, "empty level executed_quantity");
+    assert_eq_or_exit(
+        result.remaining_quantity().as_u64(),
+        100,
+        "empty level remaining",
+    );
     assert_or_exit(!result.is_complete(), "empty level should not be complete");
     assert_or_exit(
         result.trades().is_empty(),
