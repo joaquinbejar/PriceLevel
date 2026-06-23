@@ -116,6 +116,11 @@ impl OrderQueue {
         order_id: Id,
         new_order: Arc<OrderType<()>>,
     ) -> Option<Arc<OrderType<()>>> {
+        debug_assert_eq!(
+            new_order.id(),
+            order_id,
+            "update_in_place: new_order id must match the key it is stored under"
+        );
         let mut entry = self.orders.get_mut(&order_id)?;
         let (_seq, slot) = entry.value_mut();
         Some(std::mem::replace(slot, new_order))

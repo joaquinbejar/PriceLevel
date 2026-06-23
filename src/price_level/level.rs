@@ -459,32 +459,30 @@ impl PriceLevel {
                 order_id,
                 new_quantity,
             } => {
-                // Find the order to read its current quantities.
+                // Read the current order to build the resized order and pick the
+                // priority policy. The counter deltas below are taken from the
+                // order actually removed/replaced under the queue's per-entry
+                // lock — not from this pre-read — so a concurrent update cannot
+                // drift `visible_quantity` / `hidden_quantity` from the queue.
                 let Some(order) = self.orders.find(order_id) else {
                     return Ok(None); // Order not found
                 };
 
-                let old_visible = order.visible_quantity();
-                let old_hidden = order.hidden_quantity();
+                let prev_total = order
+                    .visible_quantity()
+                    .checked_add(order.hidden_quantity())
+                    .ok_or_else(|| PriceLevelError::InvalidOperation {
+                        message: "order total quantity overflow".to_string(),
+                    })?;
 
                 // Build the updated order. `with_reduced_quantity` sets the
                 // (visible/main) quantity to exactly `new_quantity` for order
-                // types that support resizing; types it cannot resize fall
-                // back to an unchanged clone, so `new_total` simply equals
-                // `old_total` for them and we take the in-place branch.
+                // types that support resizing; types it cannot resize fall back
+                // to an unchanged clone, so `new_total` equals the old total for
+                // them and they take the position-preserving in-place branch.
                 let new_order = order.with_reduced_quantity(new_quantity.as_u64());
                 let new_visible = new_order.visible_quantity();
                 let new_hidden = new_order.hidden_quantity();
-
-                // Compare total quantity (visible + hidden) before/after to
-                // decide the priority policy. Use checked addition so a
-                // pathological overflow surfaces as an error rather than
-                // wrapping the comparison.
-                let old_total = old_visible.checked_add(old_hidden).ok_or_else(|| {
-                    PriceLevelError::InvalidOperation {
-                        message: "order total quantity overflow".to_string(),
-                    }
-                })?;
                 let new_total = new_visible.checked_add(new_hidden).ok_or_else(|| {
                     PriceLevelError::InvalidOperation {
                         message: "order total quantity overflow".to_string(),
@@ -493,66 +491,50 @@ impl PriceLevel {
 
                 let new_order_arc = Arc::new(new_order);
 
-                if new_total > old_total {
-                    // Quantity INCREASE: demote to the back of the queue
-                    // (mint a new sequence), losing time priority. This
-                    // retains the remove+push shape; its concurrency window is
-                    // the broader #81 work and is intentionally not addressed
-                    // here.
-                    if self.orders.remove(order_id).is_none() {
+                // Perform the queue mutation and capture the order it actually
+                // removed/replaced, so the counter deltas reflect the real
+                // transition rather than the possibly-stale pre-read above.
+                let old = if new_total > prev_total {
+                    // Quantity INCREASE: demote to the back of the queue (mint a
+                    // new sequence), losing time priority. Retains the
+                    // remove+push shape; its concurrency window is the broader
+                    // #81 work and is intentionally not addressed here.
+                    let Some(removed) = self.orders.remove(order_id) else {
                         return Ok(None); // Removed by another thread.
-                    }
-
-                    if new_visible >= old_visible {
-                        self.visible_quantity
-                            .fetch_add(new_visible - old_visible, Ordering::AcqRel);
-                    } else {
-                        self.visible_quantity
-                            .fetch_sub(old_visible - new_visible, Ordering::AcqRel);
-                    }
-                    if new_hidden >= old_hidden {
-                        self.hidden_quantity
-                            .fetch_add(new_hidden - old_hidden, Ordering::AcqRel);
-                    } else {
-                        self.hidden_quantity
-                            .fetch_sub(old_hidden - new_hidden, Ordering::AcqRel);
-                    }
-
+                    };
                     self.orders.push(new_order_arc.clone());
-                    Ok(Some(new_order_arc))
+                    removed
                 } else {
                     // Quantity DECREASE or unchanged total: keep the maker's
-                    // queue position by swapping the stored order in place at
-                    // its existing insertion sequence. The swap is done under
-                    // the DashMap per-entry lock, so the counters are adjusted
-                    // only after we confirm the order is still present.
-                    if self
-                        .orders
-                        .update_in_place(order_id, new_order_arc.clone())
-                        .is_none()
-                    {
+                    // queue position by swapping the stored order in place at its
+                    // existing insertion sequence, under the DashMap per-entry
+                    // lock.
+                    let Some(replaced) =
+                        self.orders.update_in_place(order_id, new_order_arc.clone())
+                    else {
                         return Ok(None); // Removed by another thread.
-                    }
+                    };
+                    replaced
+                };
 
-                    // Totals can only shrink or stay equal here, so the
-                    // per-component deltas are non-negative subtractions.
-                    if old_visible > new_visible {
-                        self.visible_quantity
-                            .fetch_sub(old_visible - new_visible, Ordering::AcqRel);
-                    } else if new_visible > old_visible {
-                        self.visible_quantity
-                            .fetch_add(new_visible - old_visible, Ordering::AcqRel);
+                // Apply the counter deltas from the actual replaced order. A
+                // single component (visible or hidden) can move in EITHER
+                // direction even when the total shrinks or is unchanged, because
+                // quantity can shift between the visible and hidden portions, so
+                // handle both signs.
+                let old_visible = old.visible_quantity();
+                let old_hidden = old.hidden_quantity();
+                let apply = |counter: &std::sync::atomic::AtomicU64, old: u64, new: u64| {
+                    if new >= old {
+                        counter.fetch_add(new - old, Ordering::AcqRel);
+                    } else {
+                        counter.fetch_sub(old - new, Ordering::AcqRel);
                     }
-                    if old_hidden > new_hidden {
-                        self.hidden_quantity
-                            .fetch_sub(old_hidden - new_hidden, Ordering::AcqRel);
-                    } else if new_hidden > old_hidden {
-                        self.hidden_quantity
-                            .fetch_add(new_hidden - old_hidden, Ordering::AcqRel);
-                    }
+                };
+                apply(&self.visible_quantity, old_visible, new_visible);
+                apply(&self.hidden_quantity, old_hidden, new_hidden);
 
-                    Ok(Some(new_order_arc))
-                }
+                Ok(Some(new_order_arc))
             }
 
             OrderUpdate::UpdatePriceAndQuantity {
