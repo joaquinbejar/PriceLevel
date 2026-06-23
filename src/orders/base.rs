@@ -11,11 +11,11 @@ use std::str::FromStr;
 pub enum Side {
     /// Buy side (bids)
     #[serde(rename(serialize = "BUY"))]
-    #[serde(alias = "buy", alias = "Buy", alias = "BUY")]
+    #[serde(alias = "buy", alias = "BUY")]
     Buy,
     /// Sell side (asks)
     #[serde(rename(serialize = "SELL"))]
-    #[serde(alias = "sell", alias = "Sell", alias = "SELL")]
+    #[serde(alias = "sell", alias = "SELL")]
     Sell,
 }
 

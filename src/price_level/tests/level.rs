@@ -1991,6 +1991,60 @@ mod tests {
         assert_eq!(orders[0].visible_quantity(), 100);
     }
 
+    // `PriceLevelData` is a plain input/transfer DTO: with `deny_unknown_fields`
+    // an unexpected key must be rejected rather than silently ignored.
+    #[test]
+    fn test_price_level_data_unknown_field_rejected() {
+        let json = r#"{
+            "price": 10000,
+            "visible_quantity": 100,
+            "hidden_quantity": 0,
+            "order_count": 0,
+            "orders": [],
+            "unexpected_field": 42
+        }"#;
+
+        let result = serde_json::from_str::<PriceLevelData>(json);
+        assert!(
+            result.is_err(),
+            "deny_unknown_fields should reject the unexpected key"
+        );
+
+        // The same payload without the unknown field still deserializes,
+        // proving the wire format itself is unchanged.
+        let valid_json = r#"{
+            "price": 10000,
+            "visible_quantity": 100,
+            "hidden_quantity": 0,
+            "order_count": 0,
+            "orders": []
+        }"#;
+        let data = serde_json::from_str::<PriceLevelData>(valid_json)
+            .expect("valid PriceLevelData must deserialize");
+        assert_eq!(data.price, 10000);
+        assert_eq!(data.visible_quantity, 100);
+    }
+
+    // Deserializing a `PriceLevel` (which routes through `PriceLevelData`) from a
+    // payload carrying an unknown field is likewise rejected.
+    #[test]
+    fn test_price_level_deserialize_unknown_field_rejected() {
+        let json = r#"{
+            "price": 10000,
+            "visible_quantity": 0,
+            "hidden_quantity": 0,
+            "order_count": 0,
+            "orders": [],
+            "bogus": "value"
+        }"#;
+
+        let result = serde_json::from_str::<PriceLevel>(json);
+        assert!(
+            result.is_err(),
+            "PriceLevel deserialize must reject unknown fields via PriceLevelData"
+        );
+    }
+
     // In price_level/level.rs test module or in a separate test file
 
     #[test]

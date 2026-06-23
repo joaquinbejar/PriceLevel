@@ -9,29 +9,29 @@ use std::str::FromStr;
 pub enum TimeInForce {
     /// Good 'Til Canceled - The order remains active until it is filled or canceled.
     #[serde(rename(serialize = "GTC"))]
-    #[serde(alias = "gtc", alias = "Gtc", alias = "GTC")]
+    #[serde(alias = "gtc", alias = "GTC")]
     Gtc,
 
     /// Immediate Or Cancel - The order must be filled immediately in its entirety.
     /// If the order cannot be filled completely, the unfilled portion is canceled.
     #[serde(rename(serialize = "IOC"))]
-    #[serde(alias = "ioc", alias = "Ioc", alias = "IOC")]
+    #[serde(alias = "ioc", alias = "IOC")]
     Ioc,
 
     /// Fill Or Kill - The order must be filled immediately and completely.
     /// If the order cannot be filled entirely, the entire order is canceled.
     #[serde(rename(serialize = "FOK"))]
-    #[serde(alias = "fok", alias = "Fok", alias = "FOK")]
+    #[serde(alias = "fok", alias = "FOK")]
     Fok,
 
     /// Good 'Til Date - The order remains active until a specified date and time, expressed as a Unix timestamp (seconds since epoch).
     #[serde(rename(serialize = "GTD"))]
-    #[serde(alias = "gtd", alias = "Gtd", alias = "GTD")]
+    #[serde(alias = "gtd", alias = "GTD")]
     Gtd(u64),
 
     /// Good for the trading Day - The order remains active until the end of the current trading day.
     #[serde(rename(serialize = "DAY"))]
-    #[serde(alias = "day", alias = "Day", alias = "DAY")]
+    #[serde(alias = "day", alias = "DAY")]
     Day,
 }
 

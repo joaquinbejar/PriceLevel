@@ -86,4 +86,33 @@ mod tests_side {
         assert_eq!(serde_json::to_string(&Side::Buy).unwrap().len(), 5); // "BUY"
         assert_eq!(serde_json::to_string(&Side::Sell).unwrap().len(), 6); // "SELL"
     }
+
+    // After dropping the redundant `alias = "Buy"` / `alias = "Sell"` (the
+    // variant names serde already accepts on deserialize by default), the
+    // serialize form ("BUY"/"SELL", kept as an alias), the lowercase form
+    // (kept as an alias), and the bare variant name must all still deserialize.
+    #[test]
+    fn test_deserialize_all_accepted_forms_after_alias_cleanup() {
+        for s in ["\"BUY\"", "\"buy\"", "\"Buy\""] {
+            assert_eq!(
+                serde_json::from_str::<Side>(s).unwrap(),
+                Side::Buy,
+                "Side::Buy should deserialize from {s}"
+            );
+        }
+        for s in ["\"SELL\"", "\"sell\"", "\"Sell\""] {
+            assert_eq!(
+                serde_json::from_str::<Side>(s).unwrap(),
+                Side::Sell,
+                "Side::Sell should deserialize from {s}"
+            );
+        }
+
+        // Wire format proof: serialize emits the uppercase form and it
+        // round-trips back via the kept uppercase alias.
+        for side in [Side::Buy, Side::Sell] {
+            let wire = serde_json::to_string(&side).unwrap();
+            assert_eq!(serde_json::from_str::<Side>(&wire).unwrap(), side);
+        }
+    }
 }

@@ -748,6 +748,7 @@ impl PriceLevel {
 
 /// Serializable representation of a price level for easier data transfer and storage
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PriceLevelData {
     /// The price of this level
     pub price: u128,
