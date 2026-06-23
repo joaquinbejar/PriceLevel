@@ -181,6 +181,17 @@ impl PriceLevel {
     /// generated trades, the remaining unmatched quantity, a flag indicating whether the
     /// incoming order was completely filled, and a list of IDs of orders that were completely filled
     /// during the matching process.
+    ///
+    /// # Concurrency
+    ///
+    /// Resting orders are consumed in strict price-time (FIFO) order, and a
+    /// partially-filled maker keeps its position at the front of the queue.
+    /// This method assumes a **single logical matcher per level at a time**:
+    /// concurrent `add_order` / `cancel` from other threads are safe, but two
+    /// concurrent `match_order` calls on the *same* level — or a `match_order`
+    /// racing a `cancel` of the resting order it is currently matching — must
+    /// be serialized by the caller (an order book typically matches a level
+    /// from a single thread).
     pub fn match_order(
         &self,
         incoming_quantity: u64,

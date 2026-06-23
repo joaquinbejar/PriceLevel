@@ -115,7 +115,10 @@ impl OrderQueue {
     ///
     /// The insertion sequence is used as a deterministic tiebreak so orders
     /// sharing a millisecond timestamp are still ordered exactly as matching
-    /// would consume them.
+    /// would consume them. Note the sequence itself is not serialized: a
+    /// snapshot round-trip reconstructs queue order from `(timestamp,
+    /// sequence)`, so exact price-time priority survives a round-trip only when
+    /// timestamps are monotonic with insertion order (the normal case).
     #[must_use]
     pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
         let mut orders: Vec<(u64, Arc<OrderType<()>>)> =

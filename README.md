@@ -143,7 +143,7 @@ The simulation demonstrates the library's exceptional performance capabilities:
 
 The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 
-### Fixed in v0.7.1
+### Changes in v0.8.0
 
 - **Price-time priority across partial fills** (issue #39). A partial fill
   previously re-queued the resting maker's residual at the *back* of its
@@ -151,9 +151,21 @@ The performance characteristics demonstrate that the `pricelevel` library is sui
   instead of the older, partially-filled maker (a wrong `maker_order_id` in
   the trade stream). The order queue now keeps strict price-time priority:
   the residual stays at the front. Iceberg / reserve replenishment keeps its
-  existing semantics (a refreshed tranche still loses time priority). This is
-  a behavioral bug fix with **no public API change**; the internal queue is
-  now backed by a lock-free `crossbeam-skiplist` ordered index.
+  existing semantics (a refreshed tranche still loses time priority).
+- **Internal queue moved to a lock-free `crossbeam-skiplist` ordered
+  index.** The method surface of [`OrderQueue`] is unchanged, but because
+  the new index relies on interior mutability, [`OrderQueue`] and
+  [`PriceLevel`] no longer implement [`std::panic::UnwindSafe`] /
+  [`std::panic::RefUnwindSafe`] (they remain `Send + Sync`). This is the
+  only breaking change and is why this release is `0.8.0` rather than a
+  patch. Callers that wrapped these types in [`std::panic::catch_unwind`]
+  are affected; nothing else is.
+- **Matching concurrency contract.** [`PriceLevel::match_order`] assumes a
+  single logical matcher per level at a time. Concurrent `add_order` /
+  `cancel` from other threads are safe, but two concurrent `match_order`
+  calls on the *same* level — or a `match_order` racing a `cancel` of the
+  resting order it is currently matching — are the caller's responsibility
+  to serialize.
 
 ### Migration Guide (v0.6 → v0.7)
 
