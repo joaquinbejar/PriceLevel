@@ -3,8 +3,14 @@ mod tests {
     use crate::orders::time_in_force::TimeInForce;
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side};
     use crate::utils::{Price, Quantity, TimestampMs};
+    use std::num::NonZeroU64;
     use std::str::FromStr;
     use tracing::info;
+
+    /// Build a `NonZeroU64` from a non-zero test literal.
+    fn nz(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).expect("test literal must be non-zero")
+    }
 
     fn create_standard_order() -> OrderType<()> {
         OrderType::<()>::Standard {
@@ -106,7 +112,7 @@ mod tests {
             timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: Quantity::new(0),
-            replenish_amount: Some(Quantity::new(1)),
+            replenish_amount: Some(nz(1)),
             auto_replenish: false,
             extra_fields: (),
         }
@@ -332,7 +338,7 @@ mod tests {
     fn test_refresh_iceberg() {
         // Test iceberg order refresh
         let order = create_iceberg_order();
-        let (refreshed, used) = order.refresh_iceberg(2);
+        let (refreshed, used) = order.refresh_iceberg(nz(2));
 
         if let OrderType::<()>::IcebergOrder {
             visible_quantity,
@@ -349,7 +355,7 @@ mod tests {
 
         // Test reserve order refresh
         let order = create_reserve_order();
-        let (refreshed, used) = order.refresh_iceberg(3);
+        let (refreshed, used) = order.refresh_iceberg(nz(3));
 
         if let OrderType::<()>::ReserveOrder {
             visible_quantity,
@@ -366,13 +372,55 @@ mod tests {
 
         // Test non-iceberg order (should not refresh)
         let order = create_standard_order();
-        let (refreshed, used) = order.refresh_iceberg(2);
+        let (refreshed, used) = order.refresh_iceberg(nz(2));
 
         if let OrderType::<()>::Standard { quantity, .. } = refreshed {
             assert_eq!(quantity, Quantity::new(5)); // Should remain unchanged
             assert_eq!(used, 0);
         } else {
             panic!("Expected StandardOrder");
+        }
+    }
+
+    #[test]
+    fn test_match_reserve_order_min_replenish_draws_visible_tranche() {
+        // A minimal NonZeroU64 replenish (value 1) must still draw a fresh
+        // visible tranche of exactly one unit from hidden when the visible
+        // portion is fully consumed.
+        let order = OrderType::<()>::ReserveOrder {
+            id: Id::from_u64(129),
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(2),
+            hidden_quantity: Quantity::new(5),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1616823000000),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(1),
+            replenish_amount: Some(nz(1)),
+            auto_replenish: true,
+            extra_fields: (),
+        };
+
+        // Consume the full visible portion (2). The order must replenish a
+        // tranche of size 1 from the hidden quantity.
+        let (consumed, updated, hidden_reduced, remaining) = order.match_against(2);
+        assert_eq!(consumed, 2);
+        assert_eq!(hidden_reduced, 1);
+        assert_eq!(remaining, 0);
+
+        match updated {
+            Some(OrderType::<()>::ReserveOrder {
+                visible_quantity,
+                hidden_quantity,
+                replenish_amount,
+                ..
+            }) => {
+                assert_eq!(visible_quantity, Quantity::new(1));
+                assert_eq!(hidden_quantity, Quantity::new(4));
+                assert_eq!(replenish_amount, Some(nz(1)));
+            }
+            _ => panic!("Expected replenished ReserveOrder"),
         }
     }
 
@@ -739,7 +787,7 @@ mod tests {
             extra_fields: (),
         };
 
-        let (refreshed, used) = standard_order.refresh_iceberg(5);
+        let (refreshed, used) = standard_order.refresh_iceberg(nz(5));
 
         // Non-iceberg orders should remain unchanged and return 0 used
         assert_eq!(used, 0);
@@ -795,7 +843,13 @@ mod test_order_type_display {
     use crate::orders::time_in_force::TimeInForce;
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side};
     use crate::utils::{Price, Quantity, TimestampMs};
+    use std::num::NonZeroU64;
     use std::str::FromStr;
+
+    /// Build a `NonZeroU64` from a non-zero test literal.
+    fn nz(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).expect("test literal must be non-zero")
+    }
 
     #[test]
     fn test_standard_order_display() {
@@ -1021,7 +1075,7 @@ mod test_order_type_display {
             timestamp: TimestampMs::new(1616823000000),
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: Quantity::new(0),
-            replenish_amount: Some(Quantity::new(1)),
+            replenish_amount: Some(nz(1)),
             auto_replenish: false,
             extra_fields: (),
         };
@@ -1049,7 +1103,13 @@ mod test_order_type_display {
 mod from_str_specific_tests {
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side, TimeInForce};
     use crate::utils::{Price, Quantity, TimestampMs};
+    use std::num::NonZeroU64;
     use std::str::FromStr;
+
+    /// Build a `NonZeroU64` from a non-zero test literal.
+    fn nz(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).expect("test literal must be non-zero")
+    }
 
     #[test]
     fn test_from_str_reserve_order() {
@@ -1079,7 +1139,7 @@ mod from_str_specific_tests {
                 assert_eq!(timestamp, TimestampMs::new(1616823000000));
                 assert_eq!(time_in_force, TimeInForce::Gtc);
                 assert_eq!(replenish_threshold, Quantity::new(0));
-                assert_eq!(replenish_amount, Some(Quantity::new(1)));
+                assert_eq!(replenish_amount, Some(nz(1)));
                 assert!(!auto_replenish);
             }
             _ => panic!("Expected ReserveOrder"),
@@ -1117,7 +1177,7 @@ mod from_str_specific_tests {
             } => {
                 assert_eq!(time_in_force, TimeInForce::Gtd(1617000000000));
                 assert_eq!(replenish_threshold, Quantity::new(5));
-                assert_eq!(replenish_amount, Some(Quantity::new(2)));
+                assert_eq!(replenish_amount, Some(nz(2)));
                 assert!(auto_replenish);
             }
             _ => panic!("Expected ReserveOrder"),
@@ -1287,6 +1347,59 @@ mod from_str_specific_tests {
     }
 
     #[test]
+    fn test_from_str_reserve_order_zero_replenish_rejected() {
+        // A zero replenish amount is structurally invalid: it must be rejected
+        // with a typed `InvalidFieldValue` error rather than accepted.
+        let input = "ReserveOrder:id=00000000-0000-0081-0000-000000000000;price=10000;visible_quantity=1;hidden_quantity=4;side=SELL;timestamp=1616823000000;time_in_force=GTC;replenish_threshold=0;replenish_amount=0;auto_replenish=false";
+        let result: Result<OrderType<()>, _> = OrderType::from_str(input);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::errors::PriceLevelError::InvalidFieldValue { field, value } => {
+                assert_eq!(field, "replenish_amount");
+                assert_eq!(value, "0");
+            }
+            err => panic!("Expected InvalidFieldValue error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_json_reserve_order_zero_replenish_rejected() {
+        // The derived serde path rejects a zero `replenish_amount` because
+        // `NonZeroU64` cannot deserialize from `0`. The failure surfaces as a
+        // typed deserialization error, never a panic.
+        let original = OrderType::<()>::ReserveOrder {
+            id: Id::from_u64(129),
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(1),
+            hidden_quantity: Quantity::new(4),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1616823000000),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(0),
+            replenish_amount: Some(nz(1)),
+            auto_replenish: false,
+            extra_fields: (),
+        };
+
+        // Round-trip a valid order first.
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: OrderType<()> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, original);
+
+        // Now tamper the payload to set replenish_amount to 0 and confirm the
+        // deserialization is rejected.
+        let tampered = json.replace("\"replenish_amount\":1", "\"replenish_amount\":0");
+        assert!(tampered.contains("\"replenish_amount\":0"));
+        let result: Result<OrderType<()>, _> = serde_json::from_str(&tampered);
+        assert!(
+            result.is_err(),
+            "zero replenish_amount must be rejected on deserialize"
+        );
+    }
+
+    #[test]
     fn test_edge_cases() {
         // Test case-insensitivity for side
         let input = "MarketToLimit:id=00000000-0000-0080-0000-000000000000;price=10000;quantity=5;side=bUY;timestamp=1616823000000;time_in_force=GTC";
@@ -1364,7 +1477,7 @@ mod from_str_specific_tests {
                 timestamp: TimestampMs::new(1616823000000),
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: Quantity::new(0),
-                replenish_amount: Some(Quantity::new(1)),
+                replenish_amount: Some(nz(1)),
                 auto_replenish: false,
                 extra_fields: (),
             },

@@ -4,6 +4,7 @@ use pricelevel::{
     TimeInForce, TimestampMs,
 };
 use std::hint::black_box;
+use std::num::NonZeroU64;
 
 /// Register benchmarks for snapshot checksum creation, JSON roundtrip, and recovery.
 pub fn register_benchmarks(c: &mut Criterion) {
@@ -118,7 +119,7 @@ fn setup_mixed_level(order_count: u64) -> PriceLevel {
                 timestamp: TimestampMs::new(1_616_823_000_000 + i),
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: Quantity::new(5),
-                replenish_amount: Some(Quantity::new(10)),
+                replenish_amount: NonZeroU64::new(10),
                 auto_replenish: true,
                 extra_fields: (),
             },

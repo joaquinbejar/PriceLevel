@@ -465,6 +465,7 @@ mod pricelevel_snapshot_serialization_tests {
     use crate::price_level::PriceLevelSnapshot;
     use crate::utils::{Price, Quantity, TimestampMs};
 
+    use std::num::NonZeroU64;
     use std::str::FromStr;
     use std::sync::Arc;
 
@@ -847,7 +848,7 @@ mod pricelevel_snapshot_serialization_tests {
                 timestamp: TimestampMs::new(1616823000005),
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: Quantity::new(1),
-                replenish_amount: Some(Quantity::new(2)),
+                replenish_amount: NonZeroU64::new(2),
                 auto_replenish: true,
                 extra_fields: (),
             }),

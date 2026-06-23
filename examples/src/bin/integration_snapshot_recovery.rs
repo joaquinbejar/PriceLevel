@@ -8,6 +8,7 @@ use pricelevel::{
     Hash32, Id, OrderType, Price, PriceLevel, PriceLevelError, PriceLevelSnapshot,
     PriceLevelSnapshotPackage, Quantity, Side, TimeInForce, TimestampMs,
 };
+use std::num::NonZeroU64;
 use std::process;
 
 fn main() {
@@ -59,7 +60,7 @@ fn main() {
         timestamp: TimestampMs::new(ts),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: Quantity::new(5),
-        replenish_amount: Some(Quantity::new(10)),
+        replenish_amount: NonZeroU64::new(10),
         auto_replenish: true,
         extra_fields: (),
     });

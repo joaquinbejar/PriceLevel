@@ -3,6 +3,7 @@ use pricelevel::{
     Hash32, Id, OrderType, Price, PriceLevel, Quantity, Side, TimeInForce, TimestampMs,
 };
 use std::hint::black_box;
+use std::num::NonZeroU64;
 
 /// Register all benchmarks for adding orders to a price level
 pub fn register_benchmarks(c: &mut Criterion) {
@@ -143,7 +144,7 @@ fn create_reserve_order(
         timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: Quantity::new(threshold),
-        replenish_amount: replenish_amount.map(Quantity::new),
+        replenish_amount: replenish_amount.and_then(NonZeroU64::new),
         auto_replenish,
         extra_fields: (),
     }

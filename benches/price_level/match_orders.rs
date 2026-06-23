@@ -4,6 +4,7 @@ use pricelevel::{
     UuidGenerator,
 };
 use std::hint::black_box;
+use std::num::NonZeroU64;
 use uuid::Uuid;
 
 /// Register all benchmarks for matching orders at a price level
@@ -215,7 +216,7 @@ fn setup_reserve_orders(order_count: u64) -> PriceLevel {
             timestamp: TimestampMs::new(1616823000000 + i),
             time_in_force: TimeInForce::Gtc,
             replenish_threshold: Quantity::new(2),
-            replenish_amount: Some(Quantity::new(5)),
+            replenish_amount: NonZeroU64::new(5),
             auto_replenish: true,
             extra_fields: (),
         };
@@ -262,7 +263,7 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 timestamp: TimestampMs::new(1616823000000 + i),
                 time_in_force: TimeInForce::Gtc,
                 replenish_threshold: Quantity::new(2),
-                replenish_amount: Some(Quantity::new(5)),
+                replenish_amount: NonZeroU64::new(5),
                 auto_replenish: true,
                 extra_fields: (),
             },

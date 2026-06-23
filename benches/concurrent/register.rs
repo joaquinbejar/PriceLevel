@@ -3,6 +3,7 @@ use pricelevel::{
     Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
     TimeInForce, TimestampMs, UuidGenerator,
 };
+use std::num::NonZeroU64;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -420,7 +421,7 @@ fn create_reserve_order(
         timestamp: TimestampMs::new(1616823000000),
         time_in_force: TimeInForce::Gtc,
         replenish_threshold: Quantity::new(threshold),
-        replenish_amount: replenish_amount.map(Quantity::new),
+        replenish_amount: replenish_amount.and_then(NonZeroU64::new),
         auto_replenish,
         extra_fields: (),
     }
