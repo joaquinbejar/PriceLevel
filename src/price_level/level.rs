@@ -322,15 +322,16 @@ impl PriceLevel {
         let mut hidden_quantity: u64 = 0;
 
         for order in &orders {
-            // Checked arithmetic per the crate's no-saturate/no-wrap rule. The
-            // overflow branch is structurally unreachable: the live level holds
-            // these exact sums in its `u64` atomic counters, and `add_order`
-            // bounds them with checked arithmetic, so the sum over this vector
-            // cannot exceed `u64`. `snapshot()` is infallible (changing it would
-            // ripple to `snapshot_package` / `snapshot_to_json` and every
-            // caller), so on the impossible release-mode overflow we fall back to
-            // the corresponding live atomic counter — itself the value this fold
-            // is reproducing.
+            // Checked arithmetic per the crate's no-saturate/no-wrap rule.
+            // `snapshot()` is infallible (changing it would ripple to
+            // `snapshot_package` / `snapshot_to_json` and every caller), so the
+            // overflow branch needs a value, not a `Result`. That branch is
+            // unreachable for any state the level can represent: the level tracks
+            // the same running total in a `u64` atomic counter, so a sum that
+            // overflows `u64` here is one the level itself could never have held.
+            // On that impossible branch we fall back to the live atomic counter —
+            // the engine's own authoritative `u64` total (best-effort, since the
+            // branch cannot occur for representable state).
             match visible_quantity.checked_add(order.visible_quantity()) {
                 Some(total) => visible_quantity = total,
                 None => {

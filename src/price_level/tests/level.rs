@@ -2346,7 +2346,11 @@ mod tests {
 
         // Workers: order adders + matchers + one reader (the snapshot taker).
         const ADDER_THREADS: usize = 4;
-        const MATCHER_THREADS: usize = 2;
+        // `match_order` requires a single logical matcher per level (see its
+        // rustdoc); concurrent matchers are an unsupported, racy contract. The
+        // supported concurrency under test is many adders + snapshot reads
+        // racing exactly one matcher.
+        const MATCHER_THREADS: usize = 1;
         const TOTAL_THREADS: usize = ADDER_THREADS + MATCHER_THREADS + 1;
         const OPS_PER_THREAD: usize = 500;
         const ORDERS_PER_THREAD: usize = OPS_PER_THREAD;
