@@ -120,7 +120,13 @@ impl PriceLevel {
     /// from it.
     #[must_use]
     pub fn visible_quantity(&self) -> u64 {
-        self.visible_quantity.load(Ordering::Acquire)
+        // `Relaxed`: this counter is advisory / eventually-consistent (see the
+        // doc above and issue #68). It carries NO happens-before relationship —
+        // the lock-free `SkipMap` / `DashMap` in `OrderQueue` carry the real
+        // ordering between producers and consumers, and `snapshot()` is the
+        // mutually-consistent view. Nothing is published or synchronized through
+        // this load, so `Acquire` would buy nothing.
+        self.visible_quantity.load(Ordering::Relaxed)
     }
 
     /// Get the hidden quantity, in quantity units.
@@ -129,7 +135,9 @@ impl PriceLevel {
     /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
     #[must_use]
     pub fn hidden_quantity(&self) -> u64 {
-        self.hidden_quantity.load(Ordering::Acquire)
+        // `Relaxed`: advisory counter, no happens-before rides on it — see
+        // `visible_quantity` for the full rationale.
+        self.hidden_quantity.load(Ordering::Relaxed)
     }
 
     /// Get the total quantity (visible + hidden), in quantity units.
@@ -151,7 +159,9 @@ impl PriceLevel {
     /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
     #[must_use]
     pub fn order_count(&self) -> usize {
-        self.order_count.load(Ordering::Acquire)
+        // `Relaxed`: advisory counter, no happens-before rides on it — see
+        // `visible_quantity` for the full rationale.
+        self.order_count.load(Ordering::Relaxed)
     }
 
     /// Get the statistics for this price level
@@ -176,11 +186,17 @@ impl PriceLevel {
         let order_arc = Arc::new(order);
         self.orders.push(order_arc.clone());
 
-        // Update atomic counters
+        // Update atomic counters. `Relaxed` on all three: these are the
+        // advisory counters (issue #68). The queue publication above (the
+        // `push` into `OrderQueue`'s `SkipMap` / `DashMap`) carries the actual
+        // happens-before for a concurrent reader; the counters are not a
+        // synchronization channel, so a release here would publish nothing a
+        // reader relies on. The RMWs only need to be atomic, not ordered.
         self.visible_quantity
-            .fetch_add(visible_qty, Ordering::AcqRel);
-        self.hidden_quantity.fetch_add(hidden_qty, Ordering::AcqRel);
-        self.order_count.fetch_add(1, Ordering::AcqRel);
+            .fetch_add(visible_qty, Ordering::Relaxed);
+        self.hidden_quantity
+            .fetch_add(hidden_qty, Ordering::Relaxed);
+        self.order_count.fetch_add(1, Ordering::Relaxed);
 
         // Update statistics
         self.stats.record_order_added();
@@ -256,8 +272,10 @@ impl PriceLevel {
                     order_arc.match_against(remaining);
 
                 if consumed > 0 {
-                    // Update visible quantity counter
-                    self.visible_quantity.fetch_sub(consumed, Ordering::AcqRel);
+                    // Update visible quantity counter. `Relaxed`: advisory
+                    // counter (issue #68); the queue mutation (`pop_entry`
+                    // above) carries the real happens-before, not this RMW.
+                    self.visible_quantity.fetch_sub(consumed, Ordering::Relaxed);
 
                     // Use UUID generator directly
                     let trade_id = Id::from_uuid(trade_id_generator.next());
@@ -302,10 +320,13 @@ impl PriceLevel {
                         // drawn from hidden into visible. By convention the
                         // refreshed tranche loses time priority, so it is
                         // appended to the tail via `push` (new sequence).
+                        // `Relaxed` on both counter RMWs: advisory counters
+                        // (issue #68); the `push` below carries the real
+                        // happens-before for the refreshed tranche.
                         self.hidden_quantity
-                            .fetch_sub(hidden_reduced, Ordering::AcqRel);
+                            .fetch_sub(hidden_reduced, Ordering::Relaxed);
                         self.visible_quantity
-                            .fetch_add(hidden_reduced, Ordering::AcqRel);
+                            .fetch_add(hidden_reduced, Ordering::Relaxed);
                         self.orders.push(Arc::new(updated));
                     } else {
                         // Pure partial fill: the maker keeps its place in the
@@ -315,7 +336,11 @@ impl PriceLevel {
                         self.orders.reinsert(order_seq, Arc::new(updated));
                     }
                 } else {
-                    self.order_count.fetch_sub(1, Ordering::AcqRel);
+                    // Maker fully consumed and removed from the queue (the
+                    // `pop_entry` above already removed it). `Relaxed` on both
+                    // counter RMWs: advisory counters (issue #68); the queue
+                    // removal carries the happens-before, not these counters.
+                    self.order_count.fetch_sub(1, Ordering::Relaxed);
                     match &*order_arc {
                         OrderType::IcebergOrder {
                             hidden_quantity, ..
@@ -324,7 +349,7 @@ impl PriceLevel {
                             hidden_quantity, ..
                         } if hidden_quantity.as_u64() > 0 && hidden_reduced == 0 => {
                             self.hidden_quantity
-                                .fetch_sub(hidden_quantity.as_u64(), Ordering::AcqRel);
+                                .fetch_sub(hidden_quantity.as_u64(), Ordering::Relaxed);
                         }
                         _ => {}
                     }
@@ -460,14 +485,18 @@ impl PriceLevel {
                     let order = self.orders.remove(order_id);
 
                     if let Some(ref order_arc) = order {
-                        // Update atomic counters
+                        // Update atomic counters from the order actually removed
+                        // from the queue above. `Relaxed` on all three: advisory
+                        // counters (issue #68); the `OrderQueue::remove` carries
+                        // the happens-before, not these counters.
                         let visible_qty = order_arc.visible_quantity();
                         let hidden_qty = order_arc.hidden_quantity();
 
                         self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::AcqRel);
-                        self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
-                        self.order_count.fetch_sub(1, Ordering::AcqRel);
+                            .fetch_sub(visible_qty, Ordering::Relaxed);
+                        self.hidden_quantity
+                            .fetch_sub(hidden_qty, Ordering::Relaxed);
+                        self.order_count.fetch_sub(1, Ordering::Relaxed);
 
                         // Update statistics
                         self.stats.record_order_removed();
@@ -552,11 +581,14 @@ impl PriceLevel {
                 // handle both signs.
                 let old_visible = old.visible_quantity();
                 let old_hidden = old.hidden_quantity();
+                // `Relaxed` on both branches: advisory counters (issue #68); the
+                // queue mutation above (`update_in_place` / `remove` + `push`)
+                // carries the happens-before, not these counter RMWs.
                 let apply = |counter: &std::sync::atomic::AtomicU64, old: u64, new: u64| {
                     if new >= old {
-                        counter.fetch_add(new - old, Ordering::AcqRel);
+                        counter.fetch_add(new - old, Ordering::Relaxed);
                     } else {
-                        counter.fetch_sub(old - new, Ordering::AcqRel);
+                        counter.fetch_sub(old - new, Ordering::Relaxed);
                     }
                 };
                 apply(&self.visible_quantity, old_visible, new_visible);
@@ -575,14 +607,18 @@ impl PriceLevel {
                     let order = self.orders.remove(order_id);
 
                     if let Some(ref order_arc) = order {
-                        // Update atomic counters
+                        // Update atomic counters from the order actually removed
+                        // from the queue above. `Relaxed` on all three: advisory
+                        // counters (issue #68); the `OrderQueue::remove` carries
+                        // the happens-before, not these counters.
                         let visible_qty = order_arc.visible_quantity();
                         let hidden_qty = order_arc.hidden_quantity();
 
                         self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::AcqRel);
-                        self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
-                        self.order_count.fetch_sub(1, Ordering::AcqRel);
+                            .fetch_sub(visible_qty, Ordering::Relaxed);
+                        self.hidden_quantity
+                            .fetch_sub(hidden_qty, Ordering::Relaxed);
+                        self.order_count.fetch_sub(1, Ordering::Relaxed);
 
                         // Update statistics
                         self.stats.record_order_removed();
@@ -602,14 +638,18 @@ impl PriceLevel {
                 let order = self.orders.remove(order_id);
 
                 if let Some(ref order_arc) = order {
-                    // Update atomic counters
+                    // Update atomic counters from the order actually removed from
+                    // the queue above. `Relaxed` on all three: advisory counters
+                    // (issue #68); the `OrderQueue::remove` carries the
+                    // happens-before, not these counters.
                     let visible_qty = order_arc.visible_quantity();
                     let hidden_qty = order_arc.hidden_quantity();
 
                     self.visible_quantity
-                        .fetch_sub(visible_qty, Ordering::AcqRel);
-                    self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
-                    self.order_count.fetch_sub(1, Ordering::AcqRel);
+                        .fetch_sub(visible_qty, Ordering::Relaxed);
+                    self.hidden_quantity
+                        .fetch_sub(hidden_qty, Ordering::Relaxed);
+                    self.order_count.fetch_sub(1, Ordering::Relaxed);
 
                     // Update statistics
                     self.stats.record_order_removed();
@@ -630,14 +670,18 @@ impl PriceLevel {
                     let order = self.orders.remove(order_id);
 
                     if let Some(ref order_arc) = order {
-                        // Update atomic counters
+                        // Update atomic counters from the order actually removed
+                        // from the queue above. `Relaxed` on all three: advisory
+                        // counters (issue #68); the `OrderQueue::remove` carries
+                        // the happens-before, not these counters.
                         let visible_qty = order_arc.visible_quantity();
                         let hidden_qty = order_arc.hidden_quantity();
 
                         self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::AcqRel);
-                        self.hidden_quantity.fetch_sub(hidden_qty, Ordering::AcqRel);
-                        self.order_count.fetch_sub(1, Ordering::AcqRel);
+                            .fetch_sub(visible_qty, Ordering::Relaxed);
+                        self.hidden_quantity
+                            .fetch_sub(hidden_qty, Ordering::Relaxed);
+                        self.order_count.fetch_sub(1, Ordering::Relaxed);
 
                         // Update statistics
                         self.stats.record_order_removed();

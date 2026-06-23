@@ -15,6 +15,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// [`record_execution`](Self::record_execution). Mutation happens only through
 /// the `record_*` / [`reset`](Self::reset) methods; reads happen only through
 /// the public accessors.
+///
+/// # Atomic ordering
+///
+/// **Every atomic access in this type uses [`Ordering::Relaxed`], deliberately.**
+/// These are pure observability counters: nothing in the engine reads a
+/// statistic to gate a queue mutation, and no other field's visibility is
+/// published through them. They carry no happens-before relationship — each
+/// counter is independent and may be read mid-update, so a multi-field read
+/// (serde, [`Display`](std::fmt::Display), [`Clone`]) is an explicitly
+/// best-effort, non-transactional point-in-time view that can be torn across
+/// fields. This is unlike `PriceLevel::snapshot`, which is internally
+/// consistent (it derives its aggregates from one materialized order vector);
+/// these statistics counters are not part of that consistency guarantee.
+/// `Relaxed` is therefore both correct and the
+/// cheapest valid choice; a stronger ordering would only add cost without
+/// buying any guarantee a consumer relies on. The lone read-modify-write loop
+/// in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64) is a standard
+/// `compare_exchange_weak` CAS retry — see the note there for why both its
+/// success and failure orderings are `Relaxed`.
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
@@ -49,6 +68,8 @@ impl PriceLevelStatistics {
         value: u64,
         field: &str,
     ) -> Result<(), PriceLevelError> {
+        // `Relaxed`: this is an advisory observability counter (see the
+        // struct-level "Atomic ordering" note) — no happens-before rides on it.
         let mut current = target.load(Ordering::Relaxed);
 
         loop {
@@ -59,6 +80,13 @@ impl PriceLevelStatistics {
                         message: format!("{field} overflow"),
                     })?;
 
+            // Standard lock-free CAS retry. Both the success and failure
+            // orderings are `Relaxed`: the only invariant is that the stored
+            // value is a checked sum of monotonic increments (the loop re-reads
+            // `observed` and re-validates on contention). The counter publishes
+            // nothing to another thread, so neither acquire on failure nor
+            // release on success is needed. The retry body is allocation-free,
+            // per the tight-CAS-loop rule.
             match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
             {
                 Ok(_) => return Ok(()),
