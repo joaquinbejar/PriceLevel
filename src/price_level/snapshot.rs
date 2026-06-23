@@ -291,6 +291,8 @@ impl PriceLevelSnapshotPackage {
     }
 
     /// Validates the checksum contained in the package against the serialized snapshot data.
+    // Snapshot restoration / validation is a cold path: keep it out of line.
+    #[inline(never)]
     pub fn validate(&self) -> Result<(), PriceLevelError> {
         if self.version != SNAPSHOT_FORMAT_VERSION {
             return Err(PriceLevelError::InvalidOperation {
@@ -318,7 +320,10 @@ impl PriceLevelSnapshotPackage {
         Ok(self.snapshot)
     }
 
+    #[inline(never)]
     fn compute_checksum(snapshot: &PriceLevelSnapshot) -> Result<String, PriceLevelError> {
+        use std::fmt::Write as _;
+
         let payload =
             serde_json::to_vec(snapshot).map_err(|error| PriceLevelError::SerializationError {
                 message: error.to_string(),
@@ -327,12 +332,27 @@ impl PriceLevelSnapshotPackage {
         let mut hasher = Sha256::new();
         hasher.update(payload);
 
+        // `digest` 0.11 returns the digest as a `hybrid_array::Array`, which —
+        // unlike the `generic_array::GenericArray` from 0.10 — does not
+        // implement `LowerHex`. Encode the raw SHA-256 bytes to lowercase hex
+        // by hand. The bytes are defined by the algorithm and are unchanged, so
+        // the produced checksum string is byte-identical to the 0.10 output.
         let checksum_bytes = hasher.finalize();
-        Ok(format!("{:x}", checksum_bytes))
+        let mut checksum = String::with_capacity(checksum_bytes.len() * 2);
+        for byte in checksum_bytes {
+            // Writing to a `String` is infallible; `{byte:02x}` is the same
+            // lowercase, zero-padded, two-hex-digits-per-byte encoding the
+            // previous `format!("{:x}", checksum_bytes)` produced.
+            let _ = write!(checksum, "{byte:02x}");
+        }
+        Ok(checksum)
     }
 }
 
 impl Serialize for PriceLevelSnapshot {
+    // Snapshot serialization is a cold path (taken/restored, not per-match):
+    // keep it out of line.
+    #[inline(never)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -360,6 +380,9 @@ impl Serialize for PriceLevelSnapshot {
 }
 
 impl<'de> Deserialize<'de> for PriceLevelSnapshot {
+    // Snapshot restoration is a cold path (taken/restored, not per-match):
+    // keep it out of line.
+    #[inline(never)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

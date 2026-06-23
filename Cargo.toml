@@ -71,4 +71,4 @@ crossbeam-skiplist = "0.1"
 uuid = { version = "1.23", features = ["v4", "v5", "serde"] }
 ulid = { version = "1.2", features = ["serde"] }
 dashmap = "6.1"
-sha2 = "0.10"
+sha2 = "0.11"

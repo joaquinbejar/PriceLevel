@@ -205,6 +205,7 @@ pub enum OrderType<T> {
 impl<T: Clone> OrderType<T> {
     /// Get the order ID
     #[must_use]
+    #[inline]
     pub fn id(&self) -> Id {
         match self {
             Self::Standard { id, .. } => *id,
@@ -233,6 +234,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Get the price
     #[must_use]
+    #[inline]
     pub fn price(&self) -> Price {
         match self {
             Self::Standard { price, .. } => *price,
@@ -247,6 +249,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Get the visible quantity
     #[must_use]
+    #[inline]
     pub fn visible_quantity(&self) -> u64 {
         match self {
             Self::Standard { quantity, .. } => quantity.as_u64(),
@@ -265,6 +268,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Get the hidden quantity
     #[must_use]
+    #[inline]
     pub fn hidden_quantity(&self) -> u64 {
         match self {
             Self::IcebergOrder {
@@ -279,6 +283,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Get the order side
     #[must_use]
+    #[inline]
     pub fn side(&self) -> Side {
         match self {
             Self::Standard { side, .. } => *side,
@@ -307,6 +312,7 @@ impl<T: Clone> OrderType<T> {
 
     /// Get the timestamp
     #[must_use]
+    #[inline]
     pub fn timestamp(&self) -> u64 {
         match self {
             Self::Standard { timestamp, .. } => timestamp.as_u64(),
