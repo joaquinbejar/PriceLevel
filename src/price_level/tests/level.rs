@@ -2315,6 +2315,115 @@ mod tests {
         );
         assert_eq!(result.trades().as_vec()[0].quantity(), Quantity::new(40));
     }
+
+    fn assert_snapshot_internally_consistent(snapshot: &crate::price_level::PriceLevelSnapshot) {
+        let orders = snapshot.orders();
+
+        let visible_sum: u64 = orders.iter().map(|order| order.visible_quantity()).sum();
+        let hidden_sum: u64 = orders.iter().map(|order| order.hidden_quantity()).sum();
+
+        assert_eq!(
+            snapshot.visible_quantity(),
+            visible_sum,
+            "snapshot visible_quantity must equal the sum over its own orders"
+        );
+        assert_eq!(
+            snapshot.hidden_quantity(),
+            hidden_sum,
+            "snapshot hidden_quantity must equal the sum over its own orders"
+        );
+        assert_eq!(
+            snapshot.order_count(),
+            orders.len(),
+            "snapshot order_count must equal the length of its own orders vector"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_concurrent_mutation_internally_consistent() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        // Workers: order adders + matchers + one reader (the snapshot taker).
+        const ADDER_THREADS: usize = 4;
+        const MATCHER_THREADS: usize = 2;
+        const TOTAL_THREADS: usize = ADDER_THREADS + MATCHER_THREADS + 1;
+        const OPS_PER_THREAD: usize = 500;
+        const ORDERS_PER_THREAD: usize = OPS_PER_THREAD;
+        const PRICE: u128 = 10_000;
+
+        let price_level = Arc::new(PriceLevel::new(PRICE));
+        let barrier = Arc::new(Barrier::new(TOTAL_THREADS));
+        // Deterministically seeded so the trade-id stream is reproducible.
+        let trade_id_generator = Arc::new(UuidGenerator::new(Uuid::from_u128(0x1234_5678)));
+
+        let mut handles = Vec::with_capacity(TOTAL_THREADS);
+
+        // Adder threads: each pushes a deterministic stream of standard +
+        // iceberg orders (iceberg exercises both visible and hidden counters).
+        for t in 0..ADDER_THREADS {
+            let level = Arc::clone(&price_level);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ORDERS_PER_THREAD {
+                    // Ids / quantities derived purely from indices (deterministic).
+                    let base = (t * ORDERS_PER_THREAD + i) as u64;
+                    let id = base * 2 + 1_000;
+                    if i % 2 == 0 {
+                        level.add_order(create_standard_order(id, PRICE, 1 + (base % 7)));
+                    } else {
+                        level.add_order(create_iceberg_order(
+                            id,
+                            PRICE,
+                            1 + (base % 5),
+                            1 + (base % 11),
+                        ));
+                    }
+                }
+            }));
+        }
+
+        // Matcher threads: drain liquidity concurrently with the adders.
+        for t in 0..MATCHER_THREADS {
+            let level = Arc::clone(&price_level);
+            let barrier = Arc::clone(&barrier);
+            let generator = Arc::clone(&trade_id_generator);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..OPS_PER_THREAD {
+                    let taker_id = Id::from_u64((t * OPS_PER_THREAD + i) as u64 + 5_000_000);
+                    let _ = level.match_order(
+                        3,
+                        taker_id,
+                        TimestampMs::new(1_716_000_000_000),
+                        &generator,
+                    );
+                }
+            }));
+        }
+
+        // Reader thread: repeatedly snapshot and assert internal consistency
+        // while the level is being mutated concurrently.
+        let reader = {
+            let level = Arc::clone(&price_level);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..OPS_PER_THREAD {
+                    assert_snapshot_internally_consistent(&level.snapshot());
+                }
+            })
+        };
+
+        for handle in handles {
+            handle.join().expect("worker thread panicked");
+        }
+        reader.join().expect("reader thread panicked");
+
+        // The final quiescent snapshot must also be self-consistent.
+        assert_snapshot_internally_consistent(&price_level.snapshot());
+    }
 }
 
 #[cfg(test)]
