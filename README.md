@@ -481,6 +481,7 @@ this completes the quantity / timestamp surface). Call `.as_u64()` /
 | [`MatchResult::executed_quantity`] | `Result<u64, _>` | `Result<`[`Quantity`]`, _>` |
 | [`PriceLevelSnapshot::new`] (`price`) | `u128` | [`Price`] |
 | [`PriceLevelSnapshot::with_orders`] (`price`) | `u128` | [`Price`] |
+| [`PriceLevelSnapshot::with_orders_and_stats`] (`price`) | `u128` | [`Price`] |
 | [`PriceLevelSnapshot::price`] | `u128` | [`Price`] |
 | [`PriceLevelSnapshot::visible_quantity`] | `u64` | [`Quantity`] |
 | [`PriceLevelSnapshot::hidden_quantity`] | `u64` | [`Quantity`] |
