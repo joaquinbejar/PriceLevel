@@ -22,7 +22,7 @@
  - Efficient order matching and execution logic
  - Designed with domain-driven principles for financial markets
  - Comprehensive test suite demonstrating concurrent usage scenarios
- - Built with crossbeam's lock-free data structures
+ - Built with crossbeam's lock-free data structures (`crossbeam-skiplist`)
  - Optimized statistics tracking for each price level
  - Memory-efficient implementations suitable for high-frequency trading systems
 
@@ -53,7 +53,7 @@
  ## Implementation Details
 
  - **Thread Safety**: Uses atomic operations and lock-free data structures to ensure thread safety without mutex locks
- - **Order Queue Management**: Specialized order queue implementation based on crossbeam's SegQueue
+ - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index
  - **Statistics Tracking**: Each price level tracks execution statistics in real-time
  - **Snapshot Capabilities**: Create point-in-time snapshots of price levels for market data distribution
  - **Efficient Matching**: Optimized algorithms for matching incoming orders against existing orders
@@ -142,6 +142,18 @@ The simulation demonstrates the library's exceptional performance capabilities:
 - **Lock-Free Architecture**: Maintains high throughput with minimal contention overhead
 
 The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
+
+### Fixed in v0.7.1
+
+- **Price-time priority across partial fills** (issue #39). A partial fill
+  previously re-queued the resting maker's residual at the *back* of its
+  price level, so the next aggressor at that price matched a later arrival
+  instead of the older, partially-filled maker (a wrong `maker_order_id` in
+  the trade stream). The order queue now keeps strict price-time priority:
+  the residual stays at the front. Iceberg / reserve replenishment keeps its
+  existing semantics (a refreshed tranche still loses time priority). This is
+  a behavioral bug fix with **no public API change**; the internal queue is
+  now backed by a lock-free `crossbeam-skiplist` ordered index.
 
 ### Migration Guide (v0.6 → v0.7)
 
