@@ -179,13 +179,18 @@ The performance characteristics demonstrate that the `pricelevel` library is sui
   | `OrderType::refresh_iceberg(&self, u64)` | `refresh_iceberg(&self, NonZeroU64)` |
 
   Constructing a reserve order with a zero replenish is now impossible at
-  the type level. Build the amount with [`std::num::NonZeroU64::new`]
-  (`Some(NonZeroU64::new(n).unwrap())` or `NonZeroU64::new(n)` directly into
-  the `Option` field). On the text / JSON deserialization path a
-  `replenish_amount` of `0` is rejected with a typed
-  [`PriceLevelError::InvalidFieldValue`] (text) or a deserialization error
-  (JSON) rather than silently accepted — never a panic. Reading the default
-  as a raw integer now requires `DEFAULT_RESERVE_REPLENISH_AMOUNT.get()`.
+  the type level. Build the amount with [`std::num::NonZeroU64::new`], which
+  returns an `Option`. For a known-good literal, a compile-time constant is
+  simplest. For a **runtime** value `n`, match on `NonZeroU64::new(n)` and
+  treat `None` as an invalid amount to reject — do **not** blindly
+  `.unwrap()` it (that panics on `0`), and do **not** pass `NonZeroU64::new(n)`
+  straight into the `Option` field (that silently maps `0` to `None`, which
+  falls back to the default replenish instead of flagging the bad input). On
+  the text / JSON deserialization path a `replenish_amount` of `0` is rejected
+  with a typed [`PriceLevelError::InvalidFieldValue`] (text) or a
+  deserialization error (JSON) rather than silently accepted — never a panic.
+  Reading the default as a raw integer now requires
+  `DEFAULT_RESERVE_REPLENISH_AMOUNT.get()`.
 
 ### Migration Guide (v0.6 → v0.7)
 
