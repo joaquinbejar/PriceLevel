@@ -261,6 +261,22 @@ impl PriceLevel {
         self.orders.snapshot_by_seq()
     }
 
+    /// Fill `out` with the resting orders in ascending **insertion sequence** —
+    /// the buffer-reuse variant of [`Self::snapshot_by_insertion_seq`].
+    ///
+    /// `out` is cleared and then extended in place, yielding the exact same
+    /// sequence [`Self::snapshot_by_insertion_seq`] returns — the order
+    /// [`Self::match_order`] consumes resting orders. Reusing one scratch
+    /// buffer across calls avoids the per-call allocation the owned-`Vec`
+    /// variant pays, which matters for a downstream consumer that walks every
+    /// level repeatedly (e.g. a self-trade-prevention pre-scan).
+    ///
+    /// Like `snapshot_by_insertion_seq`, this is a point-in-time view: a
+    /// concurrent mutation after the call can change the queue.
+    pub fn snapshot_by_seq_into(&self, out: &mut Vec<Arc<OrderType<()>>>) {
+        self.orders.snapshot_by_seq_into(out);
+    }
+
     /// Returns `true` if any resting order has matchable depth, i.e. a positive
     /// taker would cross at this level.
     ///
@@ -292,7 +308,13 @@ impl PriceLevel {
     ///
     /// It allocates a working snapshot and is only used on the cold
     /// fill-or-kill path, not on the hot `Gtc` sweep.
-    fn matchable_quantity(&self, incoming_quantity: u64) -> u64 {
+    ///
+    /// Public so an order book composing this level can reuse the single
+    /// upstream source of truth for per-level fill-or-kill (all-or-nothing)
+    /// feasibility instead of re-deriving the sweep, which would risk drifting
+    /// from the real `match_order` behavior.
+    #[must_use]
+    pub fn matchable_quantity(&self, incoming_quantity: u64) -> u64 {
         if incoming_quantity == 0 {
             return 0;
         }
