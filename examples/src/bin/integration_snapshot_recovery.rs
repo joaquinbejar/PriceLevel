@@ -80,7 +80,8 @@ fn main() {
         .snapshot_package()
         .unwrap_or_else(|e| exit_err(&format!("snapshot_package: {e}")));
 
-    assert_eq_or_exit(package.version(), 1, "snapshot version");
+    // Snapshot format v2 (statistics persisted, issue #63).
+    assert_eq_or_exit(package.version(), 2, "snapshot version");
     assert_or_exit(
         !package.checksum().is_empty(),
         "checksum should not be empty",

@@ -106,9 +106,17 @@ fn test_read_write_ratio() {
                                 thread_price_level.add_order(order);
                             }
                             1 => {
-                                // Match order
-                                let taker_id =
-                                    Id::from_u64(thread_id as u64 * 10000 + local_counter);
+                                // Match order. Takers live in a disjoint high id
+                                // range so a taker id can never collide with a
+                                // resting maker id (`thread_id * 10000 + counter`,
+                                // which overlaps across threads once a counter
+                                // exceeds 10000). A taker matching a maker that
+                                // shares its id is a self-fill — impossible for a
+                                // real order and caught by match_order's
+                                // debug-only self-fill assertion.
+                                let taker_id = Id::from_u64(
+                                    (1u64 << 48) + thread_id as u64 * 10000 + local_counter,
+                                );
                                 thread_price_level.match_order(
                                     5, // Match 5 units
                                     taker_id,

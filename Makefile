@@ -65,6 +65,7 @@ pre-push: fix fmt lint-fix test readme doc
 .PHONY: doc
 doc:
 	cargo clippy -- -W missing-docs
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
 
 .PHONY: doc-open
 doc-open:
@@ -191,6 +192,16 @@ integration-examples:
 	cargo run --package examples --bin integration_special_orders
 	cargo run --package examples --bin integration_snapshot_recovery
 	cargo run --package examples --bin integration_checked_arithmetic
+
+# Run EVERY example binary (the assertion-bearing integration_* set plus the
+# standalone demos) in a debug build so runtime asserts / debug_assert! fire.
+# This is what catches example regressions that `cargo test` / `cargo build`
+# alone miss (e.g. a stale snapshot-version assertion or a self-fill).
+.PHONY: run-examples
+run-examples: integration-examples
+	cargo run --package examples --bin simple
+	cargo run --package examples --bin hft_simulation
+	cargo run --package examples --bin contention_test
 
 .PHONY: tree
 tree: 

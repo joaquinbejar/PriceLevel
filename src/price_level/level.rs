@@ -248,7 +248,7 @@ impl PriceLevel {
     ///
     /// Used by the post-only pre-check, which only needs to know whether *any*
     /// liquidity would be taken, not how much. Short-circuits on the first
-    /// matchable order, so it is cheaper than [`Self::matchable_quantity`].
+    /// matchable order, so it is cheaper than `matchable_quantity`.
     ///
     /// Matchability is delegated to [`OrderType::is_matchable`] — the single
     /// source of truth shared with the fill-or-kill dry run — so the post-only
@@ -353,7 +353,7 @@ impl PriceLevel {
     ///
     /// Unlike earlier versions, this method **honors the taker's**
     /// [`TimeInForce`] and [`TakerKind`]. Let `available` be the quantity this
-    /// level can actually fill for the taker (see [`Self::matchable_quantity`]),
+    /// level can actually fill for the taker (see `matchable_quantity`),
     /// capped at `incoming_quantity`:
     ///
     /// - [`TakerKind::PostOnly`]: must never take liquidity. If `available > 0`

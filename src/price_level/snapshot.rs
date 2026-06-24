@@ -327,7 +327,7 @@ impl PriceLevelSnapshotPackage {
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the package's format
-    /// version is not [`SNAPSHOT_FORMAT_VERSION`], [`PriceLevelError::SerializationError`]
+    /// version is not `SNAPSHOT_FORMAT_VERSION`, [`PriceLevelError::SerializationError`]
     /// if the snapshot payload cannot be re-encoded to recompute the checksum,
     /// and [`PriceLevelError::ChecksumMismatch`] if the recomputed SHA-256
     /// checksum does not match the stored one (tampered or corrupted snapshot).
