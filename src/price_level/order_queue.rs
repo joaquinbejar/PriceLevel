@@ -378,14 +378,26 @@ impl OrderQueue {
     /// the sweep even when timestamps are not monotonic with insertion.
     #[must_use]
     pub(crate) fn snapshot_by_seq(&self) -> Vec<Arc<OrderType<()>>> {
-        self.index
-            .iter()
-            .filter_map(|index_entry| {
-                self.orders
-                    .get(index_entry.value())
-                    .map(|order_entry| order_entry.value().1.clone())
-            })
-            .collect()
+        let mut out = Vec::new();
+        self.snapshot_by_seq_into(&mut out);
+        out
+    }
+
+    /// Fill `out` with the resting orders in ascending **insertion-sequence**
+    /// order — the buffer-reuse variant of [`OrderQueue::snapshot_by_seq`].
+    ///
+    /// `out` is cleared first, then extended in place, so a caller can reuse one
+    /// scratch buffer across many calls and avoid a per-call allocation (e.g. a
+    /// pooled buffer in a per-level pre-scan). The walk and skip-removed-entry
+    /// semantics are identical to [`OrderQueue::snapshot_by_seq`]; the only
+    /// difference is where the result lands.
+    pub(crate) fn snapshot_by_seq_into(&self, out: &mut Vec<Arc<OrderType<()>>>) {
+        out.clear();
+        out.extend(self.index.iter().filter_map(|index_entry| {
+            self.orders
+                .get(index_entry.value())
+                .map(|order_entry| order_entry.value().1.clone())
+        }));
     }
 
     /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.

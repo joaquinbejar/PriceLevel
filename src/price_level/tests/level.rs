@@ -5063,6 +5063,141 @@ mod tests {
             "a replenished maker moves to the tail"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Issue #104 — snapshot_by_seq_into (buffer-reuse) + public
+    // matchable_quantity
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_snapshot_by_seq_into_matches_snapshot_by_insertion_seq() {
+        let level = PriceLevel::new(10_000);
+        level.add_order(create_standard_order(1, 10_000, 100));
+        level.add_order(create_standard_order(2, 10_000, 50));
+        level.add_order(create_iceberg_order(3, 10_000, 20, 30));
+
+        let owned: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+
+        let mut buf = Vec::new();
+        level.snapshot_by_seq_into(&mut buf);
+        let into: Vec<Id> = buf.iter().map(|o| o.id()).collect();
+
+        assert_eq!(
+            into, owned,
+            "snapshot_by_seq_into must yield the same sequence as \
+             snapshot_by_insertion_seq"
+        );
+        assert_eq!(
+            into,
+            vec![Id::from_u64(1), Id::from_u64(2), Id::from_u64(3)],
+            "the sequence is ascending insertion order"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_by_seq_into_reuses_buffer() {
+        // Seed the scratch buffer from a level with THREE orders so the buffer
+        // starts non-empty (proving `clear()` discards the prior contents
+        // rather than appending to them).
+        let big = PriceLevel::new(10_000);
+        big.add_order(create_standard_order(1, 10_000, 100));
+        big.add_order(create_standard_order(2, 10_000, 100));
+        big.add_order(create_standard_order(3, 10_000, 100));
+        let mut buf = big.snapshot_by_insertion_seq();
+        assert_eq!(buf.len(), 3);
+
+        // Reuse the same buffer on a SMALLER level: it must shrink to one entry
+        // with no stale tail left over from the previous three.
+        let small = PriceLevel::new(10_000);
+        small.add_order(create_standard_order(10, 10_000, 100));
+        small.snapshot_by_seq_into(&mut buf);
+        let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
+        assert_eq!(
+            ids,
+            vec![Id::from_u64(10)],
+            "buffer must be cleared, not appended to"
+        );
+
+        // Reuse the same buffer again on a LARGER level: it must grow and hold
+        // exactly the new contents in insertion order.
+        let bigger = PriceLevel::new(10_000);
+        for id in [20_u64, 21, 22, 23] {
+            bigger.add_order(create_standard_order(id, 10_000, 100));
+        }
+        bigger.snapshot_by_seq_into(&mut buf);
+        let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                Id::from_u64(20),
+                Id::from_u64(21),
+                Id::from_u64(22),
+                Id::from_u64(23)
+            ],
+            "buffer must hold exactly the new contents, in insertion order"
+        );
+    }
+
+    #[test]
+    fn test_matchable_quantity_public_predicts_sweep() {
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+
+        // Plain makers: 100 + 50 = 150 of depth.
+        let level = PriceLevel::new(10_000);
+        level.add_order(create_standard_order(1, 10_000, 100));
+        level.add_order(create_standard_order(2, 10_000, 50));
+
+        assert_eq!(level.matchable_quantity(0), 0, "zero taker fills nothing");
+        assert_eq!(level.matchable_quantity(120), 120, "taker below depth");
+        // A taker above the available depth is capped at the depth.
+        let predicted = level.matchable_quantity(200);
+        assert_eq!(predicted, 150, "taker above depth is capped at depth");
+
+        // The dry run does not mutate, so the real sweep on the same level must
+        // consume exactly what was predicted.
+        let generator = UuidGenerator::new(namespace);
+        let result = level.match_order(
+            200,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        assert_eq!(
+            result.executed_quantity().unwrap_or_default().as_u64(),
+            predicted,
+            "match_order consumes exactly matchable_quantity"
+        );
+
+        // Iceberg replenish: visible 10 over hidden 40 = 50 of total depth, all
+        // reachable across replenishment.
+        let ice = PriceLevel::new(10_000);
+        ice.add_order(create_iceberg_order(1, 10_000, 10, 40));
+        let predicted_ice = ice.matchable_quantity(100);
+        assert_eq!(
+            predicted_ice, 50,
+            "matchable_quantity reaches hidden depth via replenishment"
+        );
+        let generator = UuidGenerator::new(namespace);
+        let result = ice.match_order(
+            100,
+            Id::from_u64(998),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        assert_eq!(
+            result.executed_quantity().unwrap_or_default().as_u64(),
+            predicted_ice,
+            "match_order consumes exactly matchable_quantity for an iceberg"
+        );
+    }
 }
 
 #[cfg(test)]
