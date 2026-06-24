@@ -48,6 +48,12 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+# proptest is dev-only: it drives the property-test harness in
+# `tests/proptest/mod.rs` (issue #80) and never ships in the library surface.
+# `default-features = false` drops the `fork`/`timeout` machinery (and its
+# `rusty-fork` / `wait-timeout` deps) we do not use; `std` keeps the core
+# strategy API.
+proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
 # loom is a dev-only model checker, gated behind `--cfg loom`. It is NOT a
 # runtime dependency. It models the cancel-vs-partial-fill linearization (issue
 # #81); see `tests/loom/cancel_match.rs`. loom cannot instrument dashmap /
@@ -63,6 +69,10 @@ path = "tests/loom/cancel_match.rs"
 [[test]]
 name = "tests"
 path = "tests/unit/mod.rs"
+
+[[test]]
+name = "proptest"
+path = "tests/proptest/mod.rs"
 
 [[bench]]
 name = "benches"
