@@ -368,6 +368,26 @@ impl OrderQueue {
         self.snapshot_vec()
     }
 
+    /// Materialize the resting orders in ascending **insertion-sequence** order —
+    /// the exact order [`OrderQueue::match_front`] consumes them.
+    ///
+    /// Walks the `index` (`SkipMap<seq, Id>`, which iterates ascending) and
+    /// resolves each id in `orders`, skipping any transient index entry whose
+    /// order was already removed. Unlike [`OrderQueue::snapshot_vec`] (sorted by
+    /// `(timestamp, sequence)`), this reflects pure insertion order, so it equals
+    /// the sweep even when timestamps are not monotonic with insertion.
+    #[must_use]
+    pub(crate) fn snapshot_by_seq(&self) -> Vec<Arc<OrderType<()>>> {
+        self.index
+            .iter()
+            .filter_map(|index_entry| {
+                self.orders
+                    .get(index_entry.value())
+                    .map(|order_entry| order_entry.value().1.clone())
+            })
+            .collect()
+    }
+
     /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
     ///
     /// This function takes ownership of a vector of order references (wrapped in `Arc`) and constructs
@@ -431,15 +451,7 @@ impl Serialize for OrderQueue {
         // where an order is in one structure but not yet the other.
         // Insertion-sequence order keeps the round-trip price-time priority
         // (the DashMap alone has no deterministic iteration order).
-        let ordered: Vec<Arc<OrderType<()>>> = self
-            .index
-            .iter()
-            .filter_map(|index_entry| {
-                self.orders
-                    .get(index_entry.value())
-                    .map(|order_entry| order_entry.value().1.clone())
-            })
-            .collect();
+        let ordered = self.snapshot_by_seq();
         let mut seq = serializer.serialize_seq(Some(ordered.len()))?;
         for order in &ordered {
             seq.serialize_element(order.as_ref())?;

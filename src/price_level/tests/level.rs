@@ -4935,6 +4935,134 @@ mod tests {
             );
         }
     }
+
+    // ------------------------------------------------------------------
+    // Issue #102 — snapshot_by_insertion_seq (predicts match_order order)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_snapshot_by_insertion_seq_matches_match_order_consumption() {
+        // Build a Buy maker with an explicit (non-counter) timestamp so we can
+        // make timestamps NON-monotonic with insertion order.
+        let mk_buy = |id: u64, ts: u64, qty: u64| OrderType::Standard {
+            id: Id::from_u64(id),
+            price: Price::new(10_000),
+            quantity: Quantity::new(qty),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(ts),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        };
+
+        let level = PriceLevel::new(10_000);
+        // Insert id 1 FIRST but with a LATER timestamp than id 2 (added second).
+        level.add_order(mk_buy(1, 2_000, 50));
+        level.add_order(mk_buy(2, 1_000, 50));
+
+        let by_seq: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        let by_ts: Vec<Id> = level.snapshot_orders().iter().map(|o| o.id()).collect();
+
+        // Insertion-sequence order is the order they were added: 1, 2.
+        assert_eq!(by_seq, vec![Id::from_u64(1), Id::from_u64(2)]);
+        // Timestamp order is 2, 1 (id 2 has the earlier timestamp) — different.
+        assert_eq!(by_ts, vec![Id::from_u64(2), Id::from_u64(1)]);
+        assert_ne!(
+            by_seq, by_ts,
+            "the two views must differ under non-monotonic timestamps"
+        );
+
+        // The sweep consumes in insertion-sequence order: id 1 then id 2.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let result = level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(3_000),
+            &generator,
+        );
+        let consumed: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(
+            consumed, by_seq,
+            "match_order consumes makers in snapshot_by_insertion_seq order"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_by_insertion_seq_empty_level() {
+        let level = PriceLevel::new(10_000);
+        assert!(level.snapshot_by_insertion_seq().is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_by_insertion_seq_partial_fill_keeps_front() {
+        let level = PriceLevel::new(10_000);
+        level.add_order(create_standard_order(1, 10_000, 100));
+        level.add_order(create_standard_order(2, 10_000, 50));
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        // Small taker partially fills the front maker (id 1): KeepInPlace, same seq.
+        let _ = level.match_order(
+            30,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        let by_seq: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            by_seq,
+            vec![Id::from_u64(1), Id::from_u64(2)],
+            "a partially-filled front maker keeps the front"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_by_insertion_seq_replenished_maker_moves_to_tail() {
+        let level = PriceLevel::new(10_000);
+        // Iceberg (id 1, Sell) added first: visible 10 over hidden 40.
+        level.add_order(create_iceberg_order(1, 10_000, 10, 40));
+        // A plain Sell maker (id 2) rests behind it.
+        level.add_order(create_sell_standard_order(2, 10_000, 100));
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        // Fully consume the iceberg's visible tranche (10): it replenishes from
+        // hidden and is re-queued at the TAIL (ReplaceAtTail, new sequence).
+        let _ = level.match_order(
+            10,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        let by_seq: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            by_seq,
+            vec![Id::from_u64(2), Id::from_u64(1)],
+            "a replenished maker moves to the tail"
+        );
+    }
 }
 
 #[cfg(test)]

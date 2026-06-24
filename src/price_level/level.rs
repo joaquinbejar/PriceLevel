@@ -243,6 +243,24 @@ impl PriceLevel {
         self.orders.snapshot_vec()
     }
 
+    /// Materializes the resting orders in the exact order [`Self::match_order`]
+    /// consumes them: ascending **insertion sequence** (the oldest order first).
+    ///
+    /// Use this to predict the sweep — e.g. a self-trade-prevention pre-scan that
+    /// must walk orders in consumption order to compute how much a taker may
+    /// safely fill. It differs from the other two views:
+    /// - [`Self::snapshot_orders`] sorts by `(timestamp, sequence)`, which equals
+    ///   the sweep order *only* when timestamps are monotonic with insertion
+    ///   (client-supplied or modify-restamped timestamps break that); and
+    /// - [`Self::iter_orders`] has no stable order.
+    ///
+    /// Like `snapshot_orders`, this is a point-in-time view: a concurrent
+    /// mutation after the call can change the queue.
+    #[must_use]
+    pub fn snapshot_by_insertion_seq(&self) -> Vec<Arc<OrderType<()>>> {
+        self.orders.snapshot_by_seq()
+    }
+
     /// Returns `true` if any resting order has matchable depth, i.e. a positive
     /// taker would cross at this level.
     ///
