@@ -15,8 +15,9 @@
 //! `TimeInForce`) and the taker discriminators (`TakerKind`).
 //!
 //! `proptest` is deterministic given its `ProptestConfig`; failing inputs (if
-//! any are ever found) are persisted by `proptest` under
-//! `proptest-regressions/` and replayed on the next run.
+//! any are ever found) are persisted by `proptest` next to the test source as
+//! `tests/proptest/properties.proptest-regressions` and replayed on the next
+//! run.
 
 mod properties;
 mod strategies;

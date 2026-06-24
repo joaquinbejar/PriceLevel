@@ -214,13 +214,18 @@ proptest! {
             );
         }
 
-        // A purely partially-filled front maker keeps the front. Only assert
-        // this when exactly one maker was touched and it was a plain partial
-        // fill (the taker was exhausted on the first maker): that maker neither
-        // replenished nor moved, so it must still be the front of the queue.
+        // A purely partially-filled front maker keeps the front. Assert this only
+        // for a STANDARD front maker (makers[0], id 1): a partially-consumed
+        // Standard order never replenishes, so it stays at the front. An
+        // iceberg/reserve whose visible tranche is fully drawn correctly
+        // replenishes from hidden and is re-queued at the TAIL (loses time
+        // priority) — that is not a violation, so it is excluded here. The
+        // guard conditions: exactly one maker touched, the taker fully filled
+        // (`is_complete`), and no maker fully consumed (`filled_order_ids` empty)
+        // — i.e. the taker took only part of the front Standard maker.
         if first_touch.len() == 1
-            && !result.is_complete()
-            && result.remaining_quantity().as_u64() == 0
+            && matches!(makers.first().map(|m| &m.order), Some(OrderType::Standard { .. }))
+            && result.is_complete()
             && result.filled_order_ids().is_empty()
             && let Some(front) = level.snapshot_orders().first()
             && let Some(front_id) = front.id().as_u64().or_else(|| seq_from_uuid_id(front.id()))

@@ -149,8 +149,9 @@ pub fn maker_strategy(side: Side) -> impl Strategy<Value = Maker> {
     prop_oneof![3 => standard, 2 => iceberg, 2 => reserve]
 }
 
-/// Strategy over a non-empty book of makers, all on the same generated side and
-/// with distinct sequential ids so a `Cancel` / FIFO test can address them.
+/// Strategy over a book of makers (size taken from the `len` range, so it may be
+/// empty when the range includes 0), all on the same generated side and with
+/// distinct sequential ids so a `Cancel` / FIFO test can address them.
 ///
 /// Ids are assigned `1..=len` after generation (overwriting the strategy's
 /// random id) to guarantee uniqueness within the book without rejection-sampling
@@ -162,7 +163,11 @@ pub fn book_strategy(
         proptest::collection::vec(maker_strategy(side), len.clone()).prop_map(move |mut makers| {
             for (i, maker) in makers.iter_mut().enumerate() {
                 let id = Id::from_u64(i as u64 + 1);
-                maker.order = with_id(&maker.order, id);
+                // Monotonic timestamp in insertion order so price-time priority
+                // is unambiguous (snapshot (timestamp, seq) order == sweep seq
+                // order). Earlier-inserted maker => earlier timestamp.
+                let ts = TimestampMs::new(1_700_000_000_000 + i as u64);
+                maker.order = with_id_and_ts(&maker.order, id, ts);
             }
             (side, makers)
         })
@@ -178,16 +183,23 @@ pub fn taker_tif_strategy() -> impl Strategy<Value = TimeInForce> {
     ]
 }
 
-/// Rebuilds an order with a replaced id, preserving every other field. Used to
-/// stamp unique sequential ids onto a generated book.
-fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
+/// Rebuilds an order with a replaced id AND a replaced timestamp, preserving
+/// every other field. Used to stamp unique sequential ids and
+/// insertion-order-monotonic timestamps onto a generated book.
+///
+/// The monotonic timestamp is essential: price-time priority is only
+/// well-defined when timestamps are monotonic with insertion order, and the
+/// snapshot view is `(timestamp, sequence)`-ordered while the live sweep pops by
+/// sequence. Stamping monotonic timestamps makes the two orderings coincide, so
+/// "the front" is unambiguous for the FIFO properties. (The per-maker random
+/// timestamp from `maker_strategy` is intentionally overwritten here.)
+fn with_id_and_ts(order: &OrderType<()>, new_id: Id, new_ts: TimestampMs) -> OrderType<()> {
     match *order {
         OrderType::Standard {
             price,
             quantity,
             side,
             user_id,
-            timestamp,
             time_in_force,
             ..
         } => OrderType::Standard {
@@ -196,7 +208,7 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             quantity,
             side,
             user_id,
-            timestamp,
+            timestamp: new_ts,
             time_in_force,
             extra_fields: (),
         },
@@ -206,7 +218,6 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             hidden_quantity,
             side,
             user_id,
-            timestamp,
             time_in_force,
             ..
         } => OrderType::IcebergOrder {
@@ -216,7 +227,7 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             hidden_quantity,
             side,
             user_id,
-            timestamp,
+            timestamp: new_ts,
             time_in_force,
             extra_fields: (),
         },
@@ -226,7 +237,6 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             hidden_quantity,
             side,
             user_id,
-            timestamp,
             time_in_force,
             replenish_threshold,
             replenish_amount,
@@ -239,7 +249,7 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             hidden_quantity,
             side,
             user_id,
-            timestamp,
+            timestamp: new_ts,
             time_in_force,
             replenish_threshold,
             replenish_amount,
@@ -247,8 +257,7 @@ fn with_id(order: &OrderType<()>, new_id: Id) -> OrderType<()> {
             extra_fields: (),
         },
         // The maker strategy only emits the three resting shapes above; any
-        // other variant is left untouched (its id is not rewritten). This arm
-        // is unreachable for the generated books. `OrderType<()>` is `Copy`.
+        // other variant is left untouched. Unreachable for generated books.
         other => other,
     }
 }
