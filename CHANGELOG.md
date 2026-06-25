@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-06-25
+
+Patch release: a **performance fix** to `match_order`'s transient allocation. No
+API, behavior, or wire-format change.
+
+### Fixed
+
+- **`PriceLevel::match_order` no longer pre-allocates the `MatchResult` buffers
+  to the whole level depth.** It reserved `trades` / `filled_order_ids` for
+  `order_count()` entries on every match, so a qty-1 taker against a deep level
+  reserved a multi-MB buffer (~176 B × depth) it immediately freed — pure
+  allocator pressure, not a leak. The pre-size is now bounded by
+  `min(incoming_quantity, order_count)`, a tight upper bound on the number of
+  fills (each trade consumes ≥1 unit of the taker). A qty-1 match against a
+  100k-deep level now allocates KB, not MB; large sweeps are unaffected. Matching
+  semantics, FIFO/price-time priority, and trade output are unchanged.
+
 ## [0.8.2] - 2026-06-24
 
 Small, **non-breaking** release exposing two primitives an order book needs to
@@ -70,6 +87,7 @@ improvements across the price level. Highlights:
   loop.
 - Lost-cancel race on the order queue.
 
+[0.8.3]: https://github.com/joaquinbejar/PriceLevel/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/joaquinbejar/PriceLevel/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/joaquinbejar/PriceLevel/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/joaquinbejar/PriceLevel/releases/tag/v0.8.0
