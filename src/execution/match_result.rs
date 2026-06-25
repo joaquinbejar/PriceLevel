@@ -126,9 +126,11 @@ impl MatchResult {
     /// vectors pre-sized for up to `capacity` entries.
     ///
     /// A single match sweep at one price level produces at most one trade and
-    /// at most one filled order id per resting order, so `capacity` is normally
-    /// the level's resting order count. Pre-sizing both vectors removes the
-    /// per-fill reallocations on the match hot path.
+    /// at most one filled order id per resting order it consumes, so a good
+    /// `capacity` is the tighter of the taker's incoming quantity and the
+    /// level's resting order count (see `PriceLevel::match_order`). Pre-sizing
+    /// both vectors removes the per-fill reallocations on the match hot path
+    /// without over-reserving for a small taker against a deep level.
     #[must_use]
     pub fn with_capacity(order_id: Id, initial_quantity: Quantity, capacity: usize) -> Self {
         // Same zero-quantity consistency as `new` (see there).

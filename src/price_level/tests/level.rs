@@ -5198,6 +5198,75 @@ mod tests {
             "match_order consumes exactly matchable_quantity for an iceberg"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Issue #106 — MatchResult pre-alloc is bounded by the fill count,
+    // not the whole level depth.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_match_order_capacity_bounded_by_incoming_quantity() {
+        // A deep level: 200 resting makers.
+        let level = PriceLevel::new(10_000);
+        for id in 1..=200_u64 {
+            level.add_order(create_standard_order(id, 10_000, 100));
+        }
+        assert_eq!(level.order_count(), 200, "level is deep");
+
+        // A qty-1 taker fills exactly one maker. Pre-#106 the result buffers
+        // were reserved to `order_count` (200); now they are bounded by
+        // `min(incoming_quantity, order_count) = 1`.
+        let incoming = 1_u64;
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let result = level.match_order(
+            incoming,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+
+        assert_eq!(result.trades().as_vec().len(), 1, "exactly one fill");
+        assert!(
+            result.trades().as_vec().capacity() <= incoming as usize,
+            "trade buffer must be bounded by incoming quantity ({incoming}), not \
+             level depth (200); was {}",
+            result.trades().as_vec().capacity()
+        );
+    }
+
+    #[test]
+    fn test_match_order_capacity_bounded_by_order_count() {
+        // A shallow level: 3 makers, 300 units of depth.
+        let level = PriceLevel::new(10_000);
+        for id in 1..=3_u64 {
+            level.add_order(create_standard_order(id, 10_000, 100));
+        }
+        assert_eq!(level.order_count(), 3, "level is shallow");
+
+        // A taker far larger than the level: the bound `min(incoming, depth)`
+        // must pick the order count (3), never the huge incoming quantity.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let result = level.match_order(
+            10_000,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+
+        assert_eq!(result.trades().as_vec().len(), 3, "all three makers filled");
+        assert!(
+            result.trades().as_vec().capacity() <= 3,
+            "trade buffer must be bounded by order count (3), not the incoming \
+             quantity (10000); was {}",
+            result.trades().as_vec().capacity()
+        );
+    }
 }
 
 #[cfg(test)]

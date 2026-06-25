@@ -525,12 +525,18 @@ impl PriceLevel {
         }
 
         // A single sweep emits at most one trade and at most one filled-order
-        // id per resting order, so the live order count is an upper bound for
-        // both vectors. Pre-size them to cut per-fill reallocations on the hot
-        // path; the count is advisory (`Relaxed`) so the `Vec` still grows if a
-        // concurrent `add_order` lands mid-sweep — capacity is a hint, not a
-        // bound.
-        let capacity = self.order_count();
+        // id per resting order it actually consumes. Two independent upper
+        // bounds hold: every emitted trade reduces `remaining` by at least one
+        // unit (a `consumed == 0` maker is set aside without a trade), so the
+        // sweep emits at most `incoming_quantity` trades; and it can touch at
+        // most `order_count` resting orders. The tighter of the two pre-sizes
+        // both vectors to cut per-fill reallocations on the hot path WITHOUT
+        // reserving the whole level depth for a tiny taker (issue #106): a qty-1
+        // taker against a deep level no longer reserves a multi-MB buffer it
+        // immediately frees. The bound is advisory — `order_count` is read
+        // `Relaxed` and both `Vec`s still grow if a concurrent `add_order` lands
+        // mid-sweep — so it is a hint, not a cap.
+        let capacity = (incoming_quantity as usize).min(self.order_count());
         let mut result =
             MatchResult::with_capacity(taker_order_id, Quantity::new(incoming_quantity), capacity);
         let mut remaining = incoming_quantity;
