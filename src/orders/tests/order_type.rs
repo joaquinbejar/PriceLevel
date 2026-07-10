@@ -218,7 +218,6 @@ mod tests {
         // Test with IOC time-in-force
         if let OrderType::<()>::Standard {
             ref mut time_in_force,
-            extra_fields: _,
             ..
         } = order
         {
@@ -235,7 +234,6 @@ mod tests {
         // Test with FOK time-in-force
         if let OrderType::<()>::Standard {
             ref mut time_in_force,
-            extra_fields: _,
             ..
         } = order
         {

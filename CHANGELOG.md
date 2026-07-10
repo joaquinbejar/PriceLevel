@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-07-10
+
+Patch release: a **documentation fix** to `TimeInForce::Gtd`'s payload unit. No
+API, behavior, or wire-format change.
+
+### Fixed
+
+- **`TimeInForce::Gtd`'s doc no longer claims the payload is seconds — it is
+  Unix MILLISECONDS since the epoch.** Every other timestamp in this crate is
+  milliseconds (`TimestampMs`, trade timestamps, statistics), this crate's own
+  tests always used 13-digit millisecond epochs for GTD, and `orderbook-rs`
+  compares the payload against `Clock::now_millis`. A caller following the old
+  doc and passing seconds got orders that appeared expired immediately. The
+  contract is now pinned by the `gtd_payload_unit_is_milliseconds` test
+  (found via joaquinbejar/OrderBook-rs#187).
+
 ## [0.8.3] - 2026-06-25
 
 Patch release: a **performance fix** to `match_order`'s transient allocation. No
