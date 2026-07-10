@@ -24,7 +24,16 @@ pub enum TimeInForce {
     #[serde(alias = "fok", alias = "FOK")]
     Fok,
 
-    /// Good 'Til Date - The order remains active until a specified date and time, expressed as a Unix timestamp (seconds since epoch).
+    /// Good 'Til Date - The order remains active until a specified date and
+    /// time, expressed as a Unix timestamp in MILLISECONDS since the epoch.
+    ///
+    /// The payload unit is milliseconds — the same unit as every other
+    /// timestamp in this crate ([`TimestampMs`](crate::TimestampMs), trade
+    /// timestamps, statistics) and the unit `orderbook-rs` compares against
+    /// (`Clock::now_millis`). Earlier docs incorrectly said seconds; passing
+    /// seconds makes the order appear expired immediately against a
+    /// milliseconds clock. Pinned by `gtd_payload_unit_is_milliseconds` in
+    /// the tests.
     #[serde(rename(serialize = "GTD"))]
     #[serde(alias = "gtd", alias = "GTD")]
     Gtd(u64),

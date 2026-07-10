@@ -23,6 +23,24 @@ mod tests {
     }
 
     #[test]
+    fn gtd_payload_unit_is_milliseconds() {
+        // Issue joaquinbejar/OrderBook-rs#187: the Gtd payload is Unix
+        // MILLISECONDS (the doc previously said seconds). Pin the contract:
+        // against a milliseconds "now", a deadline 60s ahead in ms is live
+        // and the same deadline expressed in SECONDS reads as long-expired.
+        let now_ms: u64 = 1_700_000_000_000; // a 13-digit ms epoch
+        let deadline_ms = now_ms + 60_000;
+
+        assert!(!TimeInForce::Gtd(deadline_ms).is_expired(now_ms, None));
+        assert!(TimeInForce::Gtd(deadline_ms).is_expired(deadline_ms, None));
+
+        // A caller who follows the OLD (wrong) doc and passes seconds gets an
+        // instantly-expired order — the exact failure the doc fix prevents.
+        let deadline_secs = deadline_ms / 1000;
+        assert!(TimeInForce::Gtd(deadline_secs).is_expired(now_ms, None));
+    }
+
+    #[test]
     fn test_is_expired_gtd() {
         let expiry_time = 1000;
         let tif = TimeInForce::Gtd(expiry_time);

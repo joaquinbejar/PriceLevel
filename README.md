@@ -47,7 +47,7 @@
  - **Good Till Canceled (GTC)**: Order remains active until explicitly canceled
  - **Immediate Or Cancel (IOC)**: Order must be filled immediately (partially or completely) or canceled
  - **Fill Or Kill (FOK)**: Order must be filled completely immediately or canceled entirely
- - **Good Till Date (GTD)**: Order remains active until a specified date/time
+ - **Good Till Date (GTD)**: Order remains active until a specified date/time (Unix milliseconds)
  - **Day Order**: Order valid only for the current trading day
 
  ## Implementation Details
