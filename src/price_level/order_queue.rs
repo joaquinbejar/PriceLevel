@@ -350,10 +350,11 @@ impl OrderQueue {
     ///
     /// The insertion sequence is used as a deterministic tiebreak so orders
     /// sharing a millisecond timestamp are still ordered exactly as matching
-    /// would consume them. Note the sequence itself is not serialized: a
-    /// snapshot round-trip reconstructs queue order from `(timestamp,
-    /// sequence)`, so exact price-time priority survives a round-trip only when
-    /// timestamps are monotonic with insertion order (the normal case).
+    /// would consume them. This is the timestamp-sorted display / reporting
+    /// view; it is not what a snapshot round-trip uses. Snapshot round-trips
+    /// materialize via `snapshot_by_seq` (ascending insertion sequence), so the
+    /// live queue order — including the "sizing up loses time priority"
+    /// demotion — survives a restore.
     #[must_use]
     pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
         let mut orders: Vec<(u64, Arc<OrderType<()>>)> =
@@ -376,6 +377,11 @@ impl OrderQueue {
     /// order was already removed. Unlike [`OrderQueue::snapshot_vec`] (sorted by
     /// `(timestamp, sequence)`), this reflects pure insertion order, so it equals
     /// the sweep even when timestamps are not monotonic with insertion.
+    ///
+    /// This view also backs [`crate::price_level::PriceLevel::snapshot`]: the
+    /// snapshot round-trip re-enqueues in this consumption order, so exact
+    /// price-time priority — including the "sizing up loses time priority"
+    /// demotion — is preserved across a restore.
     #[must_use]
     pub(crate) fn snapshot_by_seq(&self) -> Vec<Arc<OrderType<()>>> {
         let mut out = Vec::new();

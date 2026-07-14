@@ -54,6 +54,12 @@ impl PriceLevelSnapshot {
     /// The statistics are initialized empty; use [`Self::with_orders_and_stats`]
     /// to carry recorded execution statistics into the snapshot.
     ///
+    /// The `orders` vector order is significant: it is the queue-consumption
+    /// order a restore reproduces, since
+    /// [`crate::price_level::PriceLevel::from_snapshot`] re-enqueues in vector
+    /// order. Pass orders in ascending insertion-sequence (sweep) order to
+    /// preserve price-time priority across a round-trip.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
@@ -120,6 +126,10 @@ impl PriceLevelSnapshot {
     }
 
     /// Returns a reference to the orders in this snapshot.
+    ///
+    /// The vector order is significant: it is the queue-consumption order a
+    /// restore reproduces, since [`crate::price_level::PriceLevel::from_snapshot`]
+    /// re-enqueues the orders in vector order.
     #[must_use]
     pub fn orders(&self) -> &[Arc<OrderType<()>>] {
         &self.orders
