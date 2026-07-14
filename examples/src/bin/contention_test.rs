@@ -103,7 +103,9 @@ fn test_read_write_ratio() {
                                 // Add a new order
                                 let order_id = thread_id as u64 * 10000 + local_counter;
                                 let order = create_standard_order(order_id, 10000, 10);
-                                thread_price_level.add_order(order);
+                                thread_price_level
+                                    .add_order(order)
+                                    .expect("add_order should succeed");
                             }
                             1 => {
                                 // Match order. Takers live in a disjoint high id
@@ -198,7 +200,9 @@ fn setup_orders_for_read_write_test(price_level: &PriceLevel) {
     // Add 500 orders
     for i in 0..500 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 }
 
@@ -226,7 +230,9 @@ fn setup_orders_for_hot_spot_test(price_level: &PriceLevel) {
     // Add 1000 orders (first 20 are hot spot)
     for i in 0..1000 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 }
 
@@ -300,7 +306,9 @@ fn test_hot_spot_contention() {
                         0 => {
                             // Add a new order with same ID (this will likely fail, but creates contention)
                             let order = create_standard_order(order_idx, 10000, 10);
-                            thread_price_level.add_order(order);
+                            thread_price_level
+                                .add_order(order)
+                                .expect("add_order should succeed");
                         }
                         1 => {
                             // Cancel an order

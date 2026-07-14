@@ -34,17 +34,19 @@ fn test_iceberg_order(id_gen: &UuidGenerator) {
     println!("[Iceberg] Visible/hidden quantity tracking...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::IcebergOrder {
-        id: Id::from_u64(1),
-        price: Price::new(10_000),
-        visible_quantity: Quantity::new(10),
-        hidden_quantity: Quantity::new(90),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_000),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::IcebergOrder {
+            id: Id::from_u64(1),
+            price: Price::new(10_000),
+            visible_quantity: Quantity::new(10),
+            hidden_quantity: Quantity::new(90),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_000),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 10, "iceberg visible_qty");
     assert_eq_or_exit(level.hidden_quantity(), 90, "iceberg hidden_qty");
@@ -81,20 +83,22 @@ fn test_reserve_order(id_gen: &UuidGenerator) {
     println!("[Reserve] Auto-replenish behavior...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::ReserveOrder {
-        id: Id::from_u64(2),
-        price: Price::new(10_000),
-        visible_quantity: Quantity::new(10),
-        hidden_quantity: Quantity::new(50),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_001),
-        time_in_force: TimeInForce::Gtc,
-        replenish_threshold: Quantity::new(2),
-        replenish_amount: NonZeroU64::new(10),
-        auto_replenish: true,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::ReserveOrder {
+            id: Id::from_u64(2),
+            price: Price::new(10_000),
+            visible_quantity: Quantity::new(10),
+            hidden_quantity: Quantity::new(50),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_001),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(2),
+            replenish_amount: NonZeroU64::new(10),
+            auto_replenish: true,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 10, "reserve visible_qty");
     assert_eq_or_exit(level.hidden_quantity(), 50, "reserve hidden_qty");
@@ -134,16 +138,18 @@ fn test_post_only_order(id_gen: &UuidGenerator) {
     println!("[PostOnly] Add and match behavior...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::PostOnly {
-        id: Id::from_u64(3),
-        price: Price::new(10_000),
-        quantity: Quantity::new(50),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_002),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::PostOnly {
+            id: Id::from_u64(3),
+            price: Price::new(10_000),
+            quantity: Quantity::new(50),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_002),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 50, "postonly visible_qty");
     assert_eq_or_exit(level.order_count(), 1, "postonly order_count");
@@ -181,18 +187,20 @@ fn test_trailing_stop_order(id_gen: &UuidGenerator) {
     println!("[TrailingStop] Add and match behavior...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::TrailingStop {
-        id: Id::from_u64(4),
-        price: Price::new(10_000),
-        quantity: Quantity::new(30),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_003),
-        time_in_force: TimeInForce::Gtc,
-        trail_amount: Quantity::new(100),
-        last_reference_price: Price::new(10_100),
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::TrailingStop {
+            id: Id::from_u64(4),
+            price: Price::new(10_000),
+            quantity: Quantity::new(30),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_003),
+            time_in_force: TimeInForce::Gtc,
+            trail_amount: Quantity::new(100),
+            last_reference_price: Price::new(10_100),
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 30, "trailing visible_qty");
 
@@ -221,18 +229,20 @@ fn test_pegged_order(id_gen: &UuidGenerator) {
     println!("[Pegged] Add and match behavior...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::PeggedOrder {
-        id: Id::from_u64(5),
-        price: Price::new(10_000),
-        quantity: Quantity::new(25),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_004),
-        time_in_force: TimeInForce::Gtc,
-        reference_price_offset: 50,
-        reference_price_type: PegReferenceType::MidPrice,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::PeggedOrder {
+            id: Id::from_u64(5),
+            price: Price::new(10_000),
+            quantity: Quantity::new(25),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_004),
+            time_in_force: TimeInForce::Gtc,
+            reference_price_offset: 50,
+            reference_price_type: PegReferenceType::MidPrice,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 25, "pegged visible_qty");
 
@@ -261,16 +271,18 @@ fn test_market_to_limit_order(id_gen: &UuidGenerator) {
     println!("[MarketToLimit] Add and match behavior...");
     let level = PriceLevel::new(10_000);
 
-    level.add_order(OrderType::MarketToLimit {
-        id: Id::from_u64(6),
-        price: Price::new(10_000),
-        quantity: Quantity::new(40),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_005),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::MarketToLimit {
+            id: Id::from_u64(6),
+            price: Price::new(10_000),
+            quantity: Quantity::new(40),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_005),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     assert_eq_or_exit(level.visible_quantity(), 40, "m2l visible_qty");
 

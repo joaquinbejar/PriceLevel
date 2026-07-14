@@ -116,16 +116,18 @@ pub fn register_benchmarks(c: &mut Criterion) {
 fn setup_post_only_level(order_count: u64) -> PriceLevel {
     let level = PriceLevel::new(10000);
     for i in 0..order_count {
-        level.add_order(OrderType::PostOnly {
-            id: Id::from_u64(i),
-            price: Price::new(10000),
-            quantity: Quantity::new(10),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::PostOnly {
+                id: Id::from_u64(i),
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
     level
 }
@@ -134,18 +136,20 @@ fn setup_post_only_level(order_count: u64) -> PriceLevel {
 fn setup_trailing_stop_level(order_count: u64) -> PriceLevel {
     let level = PriceLevel::new(10000);
     for i in 0..order_count {
-        level.add_order(OrderType::TrailingStop {
-            id: Id::from_u64(i),
-            price: Price::new(10000),
-            quantity: Quantity::new(10),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            trail_amount: Quantity::new(100),
-            last_reference_price: Price::new(10100),
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::TrailingStop {
+                id: Id::from_u64(i),
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                trail_amount: Quantity::new(100),
+                last_reference_price: Price::new(10100),
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
     level
 }
@@ -154,18 +158,20 @@ fn setup_trailing_stop_level(order_count: u64) -> PriceLevel {
 fn setup_pegged_level(order_count: u64) -> PriceLevel {
     let level = PriceLevel::new(10000);
     for i in 0..order_count {
-        level.add_order(OrderType::PeggedOrder {
-            id: Id::from_u64(i),
-            price: Price::new(10000),
-            quantity: Quantity::new(10),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            reference_price_offset: -50,
-            reference_price_type: PegReferenceType::BestAsk,
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::PeggedOrder {
+                id: Id::from_u64(i),
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                reference_price_offset: -50,
+                reference_price_type: PegReferenceType::BestAsk,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
     level
 }
@@ -174,16 +180,18 @@ fn setup_pegged_level(order_count: u64) -> PriceLevel {
 fn setup_market_to_limit_level(order_count: u64) -> PriceLevel {
     let level = PriceLevel::new(10000);
     for i in 0..order_count {
-        level.add_order(OrderType::MarketToLimit {
-            id: Id::from_u64(i),
-            price: Price::new(10000),
-            quantity: Quantity::new(10),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::MarketToLimit {
+                id: Id::from_u64(i),
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
     level
 }
@@ -238,7 +246,7 @@ fn setup_all_special_mixed(order_count: u64) -> PriceLevel {
                 extra_fields: (),
             },
         };
-        level.add_order(order);
+        level.add_order(order).expect("add_order should succeed");
     }
     level
 }

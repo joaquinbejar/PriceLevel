@@ -660,6 +660,19 @@ impl<T: Clone> OrderType<T> {
     /// - Optionally, an updated version of this order (if partially filled)
     /// - The quantity that was reduced from hidden portion (for iceberg/reserve orders)
     /// - The remaining quantity of the incoming order
+    ///
+    /// # Overflow
+    ///
+    /// The only quantity *addition* on any match path is a reserve order's
+    /// partial-fill replenishment (`new_visible + replenish_qty`). If that sum
+    /// would overflow `u64` — reachable only for a pathological reserve whose
+    /// visible + hidden already exceeds `u64::MAX` — this returns the
+    /// no-progress sentinel `(0, Some(self.clone()), 0, incoming_quantity)`
+    /// instead of panicking or wrapping. The caller's sweep (and the
+    /// fill-or-kill dry run) already treat that sentinel as "set this maker
+    /// aside", so the step fails atomically: no trade, maker and taker
+    /// unchanged. Every other path uses only subtraction / `min`, which cannot
+    /// overflow.
     #[must_use]
     pub fn match_against(&self, incoming_quantity: u64) -> (u64, Option<Self>, u64, u64) {
         match self {
@@ -853,7 +866,27 @@ impl<T: Clone> OrderType<T> {
                         && hidden_quantity.as_u64() > 0
                         && *auto_replenish
                     {
-                        // Restore from the hidden quantity
+                        // Refreshed visible is `new_visible + replenish_qty`.
+                        // This sum is provably `<= u64::MAX` for any order the
+                        // level admits: `new_visible <= visible_quantity`,
+                        // `replenish_qty` is capped by `.min(hidden_quantity)`
+                        // above, and `PriceLevel::add_order` /
+                        // `PriceLevelSnapshot::refresh_aggregates` reject any
+                        // order whose own `visible + hidden` overflows `u64`,
+                        // so `new_visible + replenish_qty <= visible + hidden
+                        // <= u64::MAX`. The `checked_add` is therefore kept as
+                        // defense-in-depth against an unadmitted / internally
+                        // constructed order (e.g. a direct `match_against` unit
+                        // test): on the unreachable overflow it makes NO progress
+                        // — the maker is handed back unchanged with
+                        // `consumed == 0` and `remaining` untouched, the
+                        // no-progress sentinel both the real sweep and the
+                        // fill-or-kill dry run detect and set aside — never a
+                        // partial or a manufactured (wrapped) fill.
+                        let Some(refreshed_visible) = new_visible.checked_add(replenish_qty) else {
+                            return (0, Some(self.clone()), 0, incoming_quantity);
+                        };
+                        // Restore from the hidden quantity.
                         let new_hidden = hidden_quantity.as_u64() - replenish_qty;
 
                         (
@@ -861,7 +894,7 @@ impl<T: Clone> OrderType<T> {
                             Some(Self::ReserveOrder {
                                 id: *id,
                                 price: *price,
-                                visible_quantity: Quantity::new(new_visible + replenish_qty),
+                                visible_quantity: Quantity::new(refreshed_visible),
                                 hidden_quantity: Quantity::new(new_hidden),
                                 side: *side,
                                 user_id: *user_id,

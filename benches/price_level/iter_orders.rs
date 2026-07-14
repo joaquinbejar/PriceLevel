@@ -63,7 +63,9 @@ fn setup_level(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
     price_level
 }

@@ -47,8 +47,10 @@ impl PriceLevel {
     ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if recomputing the snapshot
-    /// aggregates overflows `u64`.
+    /// Returns [`PriceLevelError::InvalidOperation`] if any restored order's own
+    /// visible + hidden total overflows `u64`, or if recomputing the snapshot's
+    /// level aggregates overflows `u64` — the same per-order and per-level
+    /// invariants [`Self::add_order`] enforces at admission.
     pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
@@ -195,38 +197,115 @@ impl PriceLevel {
         self.stats.clone()
     }
 
-    /// Add an order to this price level
-    pub fn add_order(&self, order: OrderType<()>) -> Arc<OrderType<()>> {
-        // Calculate quantities
+    /// Add an order to this price level.
+    ///
+    /// Reserves the order's visible / hidden quantity and one count slot on the
+    /// atomic counters **before** publishing it to the queue, so an admission
+    /// that would overflow any counter is rejected with nothing mutated: the
+    /// queue, the counters, the statistics, and therefore any snapshot are left
+    /// exactly as they were. On success the returned `Arc` is the admitted
+    /// order.
+    ///
+    /// # Overflow safety
+    ///
+    /// Each counter is bumped with a checked [`AtomicU64::fetch_update`] /
+    /// [`AtomicUsize::fetch_update`] (`checked_add`), which is an atomic
+    /// compare-exchange loop and therefore free of the check-then-`fetch_add`
+    /// TOCTOU race two concurrent admissions near `u64::MAX` would otherwise
+    /// hit. Capacity is reserved in the order visible → hidden → count; if a
+    /// later reservation overflows, the earlier ones are rolled back (by the
+    /// exact delta this call added — a commutative, concurrency-safe undo on
+    /// these advisory counters) before returning, so no counter is ever left
+    /// drifted. Only once all three are reserved is the order published to the
+    /// queue, so the queue can never hold an order whose admission overflowed a
+    /// counter — the invariant this method now upholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the order's own
+    /// visible + hidden total overflows `u64`, or if admitting it would
+    /// overflow the level's visible-quantity, hidden-quantity, or order-count
+    /// counter. In every case the level is unchanged.
+    pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
+        // Calculate quantities.
         let visible_qty = order.visible_quantity().as_u64();
         let hidden_qty = order.hidden_quantity().as_u64();
 
-        // On this path, publish to the queue FIRST, then bump the counters, so a
-        // concurrent reader of this add tends to see the order resting before it
-        // is counted rather than the reverse. This is a local ordering choice,
-        // not a cross-method guarantee (other paths, e.g. iceberg replenishment
-        // in `match_order`, adjust counters before pushing). The bare counters
-        // are advisory under concurrency; `snapshot()` is the mutually-consistent
-        // view (see `visible_quantity`).
+        // Reject an order whose OWN visible + hidden total is not representable
+        // in `u64`, before touching any counter. The level tracks visible and
+        // hidden in two independent `u64` counters, so an order with, say,
+        // visible `u64::MAX` and hidden `u64::MAX` would clear the per-counter
+        // reservations below yet leave the level holding an order whose total
+        // quantity overflows. Worse, the match sweep's reserve replenishment
+        // computes `new_visible + drawn_hidden` (see `OrderType::match_against`),
+        // where `drawn_hidden` is capped by the order's hidden tranche; that sum
+        // is `<= visible + hidden`, so it can only overflow `u64` when the
+        // order's own total already does. Enforcing the invariant here makes that
+        // replenish add provably overflow-free for every admitted order.
+        if visible_qty.checked_add(hidden_qty).is_none() {
+            return Err(PriceLevelError::InvalidOperation {
+                message: "order total quantity overflows u64".to_string(),
+            });
+        }
+
+        // Reserve capacity on each counter BEFORE publishing, using a checked
+        // `fetch_update` (an atomic CAS loop). `Relaxed` on both the success and
+        // failure orderings: these are the advisory counters (issue #68); the
+        // queue publication below carries the real happens-before for a
+        // concurrent reader, so the counters are not a synchronization channel.
+        if self
+            .visible_quantity
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_add(visible_qty)
+            })
+            .is_err()
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level visible quantity overflow on admission".to_string(),
+            });
+        }
+
+        if self
+            .hidden_quantity
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_add(hidden_qty)
+            })
+            .is_err()
+        {
+            // Roll back the visible reservation this call made.
+            self.visible_quantity
+                .fetch_sub(visible_qty, Ordering::Relaxed);
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level hidden quantity overflow on admission".to_string(),
+            });
+        }
+
+        if self
+            .order_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .is_err()
+        {
+            // Roll back the visible + hidden reservations this call made.
+            self.visible_quantity
+                .fetch_sub(visible_qty, Ordering::Relaxed);
+            self.hidden_quantity
+                .fetch_sub(hidden_qty, Ordering::Relaxed);
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level order count overflow on admission".to_string(),
+            });
+        }
+
+        // All capacity reserved; publish the order to the queue. A concurrent
+        // reader can briefly see the reserved count before the order rests
+        // (the advisory-counter window), but never the reverse overflow the
+        // reservation just ruled out.
         let order_arc = Arc::new(order);
         self.orders.push(order_arc.clone());
 
-        // Update atomic counters. `Relaxed` on all three: these are the
-        // advisory counters (issue #68). The queue publication above (the
-        // `push` into `OrderQueue`'s `SkipMap` / `DashMap`) carries the actual
-        // happens-before for a concurrent reader; the counters are not a
-        // synchronization channel, so a release here would publish nothing a
-        // reader relies on. The RMWs only need to be atomic, not ordered.
-        self.visible_quantity
-            .fetch_add(visible_qty, Ordering::Relaxed);
-        self.hidden_quantity
-            .fetch_add(hidden_qty, Ordering::Relaxed);
-        self.order_count.fetch_add(1, Ordering::Relaxed);
-
-        // Update statistics
+        // Update statistics only after a committed admission.
         self.stats.record_order_added();
 
-        order_arc
+        Ok(order_arc)
     }
 
     /// Creates a non-allocating iterator over current orders in this level.
@@ -584,14 +663,28 @@ impl PriceLevel {
             new_remaining: u64,
         }
 
-        // Either the maker progressed (carrying `StepData`) or it was parked by
-        // the no-progress guard (`SetAside`). The parked variant threads the
-        // maker's id and insertion seq OUT of the locked decision closure so the
-        // no-progress `warn!` can name the parked maker without logging inside
-        // the per-entry lock.
+        // Either the maker progressed (carrying `StepData`), was parked by the
+        // no-progress guard (`SetAside`), or forced the sweep to abort because
+        // committing its replenishment would overflow the level's visible
+        // counter (`Abort`). The parked / abort variants thread the maker's id
+        // (and, for `SetAside`, its insertion seq) OUT of the locked decision
+        // closure so the `warn!` / `error!` can name the maker without logging
+        // inside the per-entry lock.
         enum StepResult {
             Progressed(StepData),
-            SetAside { maker_id: Id, seq: u64 },
+            SetAside {
+                maker_id: Id,
+                seq: u64,
+            },
+            /// The FIFO-front maker would replenish, but moving the drawn hidden
+            /// tranche into the level's visible counter would take it past
+            /// `u64::MAX` — a depth the level cannot represent. The maker is left
+            /// byte-identical (the queue action is `SetAside`, a pure no-op that
+            /// mutates nothing) and the sweep terminates immediately, so no
+            /// younger maker trades past this front and no counter wraps.
+            Abort {
+                maker_id: Id,
+            },
         }
 
         while remaining > 0 {
@@ -658,6 +751,35 @@ impl PriceLevel {
                     None => FrontAction::Remove,
                     Some(updated) => {
                         if hidden_reduced > 0 {
+                            // Replenishment: a fresh tranche moves from hidden
+                            // into visible, so the level's visible counter takes
+                            // the net delta `hidden_reduced - consumed` (the
+                            // `fetch_sub(consumed)` + `fetch_add(hidden_reduced)`
+                            // applied after this closure returns). Even when every
+                            // resting order's own total fits `u64`, the level's
+                            // visible SUM can exceed `u64::MAX` once hidden depth
+                            // is converted to visible — a state the counter (and
+                            // the true queue visible sum) cannot represent.
+                            //
+                            // Pre-validate that net delta against the LIVE visible
+                            // counter with checked arithmetic BEFORE committing:
+                            // read the counter (the same reserve-before-commit
+                            // pattern used under the entry lock), and if
+                            // `current - consumed + hidden_reduced` would not fit
+                            // `u64`, ABORT. The abort leaves the maker
+                            // byte-identical (`SetAside` mutates nothing), emits
+                            // no trade, and terminates the sweep, so no younger
+                            // maker trades past this FIFO front and the counter
+                            // never wraps. The stuck depth is unreachable until a
+                            // cancel / downsize frees headroom.
+                            let current_visible = self.visible_quantity.load(Ordering::Relaxed);
+                            let fits = current_visible
+                                .checked_sub(consumed)
+                                .and_then(|v| v.checked_add(hidden_reduced))
+                                .is_some();
+                            if !fits {
+                                return (FrontAction::SetAside, StepResult::Abort { maker_id });
+                            }
                             // Replenishment: refreshed tranche loses priority.
                             FrontAction::ReplaceAtTail(Arc::new(updated))
                         } else {
@@ -687,6 +809,25 @@ impl PriceLevel {
                                 "match sweep: front maker made no progress; set aside to avoid re-pop"
                             );
                             continue;
+                        }
+                        StepResult::Abort { maker_id } => {
+                            // The FIFO-front maker's replenishment would overflow
+                            // the level's visible counter. The queue committed a
+                            // no-op (`SetAside`), so the maker rests unchanged and
+                            // no counter moved. Terminate the sweep here WITHOUT
+                            // decrementing `remaining`: no trade is emitted for
+                            // this maker, and stopping (rather than advancing to a
+                            // younger maker) preserves strict FIFO — liquidity
+                            // behind this front stays unreachable until a cancel /
+                            // downsize frees enough headroom to represent the
+                            // replenished depth.
+                            tracing::error!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                "match sweep aborted: replenishment would overflow the level visible counter; front maker left intact, sweep terminated"
+                            );
+                            break;
                         }
                         StepResult::Progressed(data) => data,
                     };
@@ -897,8 +1038,10 @@ impl PriceLevel {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if an
     /// [`OrderUpdate::UpdatePrice`] / [`OrderUpdate::Replace`] would not move
-    /// the order to a different price level, or if computing an order's total
-    /// quantity overflows `u64`.
+    /// the order to a different price level, if computing an order's total
+    /// quantity overflows `u64`, or if applying a quantity update's counter
+    /// delta would take the level's visible- or hidden-quantity counter past
+    /// `u64::MAX` (rejected with the queue and counters untouched).
     #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,
@@ -976,6 +1119,37 @@ impl PriceLevel {
                         message: "order total quantity overflow".to_string(),
                     }
                 })?;
+
+                // Pre-validate the LEVEL counter deltas before mutating the
+                // queue: an upsize (or a visible/hidden reshuffle) whose delta
+                // would take a level counter past `u64::MAX` must be rejected
+                // with the queue and counters untouched, never committed and then
+                // wrapped by the raw `fetch_add` below. Project each counter from
+                // its live value using the pre-read order's components as `old`;
+                // if either projection does not fit `u64`, reject.
+                //
+                // This uses the pre-read `order` (not the value the queue mutation
+                // will actually replace), so a concurrent update of the same id
+                // could make the projection stale (TOCTOU) — strictly better than
+                // the unchecked wrap it replaces, and #115 closes the window
+                // exactly by reserving under the entry lock.
+                let old_visible_pre = order.visible_quantity().as_u64();
+                let old_hidden_pre = order.hidden_quantity().as_u64();
+                let projects = |counter: &AtomicU64, old: u64, new: u64| -> bool {
+                    let cur = counter.load(Ordering::Relaxed);
+                    if new >= old {
+                        cur.checked_add(new - old).is_some()
+                    } else {
+                        cur.checked_sub(old - new).is_some()
+                    }
+                };
+                if !projects(&self.visible_quantity, old_visible_pre, new_visible)
+                    || !projects(&self.hidden_quantity, old_hidden_pre, new_hidden)
+                {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: "price level quantity counter overflow on update".to_string(),
+                    });
+                }
 
                 let new_order_arc = Arc::new(new_order);
 
@@ -1192,9 +1366,10 @@ impl TryFrom<PriceLevelData> for PriceLevel {
     fn try_from(data: PriceLevelData) -> Result<Self, Self::Error> {
         let price_level = PriceLevel::new(data.price);
 
-        // Add orders to the price level
+        // Add orders to the price level. Propagate an admission overflow rather
+        // than panicking while reconstructing from external data.
         for order in data.orders {
-            price_level.add_order(order);
+            price_level.add_order(order)?;
         }
 
         Ok(price_level)
@@ -1281,7 +1456,7 @@ impl FromStr for PriceLevel {
                                 message: format!("Order parse error: {e}"),
                             }
                         })?;
-                        price_level.add_order(order);
+                        price_level.add_order(order)?;
                         last_split = i + 1;
                     }
                     _ => {}
@@ -1295,7 +1470,7 @@ impl FromStr for PriceLevel {
                         message: format!("Order parse error: {e}"),
                     }
                 })?;
-                price_level.add_order(order);
+                price_level.add_order(order)?;
             }
         }
 

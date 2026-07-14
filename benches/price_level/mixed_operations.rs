@@ -25,7 +25,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     7..=8 => create_iceberg_order(i, 10000, 5, 15),
                     _ => create_reserve_order(i, 10000, 5, 15, 2, true, None),
                 };
-                price_level.add_order(order);
+                price_level
+                    .add_order(order)
+                    .expect("add_order should succeed");
             }
 
             // Phase 2: Execute some matches
@@ -61,7 +63,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     7..=8 => create_iceberg_order(i, 10000, 5, 15),
                     _ => create_reserve_order(i, 10000, 5, 15, 2, true, None),
                 };
-                price_level.add_order(order);
+                price_level
+                    .add_order(order)
+                    .expect("add_order should succeed");
             }
 
             // Phase 5: Execute final matches
@@ -88,7 +92,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             // Add initial orders
             for i in 0..200 {
                 let order = create_standard_order(i, 10000, 5);
-                price_level.add_order(order);
+                price_level
+                    .add_order(order)
+                    .expect("add_order should succeed");
             }
 
             // Execute many small matches interspersed with new orders and cancellations
@@ -105,7 +111,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
                 // Add a new order
                 let order = create_standard_order(200 + i, 10000, 5);
-                price_level.add_order(order);
+                price_level
+                    .add_order(order)
+                    .expect("add_order should succeed");
 
                 // Cancel an order
                 if i % 10 == 0 {
@@ -127,7 +135,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             // Add a large number of small orders
             for i in 0..500 {
                 let order = create_standard_order(i, 10000, 2);
-                price_level.add_order(order);
+                price_level
+                    .add_order(order)
+                    .expect("add_order should succeed");
             }
 
             // Execute a few large matches
@@ -240,7 +250,9 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
             1 => create_iceberg_order(i, 10000, 5, 15),
             _ => create_reserve_order(i, 10000, 5, 15, 2, true, None),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level

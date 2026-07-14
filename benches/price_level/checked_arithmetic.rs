@@ -133,16 +133,18 @@ pub fn register_benchmarks(c: &mut Criterion) {
 fn setup_standard_level(order_count: u64) -> PriceLevel {
     let level = PriceLevel::new(10000);
     for i in 0..order_count {
-        level.add_order(OrderType::Standard {
-            id: Id::from_u64(i),
-            price: Price::new(10000),
-            quantity: Quantity::new(10),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(i),
+                price: Price::new(10000),
+                quantity: Quantity::new(10),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
     level
 }
@@ -188,7 +190,7 @@ fn setup_mixed_level(order_count: u64) -> PriceLevel {
                 extra_fields: (),
             },
         };
-        level.add_order(order);
+        level.add_order(order).expect("add_order should succeed");
     }
     level
 }

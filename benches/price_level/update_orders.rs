@@ -119,7 +119,9 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level
@@ -141,7 +143,9 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level

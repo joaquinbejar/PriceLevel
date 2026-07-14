@@ -20,7 +20,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Phase 1: Add 100 orders
             for i in 0..100_u64 {
-                level.add_order(create_standard_order(i, 10000, 50));
+                level
+                    .add_order(create_standard_order(i, 10000, 50))
+                    .expect("add_order should succeed");
             }
 
             // Phase 2: Update quantity on 20 orders
@@ -76,7 +78,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     ));
                 } else {
                     // Add order
-                    level.add_order(create_standard_order(i, 10000, 20));
+                    level
+                        .add_order(create_standard_order(i, 10000, 20))
+                        .expect("add_order should succeed");
                 }
             }
             black_box(level.order_count());
@@ -90,7 +94,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Add 200 orders
             for i in 0..200_u64 {
-                level.add_order(create_standard_order(i, 10000, 10));
+                level
+                    .add_order(create_standard_order(i, 10000, 10))
+                    .expect("add_order should succeed");
             }
 
             // Cancel 150 of them
@@ -112,7 +118,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Add 100 orders with quantity 10 each = 1000 total
             for i in 0..100_u64 {
-                level.add_order(create_standard_order(i, 10000, 10));
+                level
+                    .add_order(create_standard_order(i, 10000, 10))
+                    .expect("add_order should succeed");
             }
 
             // Drain completely
@@ -136,7 +144,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Add 100 orders
             for i in 0..100_u64 {
-                level.add_order(create_standard_order(i, 10000, 50));
+                level
+                    .add_order(create_standard_order(i, 10000, 50))
+                    .expect("add_order should succeed");
             }
 
             // Replace 50 orders (same price = quantity update)
@@ -169,7 +179,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let level = PriceLevel::new(10000);
 
             for i in 0..100_u64 {
-                level.add_order(create_standard_order(i, 10000, 20));
+                level
+                    .add_order(create_standard_order(i, 10000, 20))
+                    .expect("add_order should succeed");
 
                 // Query stats every 10 adds
                 if i % 10 == 0 {

@@ -490,6 +490,21 @@
 //! checksum over an unchanged payload still validates. Existing snapshot JSON
 //! restores without migration.
 //!
+//! ## Migration Guide (`PriceLevel::add_order` is now checked — breaking)
+//!
+//! [`PriceLevel::add_order`] now returns
+//! `Result<Arc<OrderType<()>>, PriceLevelError>` instead of
+//! `Arc<OrderType<()>>`. It reserves the order's visible / hidden quantity and
+//! its count slot on the level's atomic counters (with checked `fetch_update`)
+//! **before** publishing the order to the queue, and returns
+//! [`PriceLevelError::InvalidOperation`] if any counter would overflow `u64` —
+//! leaving the level completely unchanged rather than wrapping a counter while
+//! the queue already holds the admitted order. Callers must handle the
+//! `Result` — propagate with `level.add_order(order)?` (test fixtures and
+//! binaries may prefer `.expect(...)`); the returned `Arc` is unchanged on
+//! success. Admissions that stay within `u64` (all normal use) behave exactly
+//! as before.
+//!
 
 mod orders;
 mod price_level;

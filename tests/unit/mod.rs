@@ -36,8 +36,12 @@ fn partial_fill_keeps_price_time_priority_across_calls() {
     let trade_ids = UuidGenerator::new(namespace);
 
     // A (id=1) rests before B (id=2); both 100 @ 10_000.
-    level.add_order(standard_buy(1, 10_000, 100, 1_000));
-    level.add_order(standard_buy(2, 10_000, 100, 1_001));
+    level
+        .add_order(standard_buy(1, 10_000, 100, 1_000))
+        .expect("add_order should succeed");
+    level
+        .add_order(standard_buy(2, 10_000, 100, 1_001))
+        .expect("add_order should succeed");
 
     // Partially fill A.
     let first = level.match_order(

@@ -26,7 +26,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                             // Each thread adds orders with unique IDs
                             let base_id = thread_id as u64 * 1_000_000 + iteration;
                             let order = create_standard_order(base_id, 10000, 100);
-                            price_level.add_order(order);
+                            price_level
+                                .add_order(order)
+                                .expect("add_order should succeed");
                         },
                     )
                 });
@@ -51,7 +53,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
                                 3 => create_reserve_order(base_id, 10000, 50, 150, 10, true, None),
                                 _ => create_pegged_order(base_id, 10000, 100),
                             };
-                            price_level.add_order(order);
+                            price_level
+                                .add_order(order)
+                                .expect("add_order should succeed");
                         },
                     )
                 });
@@ -231,7 +235,9 @@ where
         for i in 0..100 {
             let order_id = thread_id as u64 * 100 + i;
             let order = create_standard_order(order_id, 10000, 10);
-            initial_price_level.add_order(order);
+            initial_price_level
+                .add_order(order)
+                .expect("add_order should succeed");
         }
     }
 
@@ -288,7 +294,9 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
     // Pre-populate with some orders
     for i in 0..200 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     let mut handles = Vec::with_capacity(thread_count);
@@ -309,7 +317,9 @@ fn measure_concurrent_mixed_operations(thread_count: usize, iterations: u64) -> 
                         // Add a new order
                         let base_id = thread_id as u64 * 1_000_000 + i;
                         let order = create_standard_order(base_id, 10000, 10);
-                        thread_price_level.add_order(order);
+                        thread_price_level
+                            .add_order(order)
+                            .expect("add_order should succeed");
                     }
                     1 => {
                         // Match against existing orders
@@ -462,7 +472,9 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level

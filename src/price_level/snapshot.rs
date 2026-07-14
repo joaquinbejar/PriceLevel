@@ -215,8 +215,9 @@ impl PriceLevelSnapshot {
     ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if summing the per-order
-    /// visible or hidden quantities overflows `u64`.
+    /// Returns [`PriceLevelError::InvalidOperation`] if any single order's own
+    /// visible + hidden total overflows `u64`, or if summing the per-order
+    /// visible or hidden quantities across the level overflows `u64`.
     pub fn refresh_aggregates(&mut self) -> Result<(), PriceLevelError> {
         self.order_count = self.orders.len();
 
@@ -224,6 +225,22 @@ impl PriceLevelSnapshot {
         let mut hidden_total: u64 = 0;
 
         for order in &self.orders {
+            // Reject any order whose OWN visible + hidden total is not
+            // representable in `u64`. `PriceLevel::add_order` enforces this same
+            // per-order invariant at admission, and the match sweep's reserve
+            // replenishment relies on it (a refreshed tranche is
+            // `new_visible + drawn_hidden <= visible + hidden`, which overflows
+            // only if the order's own total already does). Restoring such an
+            // order would smuggle in a state admission rejects, so the restore
+            // path validates it too rather than trusting the serialized bytes.
+            order
+                .visible_quantity()
+                .as_u64()
+                .checked_add(order.hidden_quantity().as_u64())
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "order total quantity overflows u64".to_string(),
+                })?;
+
             visible_total = visible_total
                 .checked_add(order.visible_quantity().as_u64())
                 .ok_or_else(|| PriceLevelError::InvalidOperation {
