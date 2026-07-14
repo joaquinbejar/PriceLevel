@@ -4,7 +4,7 @@ use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
-use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue};
+use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
@@ -1088,6 +1088,11 @@ impl PriceLevel {
             hidden_stranded: u64,
             /// The taker's remaining quantity after this maker is matched.
             new_remaining: u64,
+            /// `true` when this step's level-counter deltas were already applied
+            /// INSIDE the locked decision closure (the replenish path, issue
+            /// #128). The post-lock body then skips re-applying them so the
+            /// counters move exactly once.
+            counters_committed: bool,
         }
 
         // Either the maker progressed (carrying `StepData`), was parked
@@ -1195,58 +1200,70 @@ impl PriceLevel {
                     0
                 };
 
-                let data = StepData {
-                    consumed,
-                    hidden_reduced,
-                    fully_consumed: updated_order.is_none(),
-                    maker_id,
-                    maker_side,
-                    maker_price,
-                    maker_timestamp,
-                    hidden_stranded,
-                    new_remaining,
-                };
+                let fully_consumed = updated_order.is_none();
 
+                // Compute the action. For a replenishment, PUBLISH this step's
+                // level-counter transition HERE — under the maker's entry lock,
+                // before returning the action (issue #128) — so a concurrent
+                // `UpdateQuantity` that next locks this same entry observes the
+                // level counters already consistent with the replenished queue.
+                // Applying it only after the entry released would leave the
+                // counter transiently BELOW the queue's visible sum, and the
+                // update's `old -> new` decrease could then underflow (`0 - 100`
+                // wrap). `counters_committed` tells the post-lock body to skip
+                // re-applying this step's deltas so the counters move exactly once.
+                let mut counters_committed = false;
                 let action = match updated_order {
                     None => FrontAction::Remove,
                     Some(updated) => {
                         if hidden_reduced > 0 {
-                            // Replenishment: a fresh tranche moves from hidden
-                            // into visible, so the level's visible counter takes
-                            // the net delta `hidden_reduced - consumed` (the
-                            // `fetch_sub(consumed)` + `fetch_add(hidden_reduced)`
-                            // applied after this closure returns). Even when every
-                            // resting order's own total fits `u64`, the level's
-                            // visible SUM can exceed `u64::MAX` once hidden depth
-                            // is converted to visible — a state the counter (and
-                            // the true queue visible sum) cannot represent.
-                            //
-                            // Pre-validate that net delta against the LIVE visible
-                            // counter with checked arithmetic BEFORE committing:
-                            // read the counter (the same reserve-before-commit
-                            // pattern used under the entry lock), and if
-                            // `current - consumed + hidden_reduced` would not fit
-                            // `u64`, ABORT. The abort leaves the maker
-                            // byte-identical (`SetAside` mutates nothing), emits
-                            // no trade, and terminates the sweep, so no younger
-                            // maker trades past this FIFO front and the counter
-                            // never wraps. The stuck depth is unreachable until a
-                            // cancel / downsize frees headroom.
-                            let current_visible = self.visible_quantity.load(Ordering::Relaxed);
-                            let fits = current_visible
-                                .checked_sub(consumed)
-                                .and_then(|v| v.checked_add(hidden_reduced))
-                                .is_some();
-                            if !fits {
+                            // Replenishment: a fresh tranche moves hidden ->
+                            // visible. Apply the visible NET delta
+                            // (`- consumed + hidden_reduced`) as ONE checked RMW
+                            // plus the hidden decrement, atomically visible before
+                            // the entry lock releases. The checked `fetch_update`
+                            // supersedes the old load-only `fits` pre-check: even
+                            // when every resting order's own total fits `u64`, the
+                            // level's visible SUM can exceed `u64::MAX` once hidden
+                            // depth converts to visible, so a net delta that would
+                            // overflow ABORTS the step (`SetAside` mutates nothing,
+                            // emits no trade, ends the sweep) — no younger maker
+                            // trades past this FIFO front and the counter never
+                            // wraps. The stuck depth is unreachable until a cancel
+                            // / downsize frees headroom.
+                            let net_ok = self
+                                .visible_quantity
+                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                                    c.checked_sub(consumed)
+                                        .and_then(|v| v.checked_add(hidden_reduced))
+                                })
+                                .is_ok();
+                            if !net_ok {
                                 return (FrontAction::SetAside, StepResult::Abort { maker_id });
                             }
-                            // Replenishment: refreshed tranche loses priority.
+                            self.hidden_quantity
+                                .fetch_sub(hidden_reduced, Ordering::Relaxed);
+                            counters_committed = true;
+                            // Refreshed tranche loses priority.
                             FrontAction::ReplaceAtTail(Arc::new(updated))
                         } else {
                             // Pure partial fill: keep priority in place.
                             FrontAction::KeepInPlace(Arc::new(updated))
                         }
                     }
+                };
+
+                let data = StepData {
+                    consumed,
+                    hidden_reduced,
+                    fully_consumed,
+                    maker_id,
+                    maker_side,
+                    maker_price,
+                    maker_timestamp,
+                    hidden_stranded,
+                    new_remaining,
+                    counters_committed,
                 };
 
                 (action, StepResult::Progressed(data))
@@ -1314,8 +1331,13 @@ impl PriceLevel {
                         // not this RMW. The delta is keyed off the committed
                         // action so it never double-counts with a concurrent
                         // cancel (which decrements only the residual it removes).
-                        self.visible_quantity
-                            .fetch_sub(data.consumed, Ordering::Relaxed);
+                        // Skipped for a replenish step: its visible net delta
+                        // (already including `- consumed`) was applied under the
+                        // entry lock in the decision closure (issue #128).
+                        if !data.counters_committed {
+                            self.visible_quantity
+                                .fetch_sub(data.consumed, Ordering::Relaxed);
+                        }
 
                         let trade_id = Id::from_uuid(trade_id_generator.next());
 
@@ -1364,10 +1386,14 @@ impl PriceLevel {
                             self.hidden_quantity
                                 .fetch_sub(data.hidden_stranded, Ordering::Relaxed);
                         }
-                    } else if data.hidden_reduced > 0 {
+                    } else if data.hidden_reduced > 0 && !data.counters_committed {
                         // Replenishment: a fresh tranche moved from hidden into
                         // visible. The maker stayed resident (re-sequenced in
                         // place by `match_front`), so only the counters move.
+                        // As of issue #128 the replenish path commits this
+                        // transition under the entry lock (`counters_committed`),
+                        // so this post-lock branch is now unreachable for it and
+                        // kept only as a defensive no-op.
                         self.hidden_quantity
                             .fetch_sub(data.hidden_reduced, Ordering::Relaxed);
                         self.visible_quantity
@@ -1532,14 +1558,27 @@ impl PriceLevel {
     /// visible tranche and keep hidden), so the branch reflects the real size
     /// change rather than a silent no-op.
     ///
+    /// # Applied to the live maker (issue #115)
+    ///
+    /// The resize, the priority decision, and the level-counter update are all
+    /// derived from the order **currently resident in the queue**, computed and
+    /// committed together under a single per-entry lock — never from a pre-read.
+    /// A concurrent match or replenishment that commits first is therefore fully
+    /// reflected: an update applies `new_quantity` to the *live* visible tranche
+    /// and preserves the *live* hidden depth, so it can never resurrect executed
+    /// or cancelled quantity, and the increase-vs-decrease policy is chosen from
+    /// the live total (never stale). The level counters are validated with
+    /// checked math before the queue mutates, so an update that would overflow a
+    /// level counter is rejected with the level left unchanged.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if an
     /// [`OrderUpdate::UpdatePrice`] / [`OrderUpdate::Replace`] would not move
     /// the order to a different price level, if computing an order's total
-    /// quantity overflows `u64`, or if applying a quantity update's counter
-    /// delta would take the level's visible- or hidden-quantity counter past
-    /// `u64::MAX` (rejected with the queue and counters untouched).
+    /// quantity overflows `u64`, or if an [`OrderUpdate::UpdateQuantity`] would
+    /// overflow the level's visible- or hidden-quantity counter (the maker and
+    /// its queue position are left unchanged in that case).
     #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,
@@ -1591,126 +1630,110 @@ impl PriceLevel {
                 order_id,
                 new_quantity,
             } => {
-                // Read the current order to build the resized order and pick the
-                // priority policy. The counter deltas below are taken from the
-                // order actually removed/replaced under the queue's per-entry
-                // lock — not from this pre-read — so a concurrent update cannot
-                // drift `visible_quantity` / `hidden_quantity` from the queue.
-                let Some(order) = self.orders.find(order_id) else {
-                    return Ok(None); // Order not found
-                };
-
-                let prev_total = order
-                    .visible_quantity()
-                    .as_u64()
-                    .checked_add(order.hidden_quantity().as_u64())
-                    .ok_or_else(|| PriceLevelError::InvalidOperation {
-                        message: "order total quantity overflow".to_string(),
-                    })?;
-
-                // Build the updated order. `with_reduced_quantity` sets the
-                // (visible/main) quantity to exactly `new_quantity` for every
-                // order variant, so `new_total` reflects the real post-update
-                // size and the increase/decrease branch below is chosen
-                // correctly for all types.
-                let new_order = order.with_reduced_quantity(new_quantity.as_u64());
-                let new_visible = new_order.visible_quantity().as_u64();
-                let new_hidden = new_order.hidden_quantity().as_u64();
-                let new_total = new_visible.checked_add(new_hidden).ok_or_else(|| {
-                    PriceLevelError::InvalidOperation {
-                        message: "order total quantity overflow".to_string(),
-                    }
-                })?;
-
-                // Pre-validate the LEVEL counter deltas before mutating the
-                // queue: an upsize (or a visible/hidden reshuffle) whose delta
-                // would take a level counter past `u64::MAX` must be rejected
-                // with the queue and counters untouched, never committed and then
-                // wrapped by the raw `fetch_add` below. Project each counter from
-                // its live value using the pre-read order's components as `old`;
-                // if either projection does not fit `u64`, reject.
+                // Overflow-checked forward reservation of a level counter for a
+                // component moving `old -> new`. BOTH directions use a checked
+                // `fetch_update` and reject before any queue mutation: an
+                // increase must not overflow `u64`, and a decrease must not
+                // underflow it (issue #128 defense). `Relaxed`: advisory counters
+                // (issue #68).
                 //
-                // This uses the pre-read `order` (not the value the queue mutation
-                // will actually replace), so a concurrent update of the same id
-                // could make the projection stale (TOCTOU) — strictly better than
-                // the unchecked wrap it replaces, and #115 closes the window
-                // exactly by reserving under the entry lock.
-                let old_visible_pre = order.visible_quantity().as_u64();
-                let old_hidden_pre = order.hidden_quantity().as_u64();
-                let projects = |counter: &AtomicU64, old: u64, new: u64| -> bool {
-                    let cur = counter.load(Ordering::Relaxed);
-                    if new >= old {
-                        cur.checked_add(new - old).is_some()
+                // The underflow guard is a belt-and-suspenders backstop. It is
+                // unreachable in practice because issue #128's structural fix
+                // publishes the match sweep's replenish counter transition UNDER
+                // the maker's entry lock: by the time this `UpdateQuantity` holds
+                // that same entry lock and reads `old` from the live maker, the
+                // level counter already includes this maker's full `old`
+                // contribution, so `counter >= old >= old - new` and the subtract
+                // cannot go negative. The check simply refuses to wrap if that
+                // invariant were ever violated, leaving the level untouched.
+                fn reserve(
+                    counter: &std::sync::atomic::AtomicU64,
+                    old: u64,
+                    new: u64,
+                ) -> Result<(), PriceLevelError> {
+                    let result = if new >= old {
+                        let delta = new - old;
+                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                            c.checked_add(delta)
+                        })
                     } else {
-                        cur.checked_sub(old - new).is_some()
+                        let delta = old - new;
+                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                            c.checked_sub(delta)
+                        })
+                    };
+                    result
+                        .map(|_| ())
+                        .map_err(|_| PriceLevelError::InvalidOperation {
+                            message: "price level quantity counter overflow on update".to_string(),
+                        })
+                }
+                // Undo this call's own `old -> new` reservation (commutative with
+                // concurrent deltas — it reverses exactly what it added).
+                fn unreserve(counter: &std::sync::atomic::AtomicU64, old: u64, new: u64) {
+                    if new >= old {
+                        counter.fetch_sub(new - old, Ordering::Relaxed);
+                    } else {
+                        counter.fetch_add(old - new, Ordering::Relaxed);
                     }
-                };
-                if !projects(&self.visible_quantity, old_visible_pre, new_visible)
-                    || !projects(&self.hidden_quantity, old_hidden_pre, new_hidden)
-                {
-                    return Err(PriceLevelError::InvalidOperation {
-                        message: "price level quantity counter overflow on update".to_string(),
-                    });
                 }
 
-                let new_order_arc = Arc::new(new_order);
+                let visible_counter = &self.visible_quantity;
+                let hidden_counter = &self.hidden_quantity;
 
-                // Perform the queue mutation and capture the order it actually
-                // removed/replaced, so the counter deltas reflect the real
-                // transition rather than the possibly-stale pre-read above.
-                let old = if new_total > prev_total {
-                    // Quantity INCREASE: demote to the back of the queue (a fresh
-                    // tail sequence), losing time priority. Uses the atomic
-                    // `resequence_to_tail` primitive (issue #119): the id stays
-                    // resident in the MAP throughout — no absent window — so a
-                    // concurrent cancel cannot be lost, a same-id admission is
-                    // always rejected, and match-front can no longer act on a
-                    // stale front position. (The INDEX is still re-keyed in two
-                    // steps, so one match scan may transiently miss the maker —
-                    // a missed fill at worst, strictly narrower than the old
-                    // remove+push absence.) Returns the replaced order (for the
-                    // counter deltas below) or `None` if concurrently removed.
-                    let Some(replaced) = self
-                        .orders
-                        .resequence_to_tail(order_id, new_order_arc.clone())
-                    else {
-                        return Ok(None); // Removed by another thread.
-                    };
-                    replaced
-                } else {
-                    // Quantity DECREASE or unchanged total: keep the maker's
-                    // queue position by swapping the stored order in place at its
-                    // existing insertion sequence, under the DashMap per-entry
-                    // lock.
-                    let Some(replaced) =
-                        self.orders.update_in_place(order_id, new_order_arc.clone())
-                    else {
-                        return Ok(None); // Removed by another thread.
-                    };
-                    replaced
-                };
+                // Derive the resized order, choose the priority policy, and
+                // reserve the level counters ALL against the LIVE stored order,
+                // under the entry lock (issue #115). Nothing is read before the
+                // lock, so a concurrent match / replenish that committed first is
+                // fully reflected: the update can never resurrect executed or
+                // cancelled visible / hidden quantity, and the policy is chosen
+                // from the live total, not a stale pre-read. The counters are
+                // reserved with checked math BEFORE the queue commits, so an
+                // update that would overflow a level counter is rejected with the
+                // level (and queue) untouched.
+                let outcome = self.orders.update_entry(order_id, |live| {
+                    let old_visible = live.visible_quantity().as_u64();
+                    let old_hidden = live.hidden_quantity().as_u64();
+                    let live_total = old_visible.checked_add(old_hidden).ok_or_else(|| {
+                        PriceLevelError::InvalidOperation {
+                            message: "order total quantity overflow".to_string(),
+                        }
+                    })?;
 
-                // Apply the counter deltas from the actual replaced order. A
-                // single component (visible or hidden) can move in EITHER
-                // direction even when the total shrinks or is unchanged, because
-                // quantity can shift between the visible and hidden portions, so
-                // handle both signs.
-                let old_visible = old.visible_quantity().as_u64();
-                let old_hidden = old.hidden_quantity().as_u64();
-                // `Relaxed` on both branches: advisory counters (issue #68); the
-                // queue mutation above (`update_in_place` / `resequence_to_tail`)
-                // carries the happens-before, not these counter RMWs.
-                let apply = |counter: &std::sync::atomic::AtomicU64, old: u64, new: u64| {
-                    if new >= old {
-                        counter.fetch_add(new - old, Ordering::Relaxed);
-                    } else {
-                        counter.fetch_sub(old - new, Ordering::Relaxed);
+                    // `with_reduced_quantity` sets the visible/main tranche to
+                    // exactly `new_quantity` for every variant and preserves the
+                    // LIVE hidden depth (never restored from a pre-read).
+                    let new_order = live.with_reduced_quantity(new_quantity.as_u64());
+                    let new_visible = new_order.visible_quantity().as_u64();
+                    let new_hidden = new_order.hidden_quantity().as_u64();
+                    let new_total = new_visible.checked_add(new_hidden).ok_or_else(|| {
+                        PriceLevelError::InvalidOperation {
+                            message: "order total quantity overflow".to_string(),
+                        }
+                    })?;
+
+                    // Validate + reserve the level counters before mutating the
+                    // queue. On a hidden overflow, roll the visible reservation
+                    // back so a rejected update leaves the counters unchanged.
+                    reserve(visible_counter, old_visible, new_visible)?;
+                    if let Err(err) = reserve(hidden_counter, old_hidden, new_hidden) {
+                        unreserve(visible_counter, old_visible, new_visible);
+                        return Err(err);
                     }
-                };
-                apply(&self.visible_quantity, old_visible, new_visible);
-                apply(&self.hidden_quantity, old_hidden, new_hidden);
 
-                Ok(Some(new_order_arc))
+                    // Priority policy from the LIVE total (cannot be stale).
+                    let arc = Arc::new(new_order);
+                    if new_total > live_total {
+                        Ok(UpdateDecision::ReplaceAtTail(arc))
+                    } else {
+                        Ok(UpdateDecision::KeepInPlace(arc))
+                    }
+                });
+
+                match outcome {
+                    None => Ok(None), // Order not found / concurrently removed.
+                    Some(result) => result.map(Some),
+                }
             }
 
             OrderUpdate::UpdatePriceAndQuantity {

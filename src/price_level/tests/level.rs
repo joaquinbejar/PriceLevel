@@ -5352,6 +5352,27 @@ mod tests {
             orders.len(),
             "order_count must equal the snapshot's own order-list length"
         );
+
+        // In the quiescent state (no concurrent writers — every race test joins
+        // its threads before asserting) the LIVE advisory atomics must have
+        // converged to the queue sums too. The snapshot-only assertions above
+        // are fold==fold by construction; these are the ones that catch a
+        // leaked or dropped counter reservation (issue #115).
+        assert_eq!(
+            level.visible_quantity(),
+            visible_sum,
+            "live visible counter must converge to the queue sum when quiescent"
+        );
+        assert_eq!(
+            level.hidden_quantity(),
+            hidden_sum,
+            "live hidden counter must converge to the queue sum when quiescent"
+        );
+        assert_eq!(
+            level.order_count(),
+            orders.len(),
+            "live order_count must converge to the queue length when quiescent"
+        );
     }
 
     #[test]
@@ -7587,6 +7608,336 @@ mod tests {
                     "iter {iter}: consumed an unexpected maker id {maker}"
                 );
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #115 — UpdateQuantity applied to the live maker state
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_update_quantity_level_counter_overflow_rejected() {
+        // Two Buy makers push the level's visible counter to just below u64::MAX;
+        // an upsize whose delta would carry it over must be rejected, with the
+        // maker, its queue position, and the counters all unchanged.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, u64::MAX - 100))
+            .expect("seed maker 1");
+        level
+            .add_order(create_standard_order(2, 10_000, 50))
+            .expect("seed maker 2");
+        // Level visible counter == u64::MAX - 50.
+
+        let before_json = level.snapshot_to_json().expect("snapshot before");
+        let before_ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+
+        // Upsize maker 2: 50 -> 200 (delta +150) would overflow the counter.
+        match level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: Id::from_u64(2),
+            new_quantity: Quantity::new(200),
+        }) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected level-counter-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // Level byte-identical; maker 2 unchanged and in the same position.
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before_json,
+            "a rejected update must leave the level unchanged"
+        );
+        let after_ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(after_ids, before_ids);
+        let m2 = level
+            .snapshot_by_insertion_seq()
+            .into_iter()
+            .find(|o| o.id() == Id::from_u64(2))
+            .expect("maker 2 still rests");
+        assert_eq!(m2.visible_quantity().as_u64(), 50);
+    }
+
+    #[test]
+    fn test_update_quantity_derives_from_live_iceberg_after_partial_fill() {
+        // Sequential sanity that an update resizes the LIVE visible tranche and
+        // preserves the LIVE hidden depth (the contract the concurrent path
+        // upholds): after a partial fill + replenish, the update must not restore
+        // the pre-fill hidden.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_buy_iceberg_order(1, 10_000, 50, 100))
+            .expect("seed iceberg");
+
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        // Consume the full visible tranche (50): replenishes 50 from hidden, so
+        // the live maker becomes visible 50, hidden 50.
+        let _ = level.match_order(
+            50,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        let live = level
+            .snapshot_by_insertion_seq()
+            .into_iter()
+            .find(|o| o.id() == Id::from_u64(1))
+            .expect("iceberg rests");
+        assert_eq!(
+            live.hidden_quantity().as_u64(),
+            50,
+            "precondition: hidden drawn to 50"
+        );
+
+        // Resize visible to 30. Hidden must stay the LIVE 50, not the pre-fill 100.
+        level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(1),
+                new_quantity: Quantity::new(30),
+            })
+            .expect("update ok")
+            .expect("maker present");
+        let updated = level
+            .snapshot_by_insertion_seq()
+            .into_iter()
+            .find(|o| o.id() == Id::from_u64(1))
+            .expect("iceberg rests");
+        assert_eq!(updated.visible_quantity().as_u64(), 30);
+        assert_eq!(
+            updated.hidden_quantity().as_u64(),
+            50,
+            "hidden must reflect the live 50, never resurrect the pre-fill 100"
+        );
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn test_competing_updates_same_id_one_winner() {
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 1_000;
+        for iter in 0..ITERATIONS {
+            let level = StdArc::new(PriceLevel::new(10_000));
+            level
+                .add_order(create_standard_order(1, 10_000, 100))
+                .expect("seed maker");
+            let id = Id::from_u64(1);
+            let barrier = StdArc::new(Barrier::new(2));
+
+            let a = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let _ = level.update_order(OrderUpdate::UpdateQuantity {
+                        order_id: id,
+                        new_quantity: Quantity::new(200),
+                    });
+                })
+            };
+            let b = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let _ = level.update_order(OrderUpdate::UpdateQuantity {
+                        order_id: id,
+                        new_quantity: Quantity::new(50),
+                    });
+                })
+            };
+            a.join().expect("a panicked");
+            b.join().expect("b panicked");
+
+            // Exactly one order rests, with one of the two requested quantities,
+            // and the counters agree with the queue.
+            let resting = level.snapshot_by_insertion_seq();
+            assert_eq!(resting.len(), 1, "iter {iter}: exactly one maker rests");
+            assert_eq!(resting[0].id(), id);
+            let q = resting[0].visible_quantity().as_u64();
+            assert!(
+                q == 200 || q == 50,
+                "iter {iter}: final quantity {q} not one of the two updates"
+            );
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_update_decrease_vs_cancel_no_resurrection() {
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 1_000;
+        for iter in 0..ITERATIONS {
+            let level = StdArc::new(PriceLevel::new(10_000));
+            level
+                .add_order(create_standard_order(1, 10_000, 100))
+                .expect("seed maker");
+            let id = Id::from_u64(1);
+            let barrier = StdArc::new(Barrier::new(2));
+
+            let updater = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    // DECREASE branch (keeps sequence, in-place swap).
+                    level.update_order(OrderUpdate::UpdateQuantity {
+                        order_id: id,
+                        new_quantity: Quantity::new(40),
+                    })
+                })
+            };
+            let canceller = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::Cancel { order_id: id })
+                        .expect("cancel must not error")
+                })
+            };
+
+            let _ = updater.join().expect("updater panicked");
+            let cancelled = canceller.join().expect("canceller panicked");
+
+            let is_resting = level
+                .snapshot_by_insertion_seq()
+                .iter()
+                .any(|o| o.id() == id);
+            // The cancel is the only remover; it always wins and the order is
+            // gone — never cancel-None-yet-resting (resurrection).
+            assert!(
+                cancelled.is_some(),
+                "iter {iter}: cancel returned None (resurrection window)"
+            );
+            assert!(
+                !is_resting,
+                "iter {iter}: order still resting after a winning cancel"
+            );
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_update_vs_match_iceberg_stays_consistent() {
+        // An iceberg maker races a matcher (drawing visible, replenishing from
+        // hidden) against an updater (resizing visible). #115 derives the resized
+        // order from the LIVE maker under the entry lock, so hidden is NEVER
+        // resurrected: while the maker rests, its hidden depth is MONOTONICALLY
+        // NON-INCREASING (a match only draws it down; an update preserves it,
+        // never restores a stale higher value). The pre-#115 stale-pre-read code
+        // wrote back a stale hidden after a concurrent match drew it down,
+        // producing an INCREASE this test's strict monotonic assertion catches.
+        //
+        // The matcher runs a FIXED number of matches (so it can never run zero
+        // times) and signals `done` at the end, while the updater resizes for the
+        // whole race; we also assert the matcher committed real fills, so the
+        // race is genuinely exercised rather than trivially satisfied.
+        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const INITIAL_HIDDEN: u64 = 4_000;
+        const VISIBLE: u64 = 20;
+        const MATCH_ITERS: usize = 500;
+
+        for iter in 0..25 {
+            let level = StdArc::new(PriceLevel::new(10_000));
+            level
+                .add_order(create_buy_iceberg_order(1, 10_000, VISIBLE, INITIAL_HIDDEN))
+                .expect("seed iceberg");
+            let id = Id::from_u64(1);
+            let barrier = StdArc::new(Barrier::new(2));
+            let done = StdArc::new(AtomicBool::new(false));
+
+            let updater = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                let done = StdArc::clone(&done);
+                thread::spawn(move || {
+                    barrier.wait();
+                    // Resize continuously until the matcher is done, so an update
+                    // races every stage of the drain (not a fixed short burst).
+                    let mut r = 0u64;
+                    while !done.load(AtomicOrdering::Acquire) {
+                        let new_visible = 5 + (r % 30);
+                        let _ = level.update_order(OrderUpdate::UpdateQuantity {
+                            order_id: id,
+                            new_quantity: Quantity::new(new_visible),
+                        });
+                        r += 1;
+                    }
+                })
+            };
+            let matcher = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                let done = StdArc::clone(&done);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let generator = UuidGenerator::new(Uuid::from_u128(0xF00D_0000 + iter as u128));
+                    let mut committed = 0usize;
+                    let mut prev_hidden = u64::MAX;
+                    for _ in 0..MATCH_ITERS {
+                        let result = level.match_order(
+                            3,
+                            Id::from_u64(999),
+                            TimeInForce::Gtc,
+                            TakerKind::Standard,
+                            TimestampMs::new(1_700_000_000_000),
+                            &generator,
+                        );
+                        if result.executed_quantity().map(|q| q.as_u64()).unwrap_or(0) > 0 {
+                            committed += 1;
+                        }
+                        // Sample the resting maker's hidden depth; it must never
+                        // rise across the race (strict, tight enough that a
+                        // pre-#115 resurrection would fail here).
+                        if let Some(o) = level
+                            .snapshot_by_insertion_seq()
+                            .into_iter()
+                            .find(|o| o.id() == id)
+                        {
+                            let h = o.hidden_quantity().as_u64();
+                            assert!(
+                                h <= prev_hidden,
+                                "iter {iter}: hidden rose {prev_hidden} -> {h} (resurrection; #115 regression)"
+                            );
+                            prev_hidden = h;
+                        }
+                    }
+                    done.store(true, AtomicOrdering::Release);
+                    committed
+                })
+            };
+
+            let committed = matcher.join().expect("matcher panicked");
+            updater.join().expect("updater panicked");
+
+            assert!(
+                committed >= 1,
+                "iter {iter}: matcher committed no fills — the race was not exercised"
+            );
+            assert_counters_match_queue(&level);
         }
     }
 }
