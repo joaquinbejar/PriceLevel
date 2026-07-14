@@ -7025,62 +7025,81 @@ mod tests {
     }
 
     #[test]
-    fn test_match_order_self_trade_skipped() {
-        // Makers 1, 2, 3 rest in FIFO order; the taker shares maker 1's id.
-        let level = PriceLevel::new(10_000);
-        level
-            .add_order(create_standard_order(1, 10_000, 40))
-            .expect("maker 1 admits");
-        level
-            .add_order(create_standard_order(2, 10_000, 30))
-            .expect("maker 2 admits");
-        level
-            .add_order(create_standard_order(3, 10_000, 50))
-            .expect("maker 3 admits");
-
+    fn test_match_order_self_match_terminal_rejected_all_tifs() {
+        // Issue #126: a self-match is TERMINAL. If the taker's own id rests at
+        // the level, the match emits NO trades and leaves the level
+        // byte-identical for EVERY TIF and kind — it does NOT walk past its own
+        // resting order to trade with the other makers (the old skip behaviour).
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        let generator = UuidGenerator::new(namespace);
-        // Taker id == maker 1's id: maker 1 must be skipped, 2 and 3 consumed.
-        let result = level.match_order(
-            1_000,
-            Id::from_u64(1),
-            TimeInForce::Gtc,
-            TakerKind::Standard,
-            TimestampMs::new(1_700_000_000_000),
-            &generator,
-        );
 
-        // No trade names the taker as its own maker (no self-trade emitted).
-        let makers: Vec<Id> = result
-            .trades()
-            .as_vec()
-            .iter()
-            .map(|t| t.maker_order_id())
-            .collect();
-        assert!(
-            makers.iter().all(|m| *m != Id::from_u64(1)),
-            "no trade may have maker == taker; got {makers:?}"
-        );
-        // The other makers are still consumed, in FIFO order.
-        assert_eq!(makers, vec![Id::from_u64(2), Id::from_u64(3)]);
-        // MatchResult stays consistent: executed == 30 + 50 = 80.
-        assert_eq!(
-            result.executed_quantity().expect("no overflow").as_u64(),
-            80
-        );
-        // The skipped maker 1 is left resting, untouched.
-        let resting: Vec<Id> = level
-            .snapshot_by_insertion_seq()
-            .iter()
-            .map(|o| o.id())
-            .collect();
-        assert_eq!(resting, vec![Id::from_u64(1)]);
+        // Every TIF, plus the post-only kind, must reject identically.
+        let cases: [(TimeInForce, TakerKind); 6] = [
+            (TimeInForce::Gtc, TakerKind::Standard),
+            (TimeInForce::Ioc, TakerKind::Standard),
+            (TimeInForce::Fok, TakerKind::Standard),
+            (TimeInForce::Day, TakerKind::Standard),
+            (TimeInForce::Gtc, TakerKind::PostOnly),
+            (TimeInForce::Fok, TakerKind::PostOnly),
+        ];
+
+        for (tif, kind) in cases {
+            // Makers 1, 2, 3 rest in FIFO order; the taker shares maker 1's id.
+            let level = PriceLevel::new(10_000);
+            level
+                .add_order(create_standard_order(1, 10_000, 40))
+                .expect("maker 1 admits");
+            level
+                .add_order(create_standard_order(2, 10_000, 30))
+                .expect("maker 2 admits");
+            level
+                .add_order(create_standard_order(3, 10_000, 50))
+                .expect("maker 3 admits");
+            let before = level.snapshot_by_insertion_seq();
+
+            let result = level.match_order(
+                1_000,
+                Id::from_u64(1),
+                tif,
+                kind,
+                TimestampMs::new(1_700_000_000_000),
+                &UuidGenerator::new(namespace),
+            );
+
+            // Terminal Rejected: zero trades, full remaining, nothing executed.
+            assert!(
+                result.was_rejected(),
+                "self-match must be Rejected for {tif:?}/{kind:?}"
+            );
+            assert_eq!(result.trades().len(), 0, "{tif:?}/{kind:?}: no trades");
+            assert_eq!(
+                result.remaining_quantity().as_u64(),
+                1_000,
+                "{tif:?}/{kind:?}: full remaining"
+            );
+            assert_eq!(
+                result.executed_quantity().expect("no overflow").as_u64(),
+                0,
+                "{tif:?}/{kind:?}: nothing executed"
+            );
+
+            // The level is byte-identical: all three makers still rest in order.
+            let after = level.snapshot_by_insertion_seq();
+            assert_eq!(
+                before.iter().map(|o| o.id()).collect::<Vec<_>>(),
+                after.iter().map(|o| o.id()).collect::<Vec<_>>(),
+                "{tif:?}/{kind:?}: queue unchanged"
+            );
+            assert_eq!(level.order_count(), 3, "{tif:?}/{kind:?}: count unchanged");
+            assert_counters_match_queue(&level);
+        }
     }
 
     #[test]
-    fn test_matchable_quantity_self_trade_parity_with_fok() {
-        // Maker 1 (shares the taker id) has 40; maker 2 has 60. A taker id 1
-        // can only take maker 2's 60 (maker 1 is self-trade-skipped).
+    fn test_matchable_quantity_self_skip_but_match_order_rejects_self() {
+        // Maker 1 (shares the taker id) has 40; maker 2 has 60. The dry-run
+        // helper `matchable_quantity` still skips the self-trade maker (it backs
+        // the in-sweep defense-in-depth path, where the taker's order is admitted
+        // mid-sweep), so it reports 60 takeable.
         let level = PriceLevel::new(10_000);
         level
             .add_order(create_standard_order(1, 10_000, 40))
@@ -7089,48 +7108,203 @@ mod tests {
             .add_order(create_standard_order(2, 10_000, 60))
             .expect("maker 2 admits");
 
-        // The dry run agrees: skipping the self-trade maker leaves 60.
         assert_eq!(level.matchable_quantity(100, Id::from_u64(1)), 60);
         assert_eq!(level.matchable_quantity(60, Id::from_u64(1)), 60);
 
+        // But `match_order` is TERMINAL when the taker id already rests (issue
+        // #126): it rejects up front for every TIF, dominating the FOK dry run —
+        // a self-match FOK is Rejected, NOT killed and NOT filled from maker 2.
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        // A FOK taker (id 1) of 100 must be KILLED: only 60 is takeable.
-        let killed = level.match_order(
-            100,
-            Id::from_u64(1),
-            TimeInForce::Fok,
-            TakerKind::Standard,
-            TimestampMs::new(1_700_000_000_000),
-            &UuidGenerator::new(namespace),
-        );
-        assert!(
-            killed.was_killed(),
-            "FOK 100 must be killed (only 60 takeable)"
-        );
-        assert_eq!(killed.trades().len(), 0);
-        assert_eq!(
-            level.order_count(),
-            2,
-            "a killed FOK leaves the queue untouched"
-        );
+        for qty in [100u64, 60] {
+            let result = level.match_order(
+                qty,
+                Id::from_u64(1),
+                TimeInForce::Fok,
+                TakerKind::Standard,
+                TimestampMs::new(1_700_000_000_000),
+                &UuidGenerator::new(namespace),
+            );
+            assert!(
+                result.was_rejected(),
+                "self-match FOK({qty}) is Rejected, not killed/filled"
+            );
+            assert!(!result.was_killed(), "self-match is Rejected, not Killed");
+            assert_eq!(result.trades().len(), 0, "no trades on self-match");
+            assert_eq!(result.remaining_quantity().as_u64(), qty);
+            assert_eq!(
+                level.order_count(),
+                2,
+                "a rejected self-match leaves the queue untouched"
+            );
+        }
 
-        // A FOK taker (id 1) of 60 must FILL: exactly maker 2's 60.
+        // A taker with a DISTINCT id (id 3) does take maker 1 + maker 2 normally.
         let filled = level.match_order(
-            60,
-            Id::from_u64(1),
+            100,
+            Id::from_u64(3),
             TimeInForce::Fok,
             TakerKind::Standard,
             TimestampMs::new(1_700_000_000_001),
             &UuidGenerator::new(namespace),
         );
-        assert!(filled.is_complete(), "FOK 60 must fill");
+        assert!(filled.is_complete(), "non-self FOK 100 fills 40 + 60");
         let makers: Vec<Id> = filled
             .trades()
             .as_vec()
             .iter()
             .map(|t| t.maker_order_id())
             .collect();
-        assert_eq!(makers, vec![Id::from_u64(2)], "only maker 2 fills the FOK");
+        assert_eq!(makers, vec![Id::from_u64(1), Id::from_u64(2)]);
+    }
+
+    #[test]
+    fn test_opposite_side_admissions_race_exactly_one_wins() {
+        // Issue #126 🔴: two opposite-side admissions racing into a genuinely
+        // empty level must NEVER both admit — the atomic side pin serializes
+        // them so exactly one wins and the other is rejected. Under the old
+        // derive-from-queue scheme both could observe an empty queue and admit.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 3_000;
+        const PRICE: u128 = 10_000;
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            let barrier = Arc::new(Barrier::new(2));
+            let buy_id = iter as u64 * 2 + 1;
+            let sell_id = buy_id + 1;
+
+            let buyer = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.add_order(create_standard_order(buy_id, PRICE, 10))
+                })
+            };
+            let seller = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.add_order(create_sell_standard_order(sell_id, PRICE, 10))
+                })
+            };
+
+            let buy_res = buyer.join().expect("buyer thread panicked");
+            let sell_res = seller.join().expect("seller thread panicked");
+
+            // Exactly one admission wins.
+            let admitted = usize::from(buy_res.is_ok()) + usize::from(sell_res.is_ok());
+            assert_eq!(
+                admitted,
+                1,
+                "iter {iter}: exactly one opposite-side admission may win (buy_ok={}, sell_ok={})",
+                buy_res.is_ok(),
+                sell_res.is_ok()
+            );
+            // The loser is rejected with an incompatible-side error.
+            if let Err(err) = &buy_res {
+                assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+            }
+            if let Err(err) = &sell_res {
+                assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+            }
+
+            // The level holds exactly one order; snapshot is single-side; the
+            // advisory counters agree with the queue.
+            assert_eq!(level.order_count(), 1, "iter {iter}");
+            let snap = level.snapshot();
+            assert_eq!(snap.orders().len(), 1, "iter {iter}");
+            assert_counters_match_queue(&level);
+
+            // A drained level re-accepts EITHER side (the pin un-pinned on drain).
+            let winner_id = if buy_res.is_ok() { buy_id } else { sell_id };
+            level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: Id::from_u64(winner_id),
+                })
+                .expect("cancel winner")
+                .expect("winner was resting");
+            assert_eq!(level.order_count(), 0, "iter {iter}: drained");
+            // Whichever side lost the race can now be admitted into the empty level.
+            let readmit = if buy_res.is_ok() {
+                level.add_order(create_sell_standard_order(sell_id, PRICE, 7))
+            } else {
+                level.add_order(create_standard_order(buy_id, PRICE, 7))
+            };
+            assert!(
+                readmit.is_ok(),
+                "iter {iter}: a drained level must re-accept the opposite side"
+            );
+        }
+    }
+
+    #[test]
+    fn test_snapshot_never_captures_torn_side_under_flips() {
+        // Issue #126 🔴: a snapshot walk that spans a drain-then-re-admit to the
+        // opposite side must never capture a torn old-side/new-side view (which
+        // `from_snapshot` would reject for mixed sides). The topology epoch makes
+        // `snapshot` retry across such a transition; here a flipper thread churns
+        // the level Buy-batch -> drained -> Sell-batch -> drained while the main
+        // thread takes many snapshots and asserts each is single-side.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        const PRICE: u128 = 10_000;
+        const BATCH: u64 = 8;
+
+        let level = Arc::new(PriceLevel::new(PRICE));
+        let done = Arc::new(AtomicBool::new(false));
+
+        let flipper = {
+            let level = Arc::clone(&level);
+            let done = Arc::clone(&done);
+            thread::spawn(move || {
+                let mut round = 0u64;
+                while !done.load(Ordering::Relaxed) {
+                    let buy = round.is_multiple_of(2);
+                    let base = 1_000 + round * BATCH;
+                    for i in 0..BATCH {
+                        let id = base + i;
+                        let order = if buy {
+                            create_standard_order(id, PRICE, 5)
+                        } else {
+                            create_sell_standard_order(id, PRICE, 5)
+                        };
+                        // May transiently fail if the opposite side is still
+                        // draining; that is fine, we just churn the topology.
+                        let _ = level.add_order(order);
+                    }
+                    for i in 0..BATCH {
+                        let _ = level.update_order(OrderUpdate::Cancel {
+                            order_id: Id::from_u64(base + i),
+                        });
+                    }
+                    round += 1;
+                }
+            })
+        };
+
+        for _ in 0..50_000 {
+            let snap = level.snapshot();
+            let mut side = None;
+            for order in snap.orders() {
+                match side {
+                    None => side = Some(order.side()),
+                    Some(s) => assert_eq!(
+                        s,
+                        order.side(),
+                        "snapshot captured a torn mixed-side view (issue #126)"
+                    ),
+                }
+            }
+        }
+
+        done.store(true, Ordering::Relaxed);
+        flipper.join().expect("flipper thread panicked");
     }
 
     #[test]

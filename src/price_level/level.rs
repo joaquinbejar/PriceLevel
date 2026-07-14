@@ -3,7 +3,7 @@
 use crate::UuidGenerator;
 use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, TakerKind, Trade};
-use crate::orders::{Id, OrderType, OrderUpdate, TimeInForce};
+use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::{Price, Quantity, TimestampMs};
@@ -12,35 +12,91 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Bit layout of the [`PriceLevel::topology`] word (issue #126): the high two
+/// bits carry the pinned-side tag, the low bits the resting-order count. Packing
+/// both into one atomic makes the side pin and the count move together in a
+/// single compare-exchange, so a drain's un-pin can never race an admission's
+/// pin across two independent atomics.
+mod topology {
+    use crate::orders::Side;
+
+    /// Bits reserved for the resting-order count (the rest hold the side tag).
+    /// `u64::MAX >> 2` orders is astronomically beyond any level's capacity, so
+    /// nothing is lost by borrowing the top two bits for the tag.
+    pub(super) const COUNT_BITS: u32 = 62;
+    pub(super) const COUNT_MASK: u64 = (1 << COUNT_BITS) - 1;
+    pub(super) const TAG_UNPINNED: u64 = 0;
+    pub(super) const TAG_BUY: u64 = 1;
+    pub(super) const TAG_SELL: u64 = 2;
+
+    #[inline]
+    pub(super) fn tag_of(side: Side) -> u64 {
+        match side {
+            Side::Buy => TAG_BUY,
+            Side::Sell => TAG_SELL,
+        }
+    }
+
+    #[inline]
+    pub(super) fn side_of_tag(tag: u64) -> Option<Side> {
+        match tag {
+            TAG_BUY => Some(Side::Buy),
+            TAG_SELL => Some(Side::Sell),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(super) fn pack(tag: u64, count: u64) -> u64 {
+        (tag << COUNT_BITS) | count
+    }
+
+    #[inline]
+    pub(super) fn tag(word: u64) -> u64 {
+        word >> COUNT_BITS
+    }
+
+    #[inline]
+    pub(super) fn count(word: u64) -> u64 {
+        word & COUNT_MASK
+    }
+}
 
 /// A lock-free implementation of a price level in a limit order book.
 ///
 /// # Topology
 ///
 /// Every resting order sits at [`Self::price`] and shares a single side. The
-/// side is not stored: it is derived from the resting orders themselves (the
-/// first admitted maker defines it, and a drained level accepts either side
-/// again), so [`Self::add_order`] rejects a mismatching price or side. Deriving
-/// the side is lock-free.
+/// side is **pinned atomically** rather than derived from the queue: a single
+/// `topology` word packs `(pinned side, resting order count)` so that an
+/// admission's side decision and the drain that un-pins an emptied level are
+/// one compare-exchange, never two racing atomics (issue #126). The first
+/// admitted maker pins the side; each later same-side admission bumps the
+/// count under the same CAS; the removal that brings the count to zero un-pins
+/// in the same CAS, so a fully drained level accepts either side again. An
+/// opposite-side admission into a non-empty level is rejected.
 ///
 /// Single-side coherence is a **correctness invariant**, not an
 /// eventually-consistent one — unlike the advisory quantity / count counters
-/// (issue #68), a level that admits two makers of opposite sides does not
-/// converge to a correct state later. Upholding it therefore relies on a
-/// strictly stronger assumption than the counters: that a given level's
-/// admissions arrive from a **single logical writer** (the composing order
-/// book routes each price to one admission path). Absent that, two races can
-/// admit an incompatible side:
+/// (issue #68), a level that admitted two makers of opposite sides would not
+/// converge to a correct state later. Pinning side+count in one atomic upholds
+/// it under **arbitrary concurrent admissions and removals**, closing both
+/// races the earlier derive-from-queue scheme left open:
 ///
-/// - Two **opposite-side admissions into a genuinely empty level**: both may
-///   observe no resting order and both admit.
-/// - An **opposite-side admission racing a same-side upsize** on a
-///   single-order level: a quantity increase via [`Self::update_order`]
-///   re-sequences the sole maker with a remove-then-push, transiently emptying
-///   the queue, and an opposite-side admission observing that gap admits. This
-///   window rides on the same remove+push gap that issue #119's in-place
-///   re-sequencing closes.
+/// - Two **opposite-side admissions into a genuinely empty level** now
+///   serialize on the pin CAS: exactly one establishes the side, the other
+///   observes a non-empty opposite-side level and is rejected.
+/// - An **opposite-side admission racing a same-side upsize** cannot slip
+///   through a transient queue gap: the pin persists across a maker's
+///   remove-then-re-add because the count never reaches zero, so the side stays
+///   pinned even while the queue momentarily looks empty.
+///
+/// A concurrent [`Self::snapshot`] cannot capture a torn old-side/new-side view
+/// across a drain-then-re-admit either: a `topology_epoch` is bumped on every
+/// side pin / un-pin, and `snapshot` retries its materialization if the epoch
+/// moves under it (see there).
 #[derive(Debug)]
 pub struct PriceLevel {
     /// The price of this level
@@ -52,8 +108,19 @@ pub struct PriceLevel {
     /// Total hidden quantity at this price level
     hidden_quantity: AtomicU64,
 
-    /// Number of orders at this price level
-    order_count: AtomicUsize,
+    /// Packed `(pinned side, resting order count)` — the atomic topology word
+    /// (issue #126). The side tag lives in the high two bits, the count in the
+    /// low [`topology::COUNT_BITS`]; see the [`topology`] module for the layout
+    /// and [`Self::topology_admit`] / [`Self::topology_release_one`] for the CAS
+    /// protocol. Replaces the former standalone `order_count` counter — the
+    /// count is now read back out of this word.
+    topology: AtomicU64,
+
+    /// Monotonic counter bumped on every side pin / un-pin (issue #126). A
+    /// [`Self::snapshot`] reads it before and after materializing the orders and
+    /// retries if it moved, so a checksummed snapshot can never capture a torn
+    /// old-side/new-side view across a drain-then-re-admit transition.
+    topology_epoch: AtomicU64,
 
     /// Queue of orders at this price level
     orders: OrderQueue,
@@ -102,7 +169,7 @@ impl PriceLevel {
         // violates either would reconstruct a level that trades at the wrong
         // price or emits contradictory taker sides, so reject it here rather
         // than restore an incoherent level.
-        {
+        let level_side: Option<Side> = {
             let level_price = snapshot.price().as_u128();
             let mut level_side = None;
             for order in snapshot.orders() {
@@ -127,7 +194,8 @@ impl PriceLevel {
                     Some(_) => {}
                 }
             }
-        }
+            level_side
+        };
 
         let order_count = snapshot.orders().len();
         let visible_quantity = snapshot.visible_quantity().as_u64();
@@ -137,11 +205,19 @@ impl PriceLevel {
         let stats = (*snapshot.statistics()).clone();
         let queue = OrderQueue::from(snapshot.into_orders());
 
+        // Pin the restored side alongside the restored count in the topology word
+        // (issue #126). An empty snapshot restores Unpinned; a non-empty one pins
+        // the single side the validation above proved coherent. `order_count` is
+        // bounded by the snapshot's own vector length, which fits `COUNT_MASK`.
+        let side_tag = level_side.map_or(topology::TAG_UNPINNED, topology::tag_of);
+        let topology_word = topology::pack(side_tag, order_count as u64);
+
         Ok(Self {
             price,
             visible_quantity: AtomicU64::new(visible_quantity),
             hidden_quantity: AtomicU64::new(hidden_quantity),
-            order_count: AtomicUsize::new(order_count),
+            topology: AtomicU64::new(topology_word),
+            topology_epoch: AtomicU64::new(0),
             orders: queue,
             stats: Arc::new(stats),
         })
@@ -192,7 +268,9 @@ impl PriceLevel {
             price,
             visible_quantity: AtomicU64::new(0),
             hidden_quantity: AtomicU64::new(0),
-            order_count: AtomicUsize::new(0),
+            // Unpinned side, zero resting orders.
+            topology: AtomicU64::new(topology::pack(topology::TAG_UNPINNED, 0)),
+            topology_epoch: AtomicU64::new(0),
             orders: OrderQueue::new(),
             stats: Arc::new(PriceLevelStatistics::new()),
         }
@@ -263,9 +341,139 @@ impl PriceLevel {
     /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
     #[must_use]
     pub fn order_count(&self) -> usize {
-        // `Relaxed`: advisory counter, no happens-before rides on it — see
-        // `visible_quantity` for the full rationale.
-        self.order_count.load(Ordering::Relaxed)
+        // `Relaxed`: advisory read of the count half of the topology word, no
+        // happens-before rides on it — see `visible_quantity` for the rationale.
+        topology::count(self.topology.load(Ordering::Relaxed)) as usize
+    }
+
+    /// The side currently pinned at this level, or `None` if the level is empty
+    /// (Unpinned). Advisory: a concurrent admission / drain can change it right
+    /// after the read.
+    #[must_use]
+    fn pinned_side(&self) -> Option<Side> {
+        topology::side_of_tag(topology::tag(self.topology.load(Ordering::Relaxed)))
+    }
+
+    /// Reserve one admission slot for a `side` order: pin the side (or verify it
+    /// matches the pinned side) and increment the resting-order count, in a
+    /// single compare-exchange (issue #126).
+    ///
+    /// Returns `Ok(true)` iff this call pinned a previously-empty level (the
+    /// caller then bumps [`Self::topology_epoch`]), `Ok(false)` if it joined an
+    /// already-pinned same-side level.
+    ///
+    /// Because the side and the count move together, two opposite-side
+    /// admissions into an empty level serialize here: exactly one wins the CAS
+    /// that pins the side, and the loser then observes a non-empty opposite-side
+    /// level and is rejected. There is no separate "is the level empty" atomic to
+    /// fall out of step with the side.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if `side` is incompatible with the
+    /// pinned side of a non-empty level, or if the count would exceed
+    /// [`topology::COUNT_MASK`].
+    fn topology_admit(&self, side: Side) -> Result<bool, PriceLevelError> {
+        let my_tag = topology::tag_of(side);
+        loop {
+            let cur = self.topology.load(Ordering::Acquire);
+            let tag = topology::tag(cur);
+            let count = topology::count(cur);
+            if count == 0 {
+                // Empty level: establish this side with count 1.
+                let next = topology::pack(my_tag, 1);
+                if self
+                    .topology
+                    .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return Ok(true);
+                }
+            } else if tag == my_tag {
+                // Same side: bump the count (checked — never wraps).
+                let Some(new_count) = count.checked_add(1).filter(|c| *c <= topology::COUNT_MASK)
+                else {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: "price level order count overflow on admission".to_string(),
+                    });
+                };
+                let next = topology::pack(my_tag, new_count);
+                if self
+                    .topology
+                    .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return Ok(false);
+                }
+            } else {
+                // Non-empty level pinned to the opposite side: reject.
+                let resting = topology::side_of_tag(tag);
+                return Err(PriceLevelError::InvalidOperation {
+                    message: format!(
+                        "order side {side:?} is incompatible with the level's resting side {resting:?}"
+                    ),
+                });
+            }
+            // Lost the CAS to a concurrent mutation; reload and retry.
+        }
+    }
+
+    /// Release one admission slot after removing an order: decrement the count
+    /// and un-pin the side when it reaches zero, in a single compare-exchange
+    /// (issue #126).
+    ///
+    /// Returns `true` iff this call brought the count to zero and un-pinned the
+    /// level (the caller then bumps [`Self::topology_epoch`]). Because the un-pin
+    /// rides the same CAS as the decrement, a concurrent admission either sees
+    /// the still-pinned non-empty level (and joins / is rejected) or the drained
+    /// Unpinned level (and establishes) — never an inconsistent in-between.
+    fn topology_release_one(&self) -> bool {
+        loop {
+            let cur = self.topology.load(Ordering::Acquire);
+            let count = topology::count(cur);
+            if count == 0 {
+                // A removal only runs for an order this level held, so the count
+                // is >= 1; never wrap (crate rule). Treat an impossible underflow
+                // as a no-op rather than corrupt the word.
+                debug_assert!(false, "topology count underflow on release");
+                return false;
+            }
+            let new_count = count - 1;
+            let next = if new_count == 0 {
+                topology::pack(topology::TAG_UNPINNED, 0)
+            } else {
+                topology::pack(topology::tag(cur), new_count)
+            };
+            if self
+                .topology
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return new_count == 0;
+            }
+        }
+    }
+
+    /// Bump the topology epoch on a side pin / un-pin so a racing
+    /// [`Self::snapshot`] retries a materialization that spanned the transition.
+    #[inline]
+    fn bump_topology_epoch(&self) {
+        self.topology_epoch.fetch_add(1, Ordering::Release);
+    }
+
+    /// Returns `true` if `orders` is empty or every order shares one side — the
+    /// single-side coherence [`Self::from_snapshot`] requires. Used as the
+    /// termination backstop for `snapshot`'s torn-topology retry (issue #126).
+    fn is_single_side(orders: &[Arc<OrderType<()>>]) -> bool {
+        let mut side = None;
+        for order in orders {
+            match side {
+                None => side = Some(order.side()),
+                Some(s) if s != order.side() => return false,
+                Some(_) => {}
+            }
+        }
+        true
     }
 
     /// Get the statistics for this price level
@@ -303,13 +511,15 @@ impl PriceLevel {
     /// decided before any counter is touched**: an admission that both reuses a
     /// live id and would overflow a counter reports
     /// [`PriceLevelError::DuplicateOrderId`], never the overflow. Only for a
-    /// free id is capacity reserved, visible → hidden → count, each with a
-    /// checked [`AtomicU64::fetch_update`] / [`AtomicUsize::fetch_update`]
-    /// (`checked_add`) — an atomic compare-exchange loop, free of the
-    /// check-then-`fetch_add` TOCTOU race two admissions near `u64::MAX` would
-    /// hit. If a later reservation overflows, the earlier ones are rolled back
-    /// (by the exact delta this call added — a commutative, concurrency-safe
-    /// undo on these advisory counters), so `try_push_with` publishes nothing
+    /// free id is capacity reserved: the visible and hidden quantities with a
+    /// checked [`AtomicU64::fetch_update`] (`checked_add`) — an atomic
+    /// compare-exchange loop, free of the check-then-`fetch_add` TOCTOU race two
+    /// admissions near `u64::MAX` would hit — and THEN the side pin and order
+    /// count together in one compare-exchange (`topology_admit`), which also
+    /// serializes concurrent opposite-side admissions. If the quantity
+    /// reservations or the pin fail, the earlier ones are rolled back (by the
+    /// exact delta this call added — a commutative, concurrency-safe undo on
+    /// these advisory counters), so `try_push_with` publishes nothing
     /// and no counter is left drifted.
     ///
     /// # Topology invariants
@@ -346,20 +556,21 @@ impl PriceLevel {
                 ),
             });
         }
-        // The level's side is defined by its resting makers: the first maker
-        // pins it, and a drained (empty) level accepts either side again — the
-        // queue is the source of truth, so no separate side state has to be
-        // stored or reset. Any resting order's side is representative (this very
-        // invariant keeps them all equal). Deriving it is lock-free; see the
-        // type-level note on the one residual window (two opposite-side
-        // admissions racing into a genuinely empty level).
-        if let Some(resting_side) = self.orders.iter_orders().next().map(|o| o.side())
-            && order.side() != resting_side
+        // The level's side is pinned in the topology word (issue #126): the
+        // first maker pins it, later same-side makers join, and the drain that
+        // empties the level un-pins it so a drained level accepts either side
+        // again. This is a cheap EARLY reject of an opposite-side order against a
+        // non-empty level, so the common mismatch never reserves counter
+        // capacity. It is only an optimization — the AUTHORITATIVE, race-free
+        // side decision is the pin CAS ([`Self::topology_admit`]) run inside the
+        // reservation closure below, which serializes concurrent admissions.
+        let order_side = order.side();
+        if let Some(resting_side) = self.pinned_side()
+            && order_side != resting_side
         {
             return Err(PriceLevelError::InvalidOperation {
                 message: format!(
-                    "order side {:?} is incompatible with the level's resting side {resting_side:?}",
-                    order.side()
+                    "order side {order_side:?} is incompatible with the level's resting side {resting_side:?}"
                 ),
             });
         }
@@ -399,15 +610,17 @@ impl PriceLevel {
         //   lock, so a concurrent cancel + readmission can never split this id
         //   across two index entries.
         //
-        // Inside the closure, capacity is reserved visible → hidden → count with
-        // checked `fetch_update` (an atomic CAS loop, free of the
-        // check-then-`fetch_add` TOCTOU race two admissions near `u64::MAX`
-        // would hit). `Relaxed` throughout: these are the advisory counters
-        // (issue #68); the queue publication carries the real happens-before,
-        // not these RMWs. If a later reservation overflows, the earlier ones are
-        // rolled back by the exact delta this call added — a commutative,
-        // concurrency-safe undo — before returning `Err`, so `try_push_with`
-        // publishes nothing and no counter is left drifted.
+        // Inside the closure, capacity is reserved visible → hidden with checked
+        // `fetch_update` (an atomic CAS loop, free of the check-then-`fetch_add`
+        // TOCTOU race two admissions near `u64::MAX` would hit), and THEN the
+        // side is pinned and the count bumped in one CAS via `topology_admit`.
+        // `Relaxed` on the advisory visible / hidden RMWs (issue #68); the pin
+        // CAS uses `AcqRel` because side coherence is a hard invariant, not an
+        // advisory counter. The pin goes LAST so it is only mutated on the
+        // success path: an incompatible side or a count overflow returns `Err`
+        // after rolling back the visible + hidden reservations this call made
+        // (a commutative, concurrency-safe undo), leaving the topology word
+        // untouched and `try_push_with` publishing nothing.
         let order_arc = Arc::new(order);
         self.orders.try_push_with(order_arc.clone(), || {
             if self
@@ -437,19 +650,28 @@ impl PriceLevel {
                 });
             }
 
-            if self
-                .order_count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
-                .is_err()
-            {
-                // Roll back the visible + hidden reservations this call made.
-                self.visible_quantity
-                    .fetch_sub(visible_qty, Ordering::Relaxed);
-                self.hidden_quantity
-                    .fetch_sub(hidden_qty, Ordering::Relaxed);
-                return Err(PriceLevelError::InvalidOperation {
-                    message: "price level order count overflow on admission".to_string(),
-                });
+            // Pin the side and bump the count in one CAS. This is the
+            // authoritative, race-free side decision: two opposite-side
+            // admissions into an empty level serialize here, only one wins.
+            match self.topology_admit(order_side) {
+                Ok(established) => {
+                    if established {
+                        // Pinned a previously-empty level; bump the epoch BEFORE
+                        // the publish that `try_push_with` does next, so a
+                        // snapshot whose walk spans this transition sees the epoch
+                        // move and retries.
+                        self.bump_topology_epoch();
+                    }
+                }
+                Err(err) => {
+                    // Roll back the visible + hidden reservations this call made;
+                    // the topology word was not mutated (pin goes last).
+                    self.visible_quantity
+                        .fetch_sub(visible_qty, Ordering::Relaxed);
+                    self.hidden_quantity
+                        .fetch_sub(hidden_qty, Ordering::Relaxed);
+                    return Err(err);
+                }
             }
 
             Ok(())
@@ -743,6 +965,33 @@ impl PriceLevel {
         timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
+        // -------- Self-match is terminal (issue #126, tightening #120) --------
+        //
+        // If the taker's own id already rests at this level, the taker cannot
+        // take liquidity here: matching would either self-trade (forbidden) or,
+        // via the in-sweep skip, walk PAST its own resting order to trade with
+        // OTHER makers — but issue #120's acceptance is that a self-match attempt
+        // emits NO trades and leaves the level byte-identical. So reject
+        // terminally, before any sweep, for EVERY TIF and kind. This check
+        // precedes and therefore dominates the post-only / fill-or-kill
+        // pre-checks below (a self-match `Fok` is Rejected, not Killed); the
+        // post-only behaviour for a taker that does NOT rest here is unchanged.
+        // The lookup is an O(1) id probe. The in-sweep `SelfTradeSkipped` path is
+        // retained as documented defense-in-depth for the narrow race where the
+        // taker's resting order is admitted AFTER this probe but during the
+        // sweep — even then it must never self-trade.
+        if incoming_quantity > 0 && self.orders.find(taker_order_id).is_some() {
+            tracing::debug!(
+                taker_order_id = %taker_order_id,
+                incoming_quantity,
+                price = self.price,
+                "taker rejected: own order id already rests at this level (self-match)"
+            );
+            let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+            result.mark_rejected(incoming_quantity);
+            return result;
+        }
+
         // -------- Taker TIF / kind pre-checks (before any queue mutation) --------
         //
         // PostOnly: must never take liquidity. If any matchable depth exists for
@@ -871,9 +1120,14 @@ impl PriceLevel {
 
         while remaining > 0 {
             let outcome = self.orders.match_front(&mut set_aside, |seq, order_arc| {
-                // Self-trade prevention (deterministic in every build profile,
-                // not a debug-only assert): a resting maker must never trade
-                // against a taker carrying the same id. Skip it — park its
+                // Self-trade prevention, DEFENSE-IN-DEPTH (issue #126). The
+                // common case is already handled terminally before the sweep: if
+                // the taker id rests here, `match_order` returns `Rejected` with
+                // no trades. This in-sweep skip covers only the narrow race where
+                // the taker's own order is admitted AFTER that pre-check but
+                // before the sweep reaches its slot. Deterministic in every build
+                // profile (not a debug-only assert): a resting maker must never
+                // trade against a taker carrying the same id. Skip it — park its
                 // sequence like a no-progress maker so the sweep advances to the
                 // makers behind it — rather than emit a self-trade. The maker is
                 // left untouched (no trade, counters and queue unchanged).
@@ -1100,7 +1354,11 @@ impl PriceLevel {
 
                     if data.fully_consumed {
                         // Maker fully consumed and removed inside `match_front`.
-                        self.order_count.fetch_sub(1, Ordering::Relaxed);
+                        // Decrement the count and un-pin if this drained the level
+                        // (issue #126); the removal already happened-before here.
+                        if self.topology_release_one() {
+                            self.bump_topology_epoch();
+                        }
                         if data.hidden_stranded > 0 {
                             self.hidden_quantity
                                 .fetch_sub(data.hidden_stranded, Ordering::Relaxed);
@@ -1155,7 +1413,26 @@ impl PriceLevel {
         // sequence) order so a snapshot round-trip re-enqueues them in identical
         // priority order; every aggregate is derived from this same snapshot so
         // they are mutually consistent by construction.
-        let orders = self.snapshot_by_insertion_seq();
+        //
+        // Guard against a TORN topology (issue #126): a walk that spans a
+        // drain-then-re-admit to the opposite side could capture old-side and
+        // new-side orders together, producing a checksummed snapshot that
+        // `from_snapshot` would reject for mixed sides. `topology_epoch` is
+        // bumped on every side pin / un-pin, so if it moves across the walk we
+        // retry. The `is_single_side` fallback GUARANTEES termination: a stable
+        // epoch already implies a coherent walk (a tear requires a transition,
+        // which bumps the epoch), so we only ever loop while a walk actually came
+        // back mixed-side, which needs an in-progress opposite-side flip — once
+        // flipping stops (finite writers) the next walk is coherent and returns.
+        let orders = loop {
+            let epoch_before = self.topology_epoch.load(Ordering::Acquire);
+            let orders = self.snapshot_by_insertion_seq();
+            let epoch_after = self.topology_epoch.load(Ordering::Acquire);
+            if epoch_before == epoch_after || Self::is_single_side(&orders) {
+                break orders;
+            }
+            // A side transition raced the walk AND left a mixed-side view; retry.
+        };
 
         let order_count = orders.len();
 
@@ -1289,7 +1566,11 @@ impl PriceLevel {
                             .fetch_sub(visible_qty, Ordering::Relaxed);
                         self.hidden_quantity
                             .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        self.order_count.fetch_sub(1, Ordering::Relaxed);
+                        // Decrement the count and un-pin if this drained the
+                        // level (issue #126); the `remove` above happened-before.
+                        if self.topology_release_one() {
+                            self.bump_topology_epoch();
+                        }
 
                         // Update statistics
                         self.stats.record_order_removed();
@@ -1443,7 +1724,11 @@ impl PriceLevel {
                             .fetch_sub(visible_qty, Ordering::Relaxed);
                         self.hidden_quantity
                             .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        self.order_count.fetch_sub(1, Ordering::Relaxed);
+                        // Decrement the count and un-pin if this drained the
+                        // level (issue #126); the `remove` above happened-before.
+                        if self.topology_release_one() {
+                            self.bump_topology_epoch();
+                        }
 
                         // Update statistics
                         self.stats.record_order_removed();
@@ -1474,7 +1759,11 @@ impl PriceLevel {
                         .fetch_sub(visible_qty, Ordering::Relaxed);
                     self.hidden_quantity
                         .fetch_sub(hidden_qty, Ordering::Relaxed);
-                    self.order_count.fetch_sub(1, Ordering::Relaxed);
+                    // Decrement the count and un-pin if this drained the level
+                    // (issue #126); the `remove` above happened-before.
+                    if self.topology_release_one() {
+                        self.bump_topology_epoch();
+                    }
 
                     // Update statistics
                     self.stats.record_order_removed();
@@ -1506,7 +1795,11 @@ impl PriceLevel {
                             .fetch_sub(visible_qty, Ordering::Relaxed);
                         self.hidden_quantity
                             .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        self.order_count.fetch_sub(1, Ordering::Relaxed);
+                        // Decrement the count and un-pin if this drained the
+                        // level (issue #126); the `remove` above happened-before.
+                        if self.topology_release_one() {
+                            self.bump_topology_epoch();
+                        }
 
                         // Update statistics
                         self.stats.record_order_removed();
