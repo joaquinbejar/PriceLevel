@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::execution::list::TradeList;
     use crate::execution::match_result::{MatchOutcome, MatchResult};
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
@@ -15,10 +16,14 @@ mod tests {
     }
 
     fn sample_trade(quantity: u64) -> Trade {
+        sample_trade_with_maker(20, quantity)
+    }
+
+    fn sample_trade_with_maker(maker_id: u64, quantity: u64) -> Trade {
         Trade::with_timestamp(
             Id::from_uuid(parse_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
             Id::from_u64(10),
-            Id::from_u64(20),
+            Id::from_u64(maker_id),
             Price::new(1_000),
             Quantity::new(quantity),
             Side::Buy,
@@ -358,9 +363,11 @@ mod tests {
     /// unchanged through `FromStr`.
     #[test]
     fn display_round_trips_with_filled_ids_and_trades() {
+        // Two makers (20 and 21) each fully consumed, so each is both a trade
+        // maker and a filled id — the shape the engine actually produces.
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
-        assert!(result.add_trade(sample_trade(30)).is_ok());
-        assert!(result.add_trade(sample_trade(20)).is_ok());
+        assert!(result.add_trade(sample_trade_with_maker(20, 30)).is_ok());
+        assert!(result.add_trade(sample_trade_with_maker(21, 20)).is_ok());
         result.add_filled_order_id(Id::from_u64(20));
         result.add_filled_order_id(Id::from_u64(21));
 
@@ -380,6 +387,203 @@ mod tests {
         );
         // Rendering the parsed result reproduces the exact canonical text.
         assert_eq!(parsed.to_string(), rendered);
+    }
+
+    // ----- issue #116: invariants enforced during decoding -----
+    //
+    // Private fields protect Rust-API construction, but `Deserialize` and
+    // `FromStr` reconstruct fields directly. Both now route through
+    // `MatchResult::validated`, so a self-contradictory payload is rejected
+    // (serde error / `PriceLevelError`) instead of minting an impossible value.
+    // Every payload a public-API-built result can produce still decodes.
+
+    /// A valid `MatchResult` carrying trades and filled ids round-trips through
+    /// serde JSON with all fields (including `outcome`) intact.
+    #[test]
+    fn valid_result_with_filled_ids_round_trips_serde_json() {
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(result.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        result.add_filled_order_id(Id::from_u64(20));
+
+        let json = serde_json::to_string(&result).expect("serialize");
+        let parsed: MatchResult = serde_json::from_str(&json).expect("valid payload must decode");
+
+        assert_eq!(parsed.order_id(), Id::from_u64(10));
+        assert_eq!(parsed.remaining_quantity().as_u64(), 60);
+        assert!(!parsed.is_complete());
+        assert_eq!(parsed.outcome(), MatchOutcome::PartiallyFilled);
+        assert_eq!(parsed.trades().len(), 1);
+        assert_eq!(parsed.filled_order_ids(), &[Id::from_u64(20)]);
+    }
+
+    /// A genuinely killed / rejected result (no trades, no filled ids) still
+    /// decodes — the outcome invariant only forbids a *populated* kill/reject.
+    #[test]
+    fn valid_killed_and_rejected_round_trip_serde_json() {
+        for build in [
+            MatchResult::mark_killed as fn(&mut MatchResult, u64),
+            MatchResult::mark_rejected,
+        ] {
+            let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+            build(&mut result, 100);
+
+            let json = serde_json::to_string(&result).expect("serialize");
+            let parsed: MatchResult =
+                serde_json::from_str(&json).expect("empty kill/reject must decode");
+
+            assert_eq!(parsed.remaining_quantity().as_u64(), 100);
+            assert!(!parsed.is_complete());
+            assert!(parsed.trades().is_empty());
+            assert!(parsed.filled_order_ids().is_empty());
+            assert!(parsed.was_killed() || parsed.was_rejected());
+        }
+    }
+
+    /// Helper: serialize a valid result, mutate the JSON object, and return the
+    /// mutated JSON string so a negative test can feed it back to `from_str`.
+    fn mutated_json(base: &MatchResult, mutate: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut value = serde_json::to_value(base).expect("serialize base");
+        mutate(&mut value);
+        serde_json::to_string(&value).expect("re-serialize mutated payload")
+    }
+
+    /// Invariant 1: `is_complete == true` with a positive remainder is rejected.
+    #[test]
+    fn deserialize_rejects_complete_with_remainder() {
+        // new(0) is complete with remainder 0; force a positive remainder.
+        let base = MatchResult::new(Id::from_u64(10), Quantity::new(0));
+        let json = mutated_json(&base, |v| {
+            v["remaining_quantity"] = serde_json::json!(5);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
+    /// Invariant 3: a `Rejected` / `Killed` outcome may not carry trades.
+    #[test]
+    fn deserialize_rejects_trades_on_killed_or_rejected() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+
+        for outcome in ["killed", "rejected"] {
+            let json = mutated_json(&base, |v| {
+                v["outcome"] = serde_json::json!(outcome);
+            });
+            assert!(
+                serde_json::from_str::<MatchResult>(&json).is_err(),
+                "{outcome} with trades must be rejected"
+            );
+        }
+    }
+
+    /// Invariant 3 (filled ids variant): a `Killed` outcome may not carry
+    /// filled order ids either.
+    #[test]
+    fn deserialize_rejects_filled_ids_on_killed() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        base.mark_killed(100);
+        let json = mutated_json(&base, |v| {
+            // Killed carries no trades; inject a filled id with no backing trade.
+            v["filled_order_ids"] = serde_json::json!(["20"]);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
+    /// Invariant 2: trade quantities whose sum overflows `u64` are rejected.
+    #[test]
+    fn deserialize_rejects_executed_quantity_sum_overflow() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        assert!(base.add_trade(sample_trade_with_maker(21, 20)).is_ok());
+        // Two trades each at u64::MAX overflow the checked sum.
+        let json = mutated_json(&base, |v| {
+            v["trades"]["trades"][0]["quantity"] = serde_json::json!(u64::MAX);
+            v["trades"]["trades"][1]["quantity"] = serde_json::json!(u64::MAX);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
+    /// Invariant 2 (implied initial): executed quantity + remaining overflowing
+    /// `u64` (an impossible initial taker quantity) is rejected.
+    #[test]
+    fn deserialize_rejects_executed_plus_remaining_overflow() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        let json = mutated_json(&base, |v| {
+            v["trades"]["trades"][0]["quantity"] = serde_json::json!(u64::MAX);
+            // Keep is_complete consistent with a positive remainder.
+            v["remaining_quantity"] = serde_json::json!(5);
+            v["is_complete"] = serde_json::json!(false);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
+    /// Invariant 4: a filled order id with no backing trade maker is rejected.
+    #[test]
+    fn deserialize_rejects_filled_id_absent_from_trades() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        base.add_filled_order_id(Id::from_u64(20));
+        let json = mutated_json(&base, |v| {
+            // 99 never traded.
+            v["filled_order_ids"] = serde_json::json!(["20", "99"]);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
+    // ----- issue #116: the same invariants via FromStr -----
+
+    /// `FromStr` rejects a structurally-valid text whose `is_complete` claim
+    /// contradicts the remainder.
+    #[test]
+    fn from_str_rejects_complete_with_remainder() {
+        let text = "MatchResult:order_id=10;remaining_quantity=5;is_complete=true;\
+                    trades=Trades:[];filled_order_ids=[]";
+        assert!(MatchResult::from_str(text).is_err());
+    }
+
+    /// `FromStr` rejects text whose trade quantities sum past `u64::MAX`.
+    #[test]
+    fn from_str_rejects_executed_quantity_sum_overflow() {
+        let trades = TradeList::from_vec(vec![
+            sample_trade_with_maker(20, u64::MAX),
+            sample_trade_with_maker(21, u64::MAX),
+        ]);
+        let text = format!(
+            "MatchResult:order_id=10;remaining_quantity=1;is_complete=false;\
+             trades={trades};filled_order_ids=[]"
+        );
+        assert!(MatchResult::from_str(&text).is_err());
+    }
+
+    /// `FromStr` rejects text listing a filled id that is not a trade maker.
+    #[test]
+    fn from_str_rejects_filled_id_absent_from_trades() {
+        let trades = TradeList::from_vec(vec![sample_trade_with_maker(20, 40)]);
+        let text = format!(
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades={trades};filled_order_ids=[20,99]"
+        );
+        assert!(MatchResult::from_str(&text).is_err());
+    }
+
+    /// Structural tightening (#114 review follow-up): trailing content after the
+    /// `filled_order_ids` closing `]` is now rejected, symmetric with the
+    /// `trades` branch. Previously the `filled_order_ids` branch silently
+    /// tolerated a missing `;` separator and parsed the trailing text as another
+    /// field.
+    #[test]
+    fn from_str_rejects_trailing_content_after_filled_ids() {
+        // A second `order_id=...` glued directly to the closing `]` with no `;`.
+        let text = "MatchResult:order_id=10;remaining_quantity=0;is_complete=true;\
+                    trades=Trades:[];filled_order_ids=[]order_id=10";
+        assert!(
+            MatchResult::from_str(text).is_err(),
+            "trailing content after filled_order_ids ']' must be rejected"
+        );
+        // The canonical form (nothing after the ']') still parses.
+        let ok = "MatchResult:order_id=10;remaining_quantity=0;is_complete=true;\
+                  trades=Trades:[];filled_order_ids=[]";
+        assert!(MatchResult::from_str(ok).is_ok());
     }
 
     // ----- property: from_str never panics on arbitrary UTF-8 -----
@@ -431,6 +635,75 @@ mod tests {
         #[test]
         fn from_str_never_panics_on_structural_fuzz(input in structural_fuzz()) {
             let _ = MatchResult::from_str(&input);
+        }
+    }
+
+    /// Build a valid `MatchResult` purely through the public API from a seed, so
+    /// every invariant `validated` checks holds by construction: `add_trade`
+    /// keeps `is_complete` / `remaining` / `outcome` in lockstep, and each
+    /// filled id is a maker that just traded.
+    fn build_valid_result(initial: u64, specs: &[(u64, u64, bool)]) -> MatchResult {
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(initial));
+        let mut remaining = initial;
+        for &(maker, raw_qty, fill) in specs {
+            if remaining == 0 {
+                break;
+            }
+            // A trade of 1..=remaining keeps add_trade from underflowing.
+            let qty = raw_qty % remaining + 1;
+            if result
+                .add_trade(sample_trade_with_maker(maker, qty))
+                .is_ok()
+            {
+                remaining -= qty;
+                if fill {
+                    result.add_filled_order_id(Id::from_u64(maker));
+                }
+            }
+        }
+        result
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+        /// Any valid result built through the public API round-trips both serde
+        /// JSON (outcome preserved) and Display/FromStr (benign outcome
+        /// re-derived identically) with no field drift — the validator never
+        /// rejects a legitimately-constructed value.
+        #[test]
+        fn valid_result_round_trips_both_encodings(
+            initial in 1u64..=100_000,
+            specs in prop::collection::vec((20u64..=40, 1u64..=100_000, any::<bool>()), 0..12),
+        ) {
+            let original = build_valid_result(initial, &specs);
+
+            // serde JSON must decode and preserve every field, outcome included.
+            let json = serde_json::to_string(&original)
+                .map_err(|e| TestCaseError::fail(format!("serialize: {e}")))?;
+            let decoded: MatchResult = serde_json::from_str(&json)
+                .map_err(|e| TestCaseError::fail(format!("valid json must decode: {e}")))?;
+            prop_assert_eq!(decoded.order_id(), original.order_id());
+            prop_assert_eq!(
+                decoded.remaining_quantity().as_u64(),
+                original.remaining_quantity().as_u64()
+            );
+            prop_assert_eq!(decoded.is_complete(), original.is_complete());
+            prop_assert_eq!(decoded.outcome(), original.outcome());
+            prop_assert_eq!(decoded.trades().len(), original.trades().len());
+            prop_assert_eq!(decoded.filled_order_ids(), original.filled_order_ids());
+
+            // Display / FromStr must reparse and preserve the text-carried fields.
+            let text = original.to_string();
+            let reparsed = MatchResult::from_str(&text)
+                .map_err(|e| TestCaseError::fail(format!("valid text must reparse: {e}")))?;
+            prop_assert_eq!(
+                reparsed.remaining_quantity().as_u64(),
+                original.remaining_quantity().as_u64()
+            );
+            prop_assert_eq!(reparsed.is_complete(), original.is_complete());
+            prop_assert_eq!(reparsed.trades().len(), original.trades().len());
+            prop_assert_eq!(reparsed.filled_order_ids(), original.filled_order_ids());
         }
     }
 }

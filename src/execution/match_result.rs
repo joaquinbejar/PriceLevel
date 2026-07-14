@@ -71,7 +71,19 @@ impl MatchOutcome {
 /// Fields are private to enforce invariant consistency between
 /// `remaining_quantity`, `is_complete`, and `trades`.
 /// Use the provided accessor methods and mutation helpers.
+///
+/// # Decode-time validation
+///
+/// The Rust API keeps the fields mutually consistent, but a decoder writes
+/// them directly. Both `Deserialize` (via `#[serde(try_from)]` through a
+/// private wire struct) and [`FromStr`] therefore route the reconstructed
+/// value through a single private validator, which rejects any payload that
+/// breaks the invariants a public-API-built result always upholds. Every
+/// payload a valid `MatchResult` can produce still decodes unchanged; only
+/// self-contradictory input is rejected — as a serde error or a
+/// [`PriceLevelError`], never a panic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "MatchResultWire")]
 pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
     order_id: Id,
@@ -89,13 +101,44 @@ pub struct MatchResult {
     filled_order_ids: Vec<Id>,
 
     /// Terminal classification of the match (filled / killed / rejected / ...).
-    ///
-    /// `#[serde(default)]` keeps snapshots produced before this field was added
-    /// deserializable: an older JSON payload restores as
-    /// [`MatchOutcome::NotFilled`] and is corrected by the accessors derived
-    /// from the other fields where it matters.
+    outcome: MatchOutcome,
+}
+
+/// Wire form of [`MatchResult`] used for validated deserialization.
+///
+/// It mirrors `MatchResult`'s serialized shape field-for-field (identical
+/// names, so every previously-valid payload still decodes) but performs no
+/// validation itself: `#[serde(try_from = "MatchResultWire")]` on
+/// `MatchResult` deserializes this permissive struct and then runs
+/// [`MatchResult::validated`] via the [`TryFrom`] impl below. The `outcome`
+/// field keeps `#[serde(default)]` so a payload written before that field
+/// existed decodes as [`MatchOutcome::NotFilled`] (the legacy default), as
+/// before.
+#[derive(Deserialize)]
+struct MatchResultWire {
+    order_id: Id,
+    trades: TradeList,
+    remaining_quantity: u64,
+    is_complete: bool,
+    filled_order_ids: Vec<Id>,
     #[serde(default)]
     outcome: MatchOutcome,
+}
+
+impl TryFrom<MatchResultWire> for MatchResult {
+    type Error = PriceLevelError;
+
+    fn try_from(wire: MatchResultWire) -> Result<Self, Self::Error> {
+        MatchResult {
+            order_id: wire.order_id,
+            trades: wire.trades,
+            remaining_quantity: wire.remaining_quantity,
+            is_complete: wire.is_complete,
+            filled_order_ids: wire.filled_order_ids,
+            outcome: wire.outcome,
+        }
+        .validated()
+    }
 }
 
 impl MatchResult {
@@ -353,6 +396,97 @@ impl MatchResult {
             Ok(Some(self.executed_value()? as f64 / executed_qty as f64))
         }
     }
+
+    /// Consumes `self`, returning it only if it satisfies the invariants a
+    /// public-API-built [`MatchResult`] always upholds — the single validation
+    /// gate both decoders ([`FromStr`] and `Deserialize` via
+    /// [`MatchResultWire`]) route through, so a decoder can never mint a
+    /// self-contradictory value that the private-field Rust API forbids.
+    ///
+    /// The checks mirror exactly what the constructors / mutators
+    /// ([`Self::new`], [`Self::add_trade`], [`Self::finalize`],
+    /// [`Self::mark_killed`], [`Self::mark_rejected`]) and the matching engine
+    /// guarantee — no stricter:
+    ///
+    /// 1. **Completion agrees with the remainder:** `is_complete` is `true` iff
+    ///    `remaining_quantity == 0`.
+    /// 2. **Executed quantity is representable:** the checked sum of the trade
+    ///    quantities does not overflow `u64`, and that sum plus the remaining
+    ///    quantity (the implied initial taker quantity, itself a `u64`) does not
+    ///    overflow either.
+    /// 3. **A killed / rejected result carries nothing:** a
+    ///    [`MatchOutcome::Killed`] or [`MatchOutcome::Rejected`] outcome — both
+    ///    decided before any sweep — has no trades and no filled order ids, as
+    ///    [`Self::mark_killed`] / [`Self::mark_rejected`] enforce.
+    /// 4. **Filled ids are backed by trades:** every id in `filled_order_ids`
+    ///    appears as a `maker_order_id` of some trade, because the engine only
+    ///    records a filled id for a maker it just traded against
+    ///    (`PriceLevel::match_order`). The reverse does not hold — a partially
+    ///    filled maker trades without being recorded as filled — so this is a
+    ///    one-directional subset check, not equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] describing the first
+    /// invariant the value violates.
+    fn validated(self) -> Result<Self, PriceLevelError> {
+        // 1. Completion agrees with the remainder.
+        if self.is_complete != (self.remaining_quantity == 0) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "is_complete ({}) disagrees with remaining_quantity ({})",
+                    self.is_complete, self.remaining_quantity
+                ),
+            });
+        }
+
+        // 2. Executed quantity is representable, and so is the implied initial
+        //    taker quantity (executed + remaining). `executed_quantity` already
+        //    returns a checked-sum error on overflow.
+        let executed = self.executed_quantity()?.as_u64();
+        if executed.checked_add(self.remaining_quantity).is_none() {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "executed quantity ({executed}) plus remaining_quantity ({}) overflows u64",
+                    self.remaining_quantity
+                ),
+            });
+        }
+
+        // 3. A killed / rejected result carries no trades and no filled ids.
+        if matches!(self.outcome, MatchOutcome::Killed | MatchOutcome::Rejected)
+            && (!self.trades.is_empty() || !self.filled_order_ids.is_empty())
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "{:?} outcome must carry no trades and no filled_order_ids \
+                     (found {} trade(s), {} filled id(s))",
+                    self.outcome,
+                    self.trades.len(),
+                    self.filled_order_ids.len()
+                ),
+            });
+        }
+
+        // 4. Every filled id is backed by a trade whose maker it is.
+        if !self.filled_order_ids.is_empty() {
+            let makers: std::collections::HashSet<Id> = self
+                .trades
+                .as_vec()
+                .iter()
+                .map(|trade| trade.maker_order_id())
+                .collect();
+            if let Some(missing) = self.filled_order_ids.iter().find(|id| !makers.contains(id)) {
+                return Err(PriceLevelError::InvalidOperation {
+                    message: format!(
+                        "filled order id {missing} does not appear as a maker in any trade"
+                    ),
+                });
+            }
+        }
+
+        Ok(self)
+    }
 }
 
 impl fmt::Display for MatchResult {
@@ -536,8 +670,14 @@ impl FromStr for MatchResult {
                         Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
 
                     pos = i + 1;
+                    // Symmetric with the `trades` branch: after the closing `]`
+                    // the only thing allowed is a `;` field separator or the end
+                    // of the string. Any other trailing content is malformed and
+                    // rejected rather than silently ignored.
                     if bytes.get(pos) == Some(&b';') {
                         pos += 1;
+                    } else if pos < bytes.len() {
+                        return Err(PriceLevelError::InvalidFormat);
                     }
                 }
                 _ => return Err(PriceLevelError::InvalidFormat),
@@ -612,13 +752,19 @@ impl FromStr for MatchResult {
             MatchOutcome::PartiallyFilled
         };
 
-        Ok(MatchResult {
+        // Route the structurally-parsed value through the same invariant gate
+        // as `Deserialize`, so text input that is well-formed but
+        // self-contradictory (e.g. `is_complete=true` with a positive
+        // remainder, trade quantities that overflow, or a filled id absent from
+        // the trades) is rejected rather than accepted.
+        MatchResult {
             order_id,
             trades,
             remaining_quantity,
             is_complete,
             filled_order_ids,
             outcome,
-        })
+        }
+        .validated()
     }
 }
