@@ -267,9 +267,11 @@ impl PriceLevel {
     /// `out` is cleared and then extended in place, yielding the exact same
     /// sequence [`Self::snapshot_by_insertion_seq`] returns — the order
     /// [`Self::match_order`] consumes resting orders. Reusing one scratch
-    /// buffer across calls avoids the per-call allocation the owned-`Vec`
-    /// variant pays, which matters for a downstream consumer that walks every
-    /// level repeatedly (e.g. a self-trade-prevention pre-scan).
+    /// buffer across calls avoids the per-call allocation of the returned
+    /// `Vec`, which matters for a downstream consumer that walks every level
+    /// repeatedly (e.g. a self-trade-prevention pre-scan). Note that an
+    /// internal `(sequence, order)` pairs buffer plus its sort is still paid
+    /// per call, so the reuse saves only the output `Vec` allocation.
     ///
     /// Like `snapshot_by_insertion_seq`, this is a point-in-time view: a
     /// concurrent mutation after the call can change the queue.

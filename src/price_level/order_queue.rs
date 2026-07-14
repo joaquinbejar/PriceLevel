@@ -372,11 +372,23 @@ impl OrderQueue {
     /// Materialize the resting orders in ascending **insertion-sequence** order —
     /// the exact order [`OrderQueue::match_front`] consumes them.
     ///
-    /// Walks the `index` (`SkipMap<seq, Id>`, which iterates ascending) and
-    /// resolves each id in `orders`, skipping any transient index entry whose
-    /// order was already removed. Unlike [`OrderQueue::snapshot_vec`] (sorted by
-    /// `(timestamp, sequence)`), this reflects pure insertion order, so it equals
-    /// the sweep even when timestamps are not monotonic with insertion.
+    /// Derived from the authoritative `orders` map (keyed by `Id`) rather than
+    /// the `index`: we collect the `(stored_seq, order)` pairs and sort by the
+    /// stored sequence. Because the map holds exactly one entry per order, a
+    /// duplicate id is impossible by construction, and because each
+    /// `(seq, order)` pair is swapped atomically under the `DashMap` per-entry
+    /// lock (both [`FrontAction::ReplaceAtTail`] and
+    /// [`OrderQueue::update_in_place`] mutate value and sequence together under
+    /// it), every emitted pair is a real committed state — an order caught
+    /// mid-re-sequencing appears at either its old or its new sequence, never
+    /// both and never as a mixed `(old_seq, new_order)` pair. Walking the
+    /// `index` instead could pin a stale `seq -> id` entry during a
+    /// re-sequencing and emit the same order twice (or at the wrong priority),
+    /// which corrupts a snapshot fold.
+    ///
+    /// Unlike [`OrderQueue::snapshot_vec`] (sorted by `(timestamp, sequence)`),
+    /// this reflects pure insertion order, so it equals the sweep even when
+    /// timestamps are not monotonic with insertion.
     ///
     /// This view also backs [`crate::price_level::PriceLevel::snapshot`]: the
     /// snapshot round-trip re-enqueues in this consumption order, so exact
@@ -393,17 +405,28 @@ impl OrderQueue {
     /// order — the buffer-reuse variant of [`OrderQueue::snapshot_by_seq`].
     ///
     /// `out` is cleared first, then extended in place, so a caller can reuse one
-    /// scratch buffer across many calls and avoid a per-call allocation (e.g. a
-    /// pooled buffer in a per-level pre-scan). The walk and skip-removed-entry
-    /// semantics are identical to [`OrderQueue::snapshot_by_seq`]; the only
-    /// difference is where the result lands.
+    /// scratch buffer across calls and avoid the per-call allocation of the
+    /// returned `Vec`. Note the internal `(seq, order)` pairs buffer plus its
+    /// sort is still paid on every call — the reuse saves only the output `Vec`
+    /// allocation, not the collect-and-sort. The duplicate-free,
+    /// committed-pair guarantees are identical to
+    /// [`OrderQueue::snapshot_by_seq`]; the only difference is where the result
+    /// lands.
     pub(crate) fn snapshot_by_seq_into(&self, out: &mut Vec<Arc<OrderType<()>>>) {
+        // Build from the `orders` map (one entry per id) so a concurrent
+        // re-sequencing can never surface an order twice or at a mixed
+        // priority; see `snapshot_by_seq` for the full rationale.
+        let mut pairs: Vec<(u64, Arc<OrderType<()>>)> = self
+            .orders
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        // Unstable sort is deterministic here because sequences are unique
+        // across live orders (`push` / `ReplaceAtTail` mint distinct seqs via
+        // `fetch_add`; `update_in_place` keeps the order's own seq).
+        pairs.sort_unstable_by_key(|(seq, _)| *seq);
         out.clear();
-        out.extend(self.index.iter().filter_map(|index_entry| {
-            self.orders
-                .get(index_entry.value())
-                .map(|order_entry| order_entry.value().1.clone())
-        }));
+        out.extend(pairs.into_iter().map(|(_, order)| order));
     }
 
     /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
@@ -464,11 +487,12 @@ impl Serialize for OrderQueue {
         S: Serializer,
     {
         // Materialize the ordered view first so the length hint always matches
-        // the number of elements emitted. Iterating `index` while hinting
-        // `self.len()` (from `orders`) could disagree in a transient state
-        // where an order is in one structure but not yet the other.
-        // Insertion-sequence order keeps the round-trip price-time priority
-        // (the DashMap alone has no deterministic iteration order).
+        // the number of elements emitted. `snapshot_by_seq` derives its pairs
+        // from the `orders` map (one entry per id) and sorts by insertion
+        // sequence, so it can neither duplicate an order nor disagree with its
+        // own length during a concurrent re-sequencing. Insertion-sequence
+        // order keeps the round-trip price-time priority (the DashMap alone has
+        // no deterministic iteration order).
         let ordered = self.snapshot_by_seq();
         let mut seq = serializer.serialize_seq(Some(ordered.len()))?;
         for order in &ordered {

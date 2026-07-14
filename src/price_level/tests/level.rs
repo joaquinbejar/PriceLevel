@@ -5180,6 +5180,127 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_concurrent_resequencing_no_duplicates() {
+        // Issue #110 (PR review): while a maker is re-sequenced (an upsize's
+        // remove+push demotion), a concurrent reader must never observe the
+        // same order twice — or a torn (order_count, orders) pair — in a
+        // snapshot. The old `snapshot_by_seq` walked the SkipMap `index` and
+        // could pin a stale `seq -> id` entry mid-re-sequencing, emit the
+        // refreshed order at BOTH its old and new sequence, and hand
+        // `snapshot()` a vector with a duplicate id whose fold corrupts the
+        // restore. Deriving the view from the id-keyed `orders` map makes a
+        // duplicate impossible by construction; this test guards that.
+        use std::collections::HashSet;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const N: usize = 8;
+        const WRITER_ITERS: usize = 300;
+        const READERS: usize = 2;
+
+        let level = Arc::new(PriceLevel::new(10_000));
+        // N resting standard makers with known ids 1..=N and initial quantity
+        // 100 (monotonic timestamps via the shared counter).
+        for id in 1..=N as u64 {
+            level.add_order(create_standard_order(id, 10_000, 100));
+        }
+
+        // Barrier aligns the single writer with the readers so the resequencing
+        // churn and the snapshots genuinely overlap (global_rules requires a
+        // Barrier start for concurrency tests).
+        let barrier = Arc::new(Barrier::new(READERS + 1));
+        let writer_done = Arc::new(AtomicBool::new(false));
+
+        let writer = {
+            let level = Arc::clone(&level);
+            let barrier = Arc::clone(&barrier);
+            let writer_done = Arc::clone(&writer_done);
+            thread::spawn(move || {
+                barrier.wait();
+                for k in 0..WRITER_ITERS {
+                    // Rotate through the ids; the target quantity strictly
+                    // increases every time (1000 + k > any prior value assigned
+                    // to this id, and > the initial 100), so each update takes
+                    // the quantity-increase branch and demotes via remove+push.
+                    let id = Id::from_u64((k % N) as u64 + 1);
+                    let new_quantity = Quantity::new(1_000 + k as u64);
+                    let _ = level
+                        .update_order(OrderUpdate::UpdateQuantity {
+                            order_id: id,
+                            new_quantity,
+                        })
+                        .expect("upsize update must not error");
+                }
+                writer_done.store(true, Ordering::Release);
+            })
+        };
+
+        let readers: Vec<_> = (0..READERS)
+            .map(|_| {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let writer_done = Arc::clone(&writer_done);
+                thread::spawn(move || {
+                    barrier.wait();
+                    loop {
+                        // Observe the flag BEFORE taking the snapshot, then run
+                        // one more check after it flips, so a final post-writer
+                        // snapshot is always validated too.
+                        let finished = writer_done.load(Ordering::Acquire);
+
+                        let snap = level.snapshot();
+                        let ids: HashSet<Id> = snap.orders().iter().map(|o| o.id()).collect();
+                        assert_eq!(
+                            ids.len(),
+                            snap.orders().len(),
+                            "snapshot contains a duplicate order id under concurrent resequencing"
+                        );
+                        assert_eq!(
+                            snap.orders().len(),
+                            snap.order_count(),
+                            "snapshot order_count disagrees with its own orders vector"
+                        );
+
+                        // The snapshot must also round-trip into a level whose
+                        // rebuilt queue length matches its order_count.
+                        let restored =
+                            PriceLevel::from_snapshot(snap).expect("from_snapshot must succeed");
+                        assert_eq!(
+                            restored.order_count(),
+                            restored.snapshot_by_insertion_seq().len(),
+                            "restored order_count disagrees with rebuilt queue length"
+                        );
+
+                        if finished {
+                            break;
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        writer.join().expect("writer thread panicked");
+        for reader in readers {
+            reader.join().expect("reader thread panicked");
+        }
+
+        // After the churn settles the level still holds exactly the N makers,
+        // with no duplicates and counters consistent with the queue.
+        assert_counters_match_queue(&level);
+        let final_ids: HashSet<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            final_ids.len(),
+            N,
+            "the level must still hold exactly N distinct makers"
+        );
+    }
+
+    #[test]
     fn test_snapshot_by_insertion_seq_empty_level() {
         let level = PriceLevel::new(10_000);
         assert!(level.snapshot_by_insertion_seq().is_empty());
