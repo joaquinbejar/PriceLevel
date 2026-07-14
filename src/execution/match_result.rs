@@ -71,7 +71,19 @@ impl MatchOutcome {
 /// Fields are private to enforce invariant consistency between
 /// `remaining_quantity`, `is_complete`, and `trades`.
 /// Use the provided accessor methods and mutation helpers.
+///
+/// # Decode-time validation
+///
+/// The Rust API keeps the fields mutually consistent, but a decoder writes
+/// them directly. Both `Deserialize` (via `#[serde(try_from)]` through a
+/// private wire struct) and [`FromStr`] therefore route the reconstructed
+/// value through a single private validator, which rejects any payload that
+/// breaks the invariants a public-API-built result always upholds. Every
+/// payload a valid `MatchResult` can produce still decodes unchanged; only
+/// self-contradictory input is rejected — as a serde error or a
+/// [`PriceLevelError`], never a panic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "MatchResultWire")]
 pub struct MatchResult {
     /// The ID of the incoming order that initiated the match
     order_id: Id,
@@ -89,13 +101,60 @@ pub struct MatchResult {
     filled_order_ids: Vec<Id>,
 
     /// Terminal classification of the match (filled / killed / rejected / ...).
-    ///
-    /// `#[serde(default)]` keeps snapshots produced before this field was added
-    /// deserializable: an older JSON payload restores as
-    /// [`MatchOutcome::NotFilled`] and is corrected by the accessors derived
-    /// from the other fields where it matters.
-    #[serde(default)]
     outcome: MatchOutcome,
+}
+
+/// Wire form of [`MatchResult`] used for validated deserialization.
+///
+/// It mirrors `MatchResult`'s serialized shape field-for-field (identical
+/// names, so every previously-valid payload still decodes) but performs no
+/// validation itself: `#[serde(try_from = "MatchResultWire")]` on
+/// `MatchResult` deserializes this permissive struct and then runs
+/// [`MatchResult::validated`] via the [`TryFrom`] impl below.
+#[derive(Deserialize)]
+struct MatchResultWire {
+    order_id: Id,
+    trades: TradeList,
+    remaining_quantity: u64,
+    is_complete: bool,
+    filled_order_ids: Vec<Id>,
+    /// Decoded as an `Option` so a legacy payload written before the field
+    /// existed (key absent → `None`) is told apart from an explicit outcome.
+    /// An absent outcome is *derived* from the other fields — the legacy
+    /// behavior — while an explicit one is validated against them, so a
+    /// payload can no longer claim `Filled` with a positive remainder or
+    /// `PartiallyFilled` without trades.
+    #[serde(default)]
+    outcome: Option<MatchOutcome>,
+}
+
+impl TryFrom<MatchResultWire> for MatchResult {
+    type Error = PriceLevelError;
+
+    fn try_from(wire: MatchResultWire) -> Result<Self, Self::Error> {
+        let outcome = wire.outcome.unwrap_or({
+            // Legacy payload (no outcome key): re-derive the benign
+            // classification exactly as the pre-outcome accessors did. A
+            // killed / rejected outcome cannot be recovered — it is
+            // indistinguishable from NotFilled once the trades are gone.
+            if wire.remaining_quantity == 0 {
+                MatchOutcome::Filled
+            } else if wire.trades.is_empty() {
+                MatchOutcome::NotFilled
+            } else {
+                MatchOutcome::PartiallyFilled
+            }
+        });
+        MatchResult {
+            order_id: wire.order_id,
+            trades: wire.trades,
+            remaining_quantity: wire.remaining_quantity,
+            is_complete: wire.is_complete,
+            filled_order_ids: wire.filled_order_ids,
+            outcome,
+        }
+        .validated()
+    }
 }
 
 impl MatchResult {
@@ -155,8 +214,19 @@ impl MatchResult {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the trade's quantity
     /// exceeds the remaining quantity of the incoming order (the subtraction
-    /// would underflow), which indicates an over-fill bug in the caller.
+    /// would underflow), which indicates an over-fill bug in the caller, or if
+    /// the trade's taker order id differs from this result's incoming order id
+    /// (a trade can only belong to the taker that initiated the match).
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
+        if trade.taker_order_id() != self.order_id {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade taker order id {} does not match the result's incoming order id {}",
+                    trade.taker_order_id(),
+                    self.order_id
+                ),
+            });
+        }
         self.remaining_quantity = self
             .remaining_quantity
             .checked_sub(trade.quantity().as_u64())
@@ -353,6 +423,144 @@ impl MatchResult {
             Ok(Some(self.executed_value()? as f64 / executed_qty as f64))
         }
     }
+
+    /// Consumes `self`, returning it only if it satisfies the invariants a
+    /// public-API-built [`MatchResult`] always upholds — the single validation
+    /// gate both decoders ([`FromStr`] and `Deserialize` via
+    /// [`MatchResultWire`]) route through, so a decoder can never mint a
+    /// self-contradictory value that the private-field Rust API forbids.
+    ///
+    /// The checks mirror exactly what the constructors / mutators
+    /// ([`Self::new`], [`Self::add_trade`], [`Self::finalize`],
+    /// [`Self::mark_killed`], [`Self::mark_rejected`]) and the matching engine
+    /// guarantee — no stricter:
+    ///
+    /// 1. **Completion agrees with the remainder:** `is_complete` is `true` iff
+    ///    `remaining_quantity == 0`.
+    /// 2. **Executed quantity is representable:** the checked sum of the trade
+    ///    quantities does not overflow `u64`, and that sum plus the remaining
+    ///    quantity (the implied initial taker quantity, itself a `u64`) does not
+    ///    overflow either.
+    /// 3. **A killed / rejected result carries nothing:** a
+    ///    [`MatchOutcome::Killed`] or [`MatchOutcome::Rejected`] outcome — both
+    ///    decided before any sweep — has no trades and no filled order ids, as
+    ///    [`Self::mark_killed`] / [`Self::mark_rejected`] enforce.
+    /// 4. **Filled ids are backed by trades:** every id in `filled_order_ids`
+    ///    appears as a `maker_order_id` of some trade, because the engine only
+    ///    records a filled id for a maker it just traded against
+    ///    (`PriceLevel::match_order`). The reverse does not hold — a partially
+    ///    filled maker trades without being recorded as filled — so this is a
+    ///    one-directional subset check, not equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] describing the first
+    /// invariant the value violates.
+    fn validated(self) -> Result<Self, PriceLevelError> {
+        // 1. Completion agrees with the remainder.
+        if self.is_complete != (self.remaining_quantity == 0) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "is_complete ({}) disagrees with remaining_quantity ({})",
+                    self.is_complete, self.remaining_quantity
+                ),
+            });
+        }
+
+        // 2. Executed quantity is representable, and so is the implied initial
+        //    taker quantity (executed + remaining). `executed_quantity` already
+        //    returns a checked-sum error on overflow.
+        let executed = self.executed_quantity()?.as_u64();
+        if executed.checked_add(self.remaining_quantity).is_none() {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "executed quantity ({executed}) plus remaining_quantity ({}) overflows u64",
+                    self.remaining_quantity
+                ),
+            });
+        }
+
+        // 3. The explicit outcome agrees with the fields it classifies. Every
+        //    public constructor / mutator keeps them in lockstep, so a decoded
+        //    value must too (a legacy payload without an outcome key has it
+        //    DERIVED from these same fields before this check, so it always
+        //    passes here).
+        let outcome_consistent = match self.outcome {
+            // Vacuously-complete results (zero-quantity taker) are Filled with
+            // no trades, so Filled constrains only the remainder.
+            MatchOutcome::Filled => self.remaining_quantity == 0,
+            MatchOutcome::PartiallyFilled => self.remaining_quantity > 0 && !self.trades.is_empty(),
+            MatchOutcome::NotFilled => self.remaining_quantity > 0 && self.trades.is_empty(),
+            // Killed / rejected takers were turned away whole: quantity
+            // remains, and no trade or filled id was ever recorded.
+            MatchOutcome::Killed | MatchOutcome::Rejected => {
+                self.remaining_quantity > 0
+                    && self.trades.is_empty()
+                    && self.filled_order_ids.is_empty()
+            }
+        };
+        if !outcome_consistent {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "{:?} outcome contradicts the decoded fields \
+                     (remaining_quantity {}, {} trade(s), {} filled id(s))",
+                    self.outcome,
+                    self.remaining_quantity,
+                    self.trades.len(),
+                    self.filled_order_ids.len()
+                ),
+            });
+        }
+
+        // 4. Every trade belongs to this result's incoming (taker) order —
+        //    mirrored by the same guard in `add_trade`, so decoded and
+        //    API-built values stay aligned.
+        if let Some(alien) = self
+            .trades
+            .as_vec()
+            .iter()
+            .find(|trade| trade.taker_order_id() != self.order_id)
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade taker order id {} does not match the result's incoming order id {}",
+                    alien.taker_order_id(),
+                    self.order_id
+                ),
+            });
+        }
+
+        // 5. The filled ids are a duplicate-free, order-preserving subsequence
+        //    of the trade maker ids: `match_order` records each fully-consumed
+        //    maker exactly once, immediately after its final trade, so trade
+        //    order and filled-id order agree. The `any` on the shared iterator
+        //    advances it past each match, which is exactly subsequence
+        //    semantics (and implies plain membership).
+        if !self.filled_order_ids.is_empty() {
+            let mut seen = std::collections::HashSet::with_capacity(self.filled_order_ids.len());
+            let mut makers = self
+                .trades
+                .as_vec()
+                .iter()
+                .map(|trade| trade.maker_order_id());
+            for filled in &self.filled_order_ids {
+                if !seen.insert(*filled) {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!("filled order id {filled} appears more than once"),
+                    });
+                }
+                if !makers.by_ref().any(|maker| maker == *filled) {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!(
+                            "filled order id {filled} is not an in-order maker of the trades"
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(self)
+    }
 }
 
 impl fmt::Display for MatchResult {
@@ -536,8 +744,14 @@ impl FromStr for MatchResult {
                         Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
 
                     pos = i + 1;
+                    // Symmetric with the `trades` branch: after the closing `]`
+                    // the only thing allowed is a `;` field separator or the end
+                    // of the string. Any other trailing content is malformed and
+                    // rejected rather than silently ignored.
                     if bytes.get(pos) == Some(&b';') {
                         pos += 1;
+                    } else if pos < bytes.len() {
+                        return Err(PriceLevelError::InvalidFormat);
                     }
                 }
                 _ => return Err(PriceLevelError::InvalidFormat),
@@ -612,13 +826,19 @@ impl FromStr for MatchResult {
             MatchOutcome::PartiallyFilled
         };
 
-        Ok(MatchResult {
+        // Route the structurally-parsed value through the same invariant gate
+        // as `Deserialize`, so text input that is well-formed but
+        // self-contradictory (e.g. `is_complete=true` with a positive
+        // remainder, trade quantities that overflow, or a filled id absent from
+        // the trades) is rejected rather than accepted.
+        MatchResult {
             order_id,
             trades,
             remaining_quantity,
             is_complete,
             filled_order_ids,
             outcome,
-        })
+        }
+        .validated()
     }
 }
