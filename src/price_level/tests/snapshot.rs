@@ -201,6 +201,87 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_v3_roundtrips_degraded_and_non_degraded() {
+        // Issue #129: new packages are v3 and round-trip BOTH a non-degraded
+        // (8-field statistics) and a degraded (9-field statistics) payload.
+        use crate::price_level::PriceLevelStatistics;
+
+        // Non-degraded.
+        let clean = PriceLevelStatistics::new();
+        clean
+            .record_execution(5, 100, 0, 1_000)
+            .expect("clean record");
+        assert!(!clean.stats_degraded());
+        let snap = PriceLevelSnapshot::with_orders_and_stats(
+            Price::new(10),
+            create_sample_orders(),
+            clean,
+        )
+        .expect("snapshot");
+        let package = PriceLevelSnapshotPackage::new(snap).expect("package");
+        assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
+        assert_eq!(package.version(), 3);
+        let json = package.to_json().expect("to_json");
+        let restored = PriceLevelSnapshotPackage::from_json(&json)
+            .expect("from_json")
+            .into_snapshot()
+            .expect("v3 non-degraded must validate + restore");
+        assert!(!restored.statistics().stats_degraded());
+
+        // Degraded: force a dropped execution (maker in the future of execution).
+        let degraded = PriceLevelStatistics::new();
+        assert!(degraded.record_execution(1, 1, 5_000, 1_000).is_err());
+        assert!(degraded.stats_degraded());
+        let snap = PriceLevelSnapshot::with_orders_and_stats(
+            Price::new(10),
+            create_sample_orders(),
+            degraded,
+        )
+        .expect("snapshot");
+        let package = PriceLevelSnapshotPackage::new(snap).expect("package");
+        assert_eq!(package.version(), 3);
+        let json = package.to_json().expect("to_json");
+        assert!(
+            json.contains("stats_degraded"),
+            "a degraded v3 payload carries the 9th field"
+        );
+        let restored = PriceLevelSnapshotPackage::from_json(&json)
+            .expect("from_json")
+            .into_snapshot()
+            .expect("v3 degraded must validate + restore");
+        assert!(
+            restored.statistics().stats_degraded(),
+            "the degraded flag round-trips through a v3 snapshot"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_v2_legacy_package_restores() {
+        // Issue #129: a legacy v2 package (8-field statistics, checksum over the
+        // v2 bytes) must still validate + restore — checksum recomputation is
+        // version-agnostic, and `validate` accepts both v2 and v3.
+        let snap = PriceLevelSnapshot::with_orders(Price::new(77), create_sample_orders())
+            .expect("snapshot");
+        let package = PriceLevelSnapshotPackage::new(snap).expect("package");
+        // Relabel the (non-degraded, 8-field) payload as the legacy v2 version.
+        // The checksum is computed over the snapshot, not the version, so it
+        // stays valid — exactly the shape an old writer produced.
+        let json = package.to_json().expect("to_json");
+        let mut value: Value = serde_json::from_str(&json).expect("parse");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("version".to_string(), Value::Number(2u32.into()));
+        }
+        let v2_json = serde_json::to_string(&value).expect("reserialize");
+
+        let v2_package = PriceLevelSnapshotPackage::from_json(&v2_json).expect("from_json");
+        assert_eq!(v2_package.version(), 2);
+        let restored = v2_package
+            .into_snapshot()
+            .expect("legacy v2 package must validate + restore");
+        assert!(!restored.statistics().stats_degraded());
+    }
+
+    #[test]
     fn test_new() {
         let snapshot = PriceLevelSnapshot::new(Price::new(1000));
         assert_eq!(snapshot.price().as_u128(), 1000);

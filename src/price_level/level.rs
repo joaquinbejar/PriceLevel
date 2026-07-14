@@ -957,6 +957,18 @@ impl PriceLevel {
     /// admissions arrive from one logical path (see the type-level note on
     /// [`PriceLevel`]), because the side is derived from the live queue rather
     /// than stored.
+    ///
+    /// # Statistics
+    ///
+    /// Per-level execution statistics are recorded **all-or-nothing** and can
+    /// never fail the match: the trade is already committed when
+    /// `PriceLevelStatistics::record_execution` runs. If recording overflows a
+    /// statistics counter, that execution's contribution is dropped atomically
+    /// (it advances every aggregate or none), the drop is logged at `WARN` (a
+    /// recoverable anomaly, not an aborted match), and the level's
+    /// `PriceLevelStatistics::stats_degraded` flag is set (sticky,
+    /// snapshot-persisted) so the under-count is observable. The emitted trades
+    /// and the `MatchResult` are unaffected (issue #117).
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -1365,12 +1377,43 @@ impl PriceLevel {
                             result.add_filled_order_id(data.maker_id);
                         }
 
-                        let _ = self.stats.record_execution(
+                        // The trade is already committed (added to `result` and
+                        // the queue mutated) — statistics recording cannot fail
+                        // it retroactively. Recording is all-or-nothing (issue
+                        // #117): on overflow the execution's contribution is
+                        // dropped atomically and a sticky `stats_degraded` flag
+                        // is set on the level's statistics (observable via
+                        // `PriceLevelStatistics::stats_degraded`), leaving the
+                        // trade stream unaffected. Log the drop rather than
+                        // discard it silently.
+                        // Read the degraded flag BEFORE recording: under the
+                        // single-matcher-per-level model this is the faithful
+                        // witness of the `false -> true` transition (issue #129).
+                        // `record_execution` sets the flag atomically via
+                        // `compare_exchange`; we log the WARN only on the FIRST
+                        // drop that transitions it, so a burst of dropped
+                        // executions logs once, not once per drop — the sticky
+                        // flag remains the durable signal for the rest.
+                        let was_degraded = self.stats.stats_degraded();
+                        if let Err(err) = self.stats.record_execution(
                             data.consumed,
                             data.maker_price,
                             data.maker_timestamp,
                             timestamp.as_u64(),
-                        );
+                        ) && !was_degraded
+                        {
+                            // WARN, not ERROR: the match is not aborted — this is
+                            // a recoverable observability anomaly flagged by the
+                            // sticky degraded flag (the trade is committed).
+                            tracing::warn!(
+                                price = self.price,
+                                taker_order_id = %taker_order_id,
+                                maker_order_id = %data.maker_id,
+                                consumed = data.consumed,
+                                error = %err,
+                                "execution statistics dropped (all-or-nothing); level stats marked degraded — trade unaffected"
+                            );
+                        }
                     }
 
                     remaining = new_remaining;

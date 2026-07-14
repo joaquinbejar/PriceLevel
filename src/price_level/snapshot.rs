@@ -261,12 +261,29 @@ impl PriceLevelSnapshot {
     }
 }
 
-/// Format version for checksum-enabled price level snapshots.
+/// Format version for checksum-enabled price level snapshots. New packages are
+/// written at this version.
 ///
-/// Version 2 (issue #63) persists per-level [`PriceLevelStatistics`] inside the
-/// snapshot. Version 1 packages carried no statistics and are rejected by
-/// [`PriceLevelSnapshotPackage::validate`] with a version mismatch.
-pub const SNAPSHOT_FORMAT_VERSION: u32 = 2;
+/// - **Version 1** carried no statistics — rejected by
+///   [`PriceLevelSnapshotPackage::validate`] with a version mismatch.
+/// - **Version 2** (issue #63) persists per-level [`PriceLevelStatistics`] as an
+///   8-field statistics payload (no `stats_degraded`).
+/// - **Version 3** (issue #129) is the current shape: it owns the optional 9th
+///   `stats_degraded` statistics field. A degraded level (which serializes that
+///   field) is a v3 payload, so it is no longer mislabelled v2 where an old
+///   8-field-only reader would choke on the unknown field.
+///
+/// [`PriceLevelSnapshotPackage::validate`] accepts BOTH v2 (legacy, 8-field,
+/// `stats_degraded` defaults `false`) and v3, so old snapshots keep restoring;
+/// v1 is still rejected. Checksum recomputation is version-agnostic — a
+/// non-degraded level serializes 8 fields under either version, so a legacy v2
+/// package's SHA-256 still matches.
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 3;
+
+/// The set of snapshot format versions [`PriceLevelSnapshotPackage::validate`]
+/// accepts on restore: the current [`SNAPSHOT_FORMAT_VERSION`] (v3) and the
+/// legacy v2 (issue #129). v1 (statistics-less) is not accepted.
+const SUPPORTED_SNAPSHOT_VERSIONS: &[u32] = &[2, 3];
 
 /// Serialized representation of a price level snapshot including checksum validation metadata.
 ///
@@ -361,11 +378,11 @@ impl PriceLevelSnapshotPackage {
     // Snapshot restoration / validation is a cold path: keep it out of line.
     #[inline(never)]
     pub fn validate(&self) -> Result<(), PriceLevelError> {
-        if self.version != SNAPSHOT_FORMAT_VERSION {
+        if !SUPPORTED_SNAPSHOT_VERSIONS.contains(&self.version) {
             return Err(PriceLevelError::InvalidOperation {
                 message: format!(
-                    "Unsupported snapshot version: {} (expected {})",
-                    self.version, SNAPSHOT_FORMAT_VERSION
+                    "Unsupported snapshot version: {} (expected one of {:?})",
+                    self.version, SUPPORTED_SNAPSHOT_VERSIONS
                 ),
             });
         }

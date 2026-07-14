@@ -86,8 +86,9 @@ fn main() {
         .snapshot_package()
         .unwrap_or_else(|e| exit_err(&format!("snapshot_package: {e}")));
 
-    // Snapshot format v2 (statistics persisted, issue #63).
-    assert_eq_or_exit(package.version(), 2, "snapshot version");
+    // Snapshot format v3 (statistics persisted since v2/#63; v3 owns the
+    // optional `stats_degraded` field, issue #129).
+    assert_eq_or_exit(package.version(), 3, "snapshot version");
     assert_or_exit(
         !package.checksum().is_empty(),
         "checksum should not be empty",
