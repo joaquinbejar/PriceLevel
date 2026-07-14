@@ -14,7 +14,33 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-/// A lock-free implementation of a price level in a limit order book
+/// A lock-free implementation of a price level in a limit order book.
+///
+/// # Topology
+///
+/// Every resting order sits at [`Self::price`] and shares a single side. The
+/// side is not stored: it is derived from the resting orders themselves (the
+/// first admitted maker defines it, and a drained level accepts either side
+/// again), so [`Self::add_order`] rejects a mismatching price or side. Deriving
+/// the side is lock-free.
+///
+/// Single-side coherence is a **correctness invariant**, not an
+/// eventually-consistent one — unlike the advisory quantity / count counters
+/// (issue #68), a level that admits two makers of opposite sides does not
+/// converge to a correct state later. Upholding it therefore relies on a
+/// strictly stronger assumption than the counters: that a given level's
+/// admissions arrive from a **single logical writer** (the composing order
+/// book routes each price to one admission path). Absent that, two races can
+/// admit an incompatible side:
+///
+/// - Two **opposite-side admissions into a genuinely empty level**: both may
+///   observe no resting order and both admit.
+/// - An **opposite-side admission racing a same-side upsize** on a
+///   single-order level: a quantity increase via [`Self::update_order`]
+///   re-sequences the sole maker with a remove-then-push, transiently emptying
+///   the queue, and an opposite-side admission observing that gap admits. This
+///   window rides on the same remove+push gap that issue #119's in-place
+///   re-sequencing closes.
 #[derive(Debug)]
 pub struct PriceLevel {
     /// The price of this level
@@ -67,6 +93,38 @@ impl PriceLevel {
             for order in orders {
                 if !seen.insert(order.id()) {
                     return Err(PriceLevelError::DuplicateOrderId(order.id().to_string()));
+                }
+            }
+        }
+
+        // Topology invariants (same rules `add_order` enforces): every order
+        // must sit at the level's price and share a single side. A snapshot that
+        // violates either would reconstruct a level that trades at the wrong
+        // price or emits contradictory taker sides, so reject it here rather
+        // than restore an incoherent level.
+        {
+            let level_price = snapshot.price().as_u128();
+            let mut level_side = None;
+            for order in snapshot.orders() {
+                if order.price().as_u128() != level_price {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!(
+                            "snapshot order price {} does not match level price {level_price}",
+                            order.price().as_u128()
+                        ),
+                    });
+                }
+                match level_side {
+                    None => level_side = Some(order.side()),
+                    Some(side) if side != order.side() => {
+                        return Err(PriceLevelError::InvalidOperation {
+                            message: format!(
+                                "snapshot order side {:?} is incompatible with the level side {side:?}",
+                                order.side()
+                            ),
+                        });
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -254,15 +312,58 @@ impl PriceLevel {
     /// undo on these advisory counters), so `try_push_with` publishes nothing
     /// and no counter is left drifted.
     ///
+    /// # Topology invariants
+    ///
+    /// A level holds orders at exactly one price and one side. The order's price
+    /// must equal the level's price, and its side must match the side of the
+    /// orders already resting here (the first admitted maker pins the side; a
+    /// fully drained level accepts either side again). Both are checked before
+    /// any counter is touched, so a rejected order leaves the level unchanged.
+    ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if the order's own
-    /// visible + hidden total overflows `u64`, or if admitting it would
-    /// overflow the level's visible-quantity, hidden-quantity, or order-count
-    /// counter, or [`PriceLevelError::DuplicateOrderId`] if an order with the
-    /// same id already rests at this level. A duplicate id takes precedence over
-    /// a counter overflow. In every case the level is unchanged.
+    /// Returns [`PriceLevelError::InvalidOperation`] if the order's price does
+    /// not match the level's, if its side is incompatible with the resting
+    /// side, if the order's own visible + hidden total overflows `u64`, or if
+    /// admitting it would overflow the level's visible-quantity,
+    /// hidden-quantity, or order-count counter; or
+    /// [`PriceLevelError::DuplicateOrderId`] if an order with the same id
+    /// already rests at this level. A duplicate id takes precedence over a
+    /// counter overflow. In every case the level is unchanged.
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
+        // -------- Admission topology invariants (cheapest checks, no mutation) --------
+        //
+        // A level holds orders at exactly one price and one side. Reject a
+        // mismatch BEFORE reserving any counter capacity, so the level is left
+        // completely unchanged. Price is the cheapest check (two `u128`s), so it
+        // goes first; the side is derived from whatever is already resting.
+        if order.price().as_u128() != self.price {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "order price {} does not match level price {}",
+                    order.price().as_u128(),
+                    self.price
+                ),
+            });
+        }
+        // The level's side is defined by its resting makers: the first maker
+        // pins it, and a drained (empty) level accepts either side again — the
+        // queue is the source of truth, so no separate side state has to be
+        // stored or reset. Any resting order's side is representative (this very
+        // invariant keeps them all equal). Deriving it is lock-free; see the
+        // type-level note on the one residual window (two opposite-side
+        // admissions racing into a genuinely empty level).
+        if let Some(resting_side) = self.orders.iter_orders().next().map(|o| o.side())
+            && order.side() != resting_side
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "order side {:?} is incompatible with the level's resting side {resting_side:?}",
+                    order.side()
+                ),
+            });
+        }
+
         // Calculate quantities.
         let visible_qty = order.visible_quantity().as_u64();
         let hidden_qty = order.hidden_quantity().as_u64();
@@ -423,8 +524,13 @@ impl PriceLevel {
     /// level. In particular a zero-visible iceberg (or auto-replenishing
     /// reserve) backed by hidden quantity counts as matchable depth, because the
     /// sweep will draw that hidden into visible and fill it.
-    fn has_matchable_depth(&self) -> bool {
-        self.iter_orders().any(|order| order.is_matchable())
+    ///
+    /// A resting maker sharing `taker_id` is ignored: the sweep skips it for
+    /// self-trade prevention, so it is not liquidity this taker could take, and
+    /// the post-only pre-check must agree.
+    fn has_matchable_depth(&self, taker_id: Id) -> bool {
+        self.iter_orders()
+            .any(|order| order.id() != taker_id && order.is_matchable())
     }
 
     /// Computes how much of `incoming_quantity` this level could actually fill
@@ -439,6 +545,11 @@ impl PriceLevel {
     /// consume — never an over- or under-count — which is what fill-or-kill
     /// (all-or-nothing) correctly depends on.
     ///
+    /// `taker_id` must be the id of the taker this depth is being computed for:
+    /// a resting maker sharing that id is skipped, exactly as the real sweep
+    /// skips it for self-trade prevention, so the prediction and the sweep can
+    /// never diverge.
+    ///
     /// It allocates a working snapshot and is only used on the cold
     /// fill-or-kill path, not on the hot `Gtc` sweep.
     ///
@@ -447,7 +558,7 @@ impl PriceLevel {
     /// feasibility instead of re-deriving the sweep, which would risk drifting
     /// from the real `match_order` behavior.
     #[must_use]
-    pub fn matchable_quantity(&self, incoming_quantity: u64) -> u64 {
+    pub fn matchable_quantity(&self, incoming_quantity: u64, taker_id: Id) -> u64 {
         if incoming_quantity == 0 {
             return 0;
         }
@@ -469,6 +580,12 @@ impl PriceLevel {
             let Some(order) = pending.pop_front() else {
                 break;
             };
+            // Self-trade prevention parity: the real sweep skips a maker sharing
+            // the taker id (`SelfTradeSkipped`), so the dry run must skip it too,
+            // or fill-or-kill would predict depth the sweep will not take.
+            if order.id() == taker_id {
+                continue;
+            }
             let (consumed, updated_order, hidden_reduced, new_remaining) =
                 order.match_against(remaining);
 
@@ -611,7 +728,12 @@ impl PriceLevel {
     /// fill-or-kill pre-checks read the queue before the sweep; under that
     /// single-matcher assumption no concurrent `match_order` can change the
     /// matchable depth between the pre-check and the sweep. Concurrent
-    /// `add_order` from other threads is likewise safe.
+    /// `add_order` from other threads is likewise safe **for counter / queue
+    /// integrity**. The single-side topology invariant carries an additional
+    /// requirement beyond that integrity: it holds only when a given level's
+    /// admissions arrive from one logical path (see the type-level note on
+    /// [`PriceLevel`]), because the side is derived from the live queue rather
+    /// than stored.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -627,7 +749,10 @@ impl PriceLevel {
         // a positive taker, reject without touching the queue. A zero-quantity
         // taker has nothing to cross, so it is not rejected (it falls through to
         // the vacuous-complete sweep below).
-        if taker_kind.is_post_only() && incoming_quantity > 0 && self.has_matchable_depth() {
+        if taker_kind.is_post_only()
+            && incoming_quantity > 0
+            && self.has_matchable_depth(taker_order_id)
+        {
             tracing::debug!(
                 taker_order_id = %taker_order_id,
                 incoming_quantity,
@@ -642,7 +767,7 @@ impl PriceLevel {
         // Fill-or-kill: all-or-nothing. If the level cannot fill the taker in
         // full, kill it without touching the queue.
         if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
-            let available = self.matchable_quantity(incoming_quantity);
+            let available = self.matchable_quantity(incoming_quantity, taker_order_id);
             if available < incoming_quantity {
                 tracing::debug!(
                     taker_order_id = %taker_order_id,
@@ -715,16 +840,21 @@ impl PriceLevel {
             new_remaining: u64,
         }
 
-        // Either the maker progressed (carrying `StepData`), was parked by the
-        // no-progress guard (`SetAside`), or forced the sweep to abort because
+        // Either the maker progressed (carrying `StepData`), was parked
+        // (`SetAside` for the no-progress guard, `SelfTradeSkipped` for a maker
+        // whose id equals the taker's), or forced the sweep to abort because
         // committing its replenishment would overflow the level's visible
         // counter (`Abort`). The parked / abort variants thread the maker's id
-        // (and, for `SetAside`, its insertion seq) OUT of the locked decision
-        // closure so the `warn!` / `error!` can name the maker without logging
-        // inside the per-entry lock.
+        // (and, where relevant, its insertion seq) OUT of the locked decision
+        // closure so the caller's `warn!` / `debug!` can name the maker without
+        // logging inside the per-entry lock.
         enum StepResult {
             Progressed(StepData),
             SetAside {
+                maker_id: Id,
+                seq: u64,
+            },
+            SelfTradeSkipped {
                 maker_id: Id,
                 seq: u64,
             },
@@ -741,6 +871,29 @@ impl PriceLevel {
 
         while remaining > 0 {
             let outcome = self.orders.match_front(&mut set_aside, |seq, order_arc| {
+                // Self-trade prevention (deterministic in every build profile,
+                // not a debug-only assert): a resting maker must never trade
+                // against a taker carrying the same id. Skip it — park its
+                // sequence like a no-progress maker so the sweep advances to the
+                // makers behind it — rather than emit a self-trade. The maker is
+                // left untouched (no trade, counters and queue unchanged).
+                //
+                // Scope: this is ORDER-ID identity — an order can never match
+                // *itself*. It is NOT account/owner-level self-trade prevention:
+                // two distinct order ids owned by the same `user_id` will still
+                // trade here. Account-level STP is the composing order book's
+                // responsibility (it knows the owner relationships this level
+                // does not).
+                if order_arc.id() == taker_order_id {
+                    return (
+                        FrontAction::SetAside,
+                        StepResult::SelfTradeSkipped {
+                            maker_id: order_arc.id(),
+                            seq,
+                        },
+                    );
+                }
+
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
                     order_arc.match_against(remaining);
 
@@ -881,6 +1034,20 @@ impl PriceLevel {
                             );
                             break;
                         }
+                        StepResult::SelfTradeSkipped { maker_id, seq } => {
+                            // Self-trade prevention: the front maker shares the
+                            // taker's id. Skip it (parked like a set-aside maker)
+                            // and advance to the makers behind it; no trade is
+                            // emitted and the maker is left untouched.
+                            tracing::debug!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                seq,
+                                "match sweep: front maker shares the taker id; skipped to prevent self-trade"
+                            );
+                            continue;
+                        }
                         StepResult::Progressed(data) => data,
                     };
                     let new_remaining = data.new_remaining;
@@ -897,9 +1064,10 @@ impl PriceLevel {
 
                         let trade_id = Id::from_uuid(trade_id_generator.next());
 
-                        // A resting maker must never be the taker matching
-                        // against it. Debug-only invariant of the caller.
-                        debug_assert!(data.maker_id != taker_order_id, "self-fill: maker == taker");
+                        // A resting maker can never be the taker here: a maker
+                        // sharing the taker id is skipped (`SelfTradeSkipped`)
+                        // before it reaches this point, so no self-trade is ever
+                        // emitted — deterministically, in every build profile.
 
                         let trade = Trade::with_timestamp(
                             trade_id,
