@@ -5222,10 +5222,10 @@ mod tests {
         assert_eq!(fok_level.order_count(), 1);
         assert_eq!(fok_level.hidden_quantity(), 50);
 
-        // PostOnly on a fresh level: no matchable depth -> not rejected. It then
-        // falls through to the sweep as an ordinary (zero-taking) taker, which
-        // garbage-collects the unmatchable reserve with no trade and keeps the
-        // counters consistent with the queue.
+        // PostOnly on a fresh level: no matchable depth -> not rejected. As of
+        // issue #112 a PostOnly taker NEVER enters the sweep, so it reports no
+        // trade and leaves the level completely untouched (it does not
+        // garbage-collect the unmatchable reserve — that is not PostOnly's job).
         let po_level = PriceLevel::new(10000);
         let po_gen = new_trade_id_generator();
         po_level
@@ -5249,11 +5249,12 @@ mod tests {
                 .as_u64(),
             0
         );
-        // The non-matchable reserve is dropped by the fall-through sweep; the
-        // hidden counter is decremented in lockstep with the queue removal.
-        assert_eq!(po_level.order_count(), 0);
+        // PostOnly no longer sweeps (issue #112): the unmatchable reserve is
+        // left resting and the counters are unchanged — a PostOnly that does not
+        // cross rests without mutating the level at all.
+        assert_eq!(po_level.order_count(), 1);
         assert_eq!(po_level.visible_quantity(), 0);
-        assert_eq!(po_level.hidden_quantity(), 0);
+        assert_eq!(po_level.hidden_quantity(), 50);
     }
 
     #[test]
@@ -8042,6 +8043,536 @@ mod tests {
             PriceLevel::from_snapshot_json(&json).expect("old-format package must validate");
         assert!(!restored.stats().stats_degraded());
         assert_eq!(restored.order_count(), 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #112 — PostOnly / FOK decisions are atomic with the sweep.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_post_only_never_trades_under_concurrent_add() {
+        // A PostOnly taker must emit ZERO trades under every interleaving with a
+        // concurrent `add_order` of crossable depth. PostOnly never enters the
+        // sweep (issue #112): whether the added maker lands before the
+        // `has_matchable_depth` check (taker rejected) or after it (taker rests),
+        // there is no sweep to consume that depth — so no add can turn a
+        // no-trade decision into a fill. The maker always survives fully resting.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 2_000;
+        const PRICE: u128 = 10_000;
+        const MAKER_QTY: u64 = 50;
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            let barrier = Arc::new(Barrier::new(2));
+            let maker_id_u64 = (iter as u64) * 2 + 1;
+            let maker_id = Id::from_u64(maker_id_u64);
+            let generator = Arc::new(UuidGenerator::new(Uuid::from_u128(
+                0xB0B0_0000_0000_0000u128 + iter as u128,
+            )));
+
+            let adder = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .add_order(OrderType::Standard {
+                            id: maker_id,
+                            price: Price::new(PRICE),
+                            quantity: Quantity::new(MAKER_QTY),
+                            side: Side::Sell,
+                            user_id: Hash32::zero(),
+                            timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64),
+                            time_in_force: TimeInForce::Gtc,
+                            extra_fields: (),
+                        })
+                        .expect("add_order should succeed");
+                })
+            };
+
+            let matcher = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let generator = Arc::clone(&generator);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.match_order(
+                        MAKER_QTY,
+                        Id::from_u64(maker_id_u64 + 1),
+                        TimeInForce::Gtc,
+                        TakerKind::PostOnly,
+                        TimestampMs::new(1_700_000_000_000),
+                        &generator,
+                    )
+                })
+            };
+
+            adder.join().expect("adder thread panicked");
+            let result = matcher.join().expect("matcher thread panicked");
+
+            // The load-bearing invariant: a PostOnly taker NEVER trades.
+            assert_eq!(
+                result.trades().len(),
+                0,
+                "iter {iter}: PostOnly must never emit a trade"
+            );
+            assert_eq!(
+                result
+                    .executed_quantity()
+                    .expect("executed_quantity")
+                    .as_u64(),
+                0,
+                "iter {iter}: PostOnly must never execute quantity"
+            );
+            // Either it saw the maker (rejected) or it did not (rested), but it
+            // never consumed. The maker is left resting at full quantity.
+            let snapshot = level.snapshot();
+            assert_eq!(snapshot.order_count(), 1, "iter {iter}: maker must survive");
+            assert_eq!(
+                snapshot.visible_quantity().as_u64(),
+                MAKER_QTY,
+                "iter {iter}: PostOnly must not have consumed the maker"
+            );
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_fok_all_or_nothing_under_concurrent_cancel() {
+        // A fill-or-kill taker that races a cancel of one of the two makers it
+        // needs must be all-or-nothing (issue #112): it either fills in FULL
+        // (both makers consumed, two trades) or is KILLED with zero trades and
+        // the queue/counters untouched. It must NEVER partially fill. The FOK
+        // holds the level-wide write guard across both its feasibility dry-run
+        // and the sweep, so the cancel (a reader) is serialized entirely before
+        // or entirely after — the depth the dry-run sees is exactly what the
+        // sweep consumes.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 2_000;
+        const PRICE: u128 = 10_000;
+        const MAKER_QTY: u64 = 30;
+        const TAKER_QTY: u64 = 60; // needs BOTH makers
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            let id_a_u64 = (iter as u64) * 3 + 1;
+            let id_b_u64 = id_a_u64 + 1;
+            let id_a = Id::from_u64(id_a_u64);
+            let id_b = Id::from_u64(id_b_u64);
+
+            level
+                .add_order(create_sell_standard_order(id_a_u64, PRICE, MAKER_QTY))
+                .expect("add id_a");
+            level
+                .add_order(create_sell_standard_order(id_b_u64, PRICE, MAKER_QTY))
+                .expect("add id_b");
+
+            let barrier = Arc::new(Barrier::new(2));
+            let generator = Arc::new(UuidGenerator::new(Uuid::from_u128(
+                0xF0F0_0000_0000_0000u128 + iter as u128,
+            )));
+
+            let matcher = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let generator = Arc::clone(&generator);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.match_order(
+                        TAKER_QTY,
+                        Id::from_u64(id_b_u64 + 1),
+                        TimeInForce::Fok,
+                        TakerKind::Standard,
+                        TimestampMs::new(1_700_000_000_000),
+                        &generator,
+                    )
+                })
+            };
+
+            let canceller = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::Cancel { order_id: id_b })
+                        .expect("cancel must not error")
+                })
+            };
+
+            let result = matcher.join().expect("matcher thread panicked");
+            let cancelled = canceller.join().expect("canceller thread panicked");
+
+            if result.is_complete() {
+                // Full fill: both makers consumed, exactly two trades, nothing
+                // left over. The cancel of id_b then found it already gone.
+                assert_eq!(
+                    result.trades().len(),
+                    2,
+                    "iter {iter}: a complete FOK consumes both makers"
+                );
+                assert_eq!(
+                    result
+                        .executed_quantity()
+                        .expect("executed_quantity")
+                        .as_u64(),
+                    TAKER_QTY,
+                    "iter {iter}: complete FOK executes the full taker"
+                );
+                assert_eq!(result.remaining_quantity().as_u64(), 0, "iter {iter}");
+                assert!(
+                    cancelled.is_none(),
+                    "iter {iter}: id_b was consumed, so the cancel finds nothing"
+                );
+            } else {
+                // Killed: the cancel won, dropping id_b below the needed depth.
+                // Zero trades, full taker remaining, id_a left untouched.
+                assert!(
+                    result.was_killed(),
+                    "iter {iter}: a FOK is complete or killed, NEVER partial"
+                );
+                assert_eq!(
+                    result.trades().len(),
+                    0,
+                    "iter {iter}: a killed FOK emits zero trades"
+                );
+                assert_eq!(
+                    result.remaining_quantity().as_u64(),
+                    TAKER_QTY,
+                    "iter {iter}: a killed FOK leaves the whole taker unfilled"
+                );
+                assert_eq!(
+                    cancelled.map(|o| o.id()),
+                    Some(id_b),
+                    "iter {iter}: the cancel that won removed id_b"
+                );
+                let snapshot = level.snapshot();
+                assert_eq!(
+                    snapshot.order_count(),
+                    1,
+                    "iter {iter}: only id_a remains after a killed FOK"
+                );
+                assert_eq!(
+                    snapshot.visible_quantity().as_u64(),
+                    MAKER_QTY,
+                    "iter {iter}: id_a is untouched by a killed FOK"
+                );
+            }
+
+            // Belt and suspenders: a partial fill is NEVER a valid FOK outcome.
+            assert!(
+                !(!result.trades().is_empty() && !result.is_complete()),
+                "iter {iter}: FOK produced a partial fill"
+            );
+            assert_counters_match_queue(&level);
+            // The (unused) id_a binding documents the surviving maker's identity.
+            let _ = id_a;
+        }
+    }
+
+    #[test]
+    fn test_fok_vs_same_price_replace_no_deadlock() {
+        // Regression for the #112 recursive-read deadlock. A same-price `Replace`
+        // / `UpdatePriceAndQuantity` delegates to the guard-free
+        // `update_order_inner`, so it takes the fill-or-kill shared guard exactly
+        // ONCE. Before that fix it re-entered `update_order`, taking a SECOND
+        // `RwLock` read on the same thread; with a `fok_write` (the FOK matcher)
+        // queued between the two reads, the writer-preferring lock deadlocked
+        // (matcher waits on read#2 behind the queued writer; the writer waits on
+        // read#1). Here a FOK matcher races a same-price resize of one of its
+        // makers under a `Barrier`; the run must COMPLETE (bounded by a channel
+        // timeout — a regression would hang, so the timeout turns a hang into a
+        // deterministic failure) and the FOK must stay all-or-nothing.
+        use std::sync::mpsc;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::Duration;
+
+        const ITERATIONS: usize = 2_000;
+        const PRICE: u128 = 10_000;
+        const MAKER_QTY: u64 = 30;
+        const TAKER_QTY: u64 = 60; // needs BOTH makers at full size
+        const RESIZE_QTY: u64 = 5; // shrink id_b so a Replace-wins interleaving kills the FOK
+        // Generous relative to the ~ms of real work; only trips on a true hang.
+        let deadline = Duration::from_secs(30);
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            let id_a_u64 = (iter as u64) * 3 + 1;
+            let id_b_u64 = id_a_u64 + 1;
+            let id_b = Id::from_u64(id_b_u64);
+
+            level
+                .add_order(create_sell_standard_order(id_a_u64, PRICE, MAKER_QTY))
+                .expect("add id_a");
+            level
+                .add_order(create_sell_standard_order(id_b_u64, PRICE, MAKER_QTY))
+                .expect("add id_b");
+
+            let barrier = Arc::new(Barrier::new(2));
+            let generator = Arc::new(UuidGenerator::new(Uuid::from_u128(
+                0xDEAD_0000_0000_0000u128 + iter as u128,
+            )));
+            let (mtx, mrx) = mpsc::channel();
+            let (utx, urx) = mpsc::channel();
+
+            let matcher = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let generator = Arc::clone(&generator);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let r = level.match_order(
+                        TAKER_QTY,
+                        Id::from_u64(id_b_u64 + 1),
+                        TimeInForce::Fok,
+                        TakerKind::Standard,
+                        TimestampMs::new(1_700_000_000_000),
+                        &generator,
+                    );
+                    let _ = mtx.send(r);
+                })
+            };
+
+            // Alternate the two recursive same-price branches across iterations.
+            let mutator = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let update = if iter % 2 == 0 {
+                        OrderUpdate::Replace {
+                            order_id: id_b,
+                            price: Price::new(PRICE),
+                            quantity: Quantity::new(RESIZE_QTY),
+                            side: Side::Sell,
+                        }
+                    } else {
+                        OrderUpdate::UpdatePriceAndQuantity {
+                            order_id: id_b,
+                            new_price: Price::new(PRICE),
+                            new_quantity: Quantity::new(RESIZE_QTY),
+                        }
+                    };
+                    let r = level.update_order(update);
+                    let _ = utx.send(r);
+                })
+            };
+
+            // Bounded wait: on the pre-fix deadlock neither send arrives and this
+            // fails deterministically instead of hanging the whole suite.
+            let result = mrx
+                .recv_timeout(deadline)
+                .unwrap_or_else(|_| panic!("iter {iter}: FOK matcher deadlocked (recursive read)"));
+            let updated = urx
+                .recv_timeout(deadline)
+                .unwrap_or_else(|_| {
+                    panic!("iter {iter}: same-price update deadlocked (recursive read)")
+                })
+                .expect("update_order must not error");
+
+            matcher.join().expect("matcher thread panicked");
+            mutator.join().expect("mutator thread panicked");
+
+            if result.is_complete() {
+                // FOK won the guard: it consumed both makers at full size, so the
+                // later same-price update found id_b already gone (`Ok(None)`).
+                assert_eq!(result.trades().len(), 2, "iter {iter}: complete FOK");
+                assert_eq!(
+                    result
+                        .executed_quantity()
+                        .expect("executed_quantity")
+                        .as_u64(),
+                    TAKER_QTY,
+                    "iter {iter}: complete FOK executes the full taker"
+                );
+                assert_eq!(result.remaining_quantity().as_u64(), 0, "iter {iter}");
+                assert!(
+                    updated.is_none(),
+                    "iter {iter}: id_b was consumed, so the same-price update finds nothing"
+                );
+            } else {
+                // The resize won: id_b shrank below the needed depth, so the FOK
+                // was killed with zero trades and id_a + the shrunk id_b rest.
+                assert!(
+                    result.was_killed(),
+                    "iter {iter}: a FOK is complete or killed, NEVER partial"
+                );
+                assert_eq!(result.trades().len(), 0, "iter {iter}: killed FOK");
+                assert_eq!(
+                    result.remaining_quantity().as_u64(),
+                    TAKER_QTY,
+                    "iter {iter}: a killed FOK leaves the whole taker unfilled"
+                );
+                assert_eq!(
+                    updated.map(|o| o.id()),
+                    Some(id_b),
+                    "iter {iter}: the resize that won returned the prior id_b order"
+                );
+                let snapshot = level.snapshot();
+                assert_eq!(
+                    snapshot.order_count(),
+                    2,
+                    "iter {iter}: both makers rest after a killed FOK"
+                );
+                assert_eq!(
+                    snapshot.visible_quantity().as_u64(),
+                    MAKER_QTY + RESIZE_QTY,
+                    "iter {iter}: id_a full + id_b shrunk"
+                );
+            }
+
+            assert!(
+                !(!result.trades().is_empty() && !result.is_complete()),
+                "iter {iter}: FOK produced a partial fill"
+            );
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_fok_killed_on_replenish_headroom_abort() {
+        // Issue #130: the fill-or-kill dry run must model the sweep's
+        // replenish-headroom ABORT. Reviewer's construction — FIFO [standard 1,
+        // auto-reserve(visible 1, replenish 100), standard u64::MAX-2] with the
+        // level's visible counter at capacity (u64::MAX). A FOK(2) trades maker 1
+        // and then the reserve would replenish (visible net delta +99) which
+        // overflows u64, so the real sweep ABORTS mid-fill. matchable_quantity
+        // must model that stop (returns 1, not 2), so the FOK is KILLED up front:
+        // zero trades, level untouched. Without the fix it would partial-fill.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_sell_standard_order(1, 10_000, 1))
+            .expect("maker 1");
+        level
+            .add_order(create_reserve_order(2, 10_000, 1, 100, 1, true, Some(100)))
+            .expect("auto-reserve maker 2");
+        level
+            .add_order(create_sell_standard_order(3, 10_000, u64::MAX - 2))
+            .expect("maker 3 fills the visible counter to u64::MAX");
+        assert_eq!(level.visible_quantity(), u64::MAX, "counter at capacity");
+
+        // The dry run models the abort: only maker 1's unit is reachable.
+        assert_eq!(level.matchable_quantity(2, Id::from_u64(999)), 1);
+
+        let before = level.snapshot_by_insertion_seq();
+        let result = level.match_order(
+            2,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+
+        assert!(
+            result.was_killed(),
+            "FOK must be killed, not partially filled"
+        );
+        assert_eq!(result.trades().len(), 0, "a killed FOK emits zero trades");
+        assert_eq!(result.remaining_quantity().as_u64(), 2);
+        // Level byte-identical: all three makers still rest in order.
+        let after = level.snapshot_by_insertion_seq();
+        assert_eq!(
+            before.iter().map(|o| o.id()).collect::<Vec<_>>(),
+            after.iter().map(|o| o.id()).collect::<Vec<_>>(),
+            "the queue must be untouched"
+        );
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn test_level_poisoned_fails_fast() {
+        // Issue #130: a poisoned fill-or-kill guard (a holder panicked) fails
+        // fast — add_order / update_order return InvalidOperation and match_order
+        // refuses to match — while snapshot stays allowed for diagnostics.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_sell_standard_order(1, 10_000, 10))
+            .expect("add before poison");
+
+        // Genuinely poison the guard (panic while holding the write side).
+        level.test_poison_guard();
+
+        // The next admission acquires the guard, recovers the poison, sets the
+        // sticky flag, and fails fast.
+        let err = level.add_order(create_sell_standard_order(2, 10_000, 5));
+        assert!(
+            matches!(err, Err(PriceLevelError::InvalidOperation { .. })),
+            "add_order must fail fast on a poisoned level, got {err:?}"
+        );
+
+        // update_order (cancel) also fails fast.
+        let err = level.update_order(OrderUpdate::Cancel {
+            order_id: Id::from_u64(1),
+        });
+        assert!(
+            matches!(err, Err(PriceLevelError::InvalidOperation { .. })),
+            "update_order must fail fast on a poisoned level, got {err:?}"
+        );
+
+        // match_order refuses to match (empty result, no trades).
+        let result = level.match_order(
+            5,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+        assert_eq!(
+            result.trades().len(),
+            0,
+            "a poisoned level refuses to match"
+        );
+
+        // snapshot stays allowed (diagnostics / reconstruction): maker 1 is still
+        // resting and readable.
+        let snapshot = level.snapshot();
+        assert_eq!(snapshot.order_count(), 1);
+    }
+
+    #[test]
+    fn test_post_only_zero_trades_with_add_in_decision_window() {
+        // Issue #130 deterministic seam: a matchable maker is added in the EXACT
+        // window between PostOnly's depth decision and its commit. PostOnly must
+        // STILL emit zero trades (it never sweeps) and leave the added maker
+        // resting — no scheduler stress needed.
+        let level = std::sync::Arc::new(PriceLevel::new(10_000));
+        let hook_level = std::sync::Arc::clone(&level);
+        let _hook_guard =
+            crate::price_level::level::set_post_only_decision_hook(Box::new(move || {
+                // The level was empty at the decision; add crossable depth now.
+                let _ = hook_level.add_order(create_sell_standard_order(1, 10_000, 50));
+            }));
+
+        let result = level.match_order(
+            50,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+
+        assert_eq!(
+            result.trades().len(),
+            0,
+            "PostOnly must emit zero trades even with depth added in the decision window"
+        );
+        assert!(
+            !result.was_rejected(),
+            "the pre-add scan found no depth, so it rests"
+        );
+        // The maker added in the window rests, untouched.
+        assert_eq!(level.order_count(), 1);
+        assert_counters_match_queue(&level);
     }
 }
 

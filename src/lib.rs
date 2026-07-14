@@ -4,13 +4,13 @@
 
 //!  # PriceLevel
 //!
-//!  A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns.
+//!  A high-performance price level implementation for limit order books in Rust. The `Gtc` / `Ioc` / `Day` match path is lock-free (atomics + sharded / skiplist structures); admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (see below). This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns.
 //!
 //!  ## Features
 //!
-//!  - Lock-free architecture for high-throughput trading applications
+//!  - Lock-free `Gtc` / `Ioc` / `Day` match path for high-throughput trading; admissions and updates (cancel / resize) are shared-lock mutators — one normally-uncontended shared acquisition that can block behind an `O(depth)` fill-or-kill match holding the exclusive side (issue #112)
 //!  - Support for diverse order types including standard limit orders, iceberg orders, post-only, fill-or-kill, and more
-//!  - Thread-safe operations with atomic counters and lock-free data structures
+//!  - Thread-safe operations built on atomic counters and lock-free data structures (with the fill-or-kill guard noted above)
 //!  - Efficient order matching and execution logic
 //!  - Designed with domain-driven principles for financial markets
 //!  - Comprehensive test suite demonstrating concurrent usage scenarios
@@ -44,7 +44,7 @@
 //!
 //!  ## Implementation Details
 //!
-//!  - **Thread Safety**: Uses atomic operations and lock-free data structures to ensure thread safety without mutex locks
+//!  - **Thread Safety**: Uses atomic operations and lock-free data structures. The `Gtc` / `Ioc` / `Day` match path takes no lock; admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (issue #112)
 //!  - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index
 //!  - **Statistics Tracking**: Each price level tracks execution statistics in real-time
 //!  - **Snapshot Capabilities**: Create point-in-time snapshots of price levels for market data distribution
@@ -131,7 +131,7 @@
 //! - **High-Frequency Trading**: Over **264,000 operations per second** in realistic mixed workloads
 //! - **Hot Spot Performance**: Up to **7.75 million operations per second** under optimal conditions
 //! - **Write-Heavy Workloads**: Over **6.3 million operations per second** for pure write operations
-//! - **Lock-Free Architecture**: Maintains high throughput with minimal contention overhead
+//! - **Lock-Free Match Path**: The `Gtc` / `Ioc` / `Day` match runs lock-free with minimal contention overhead; admissions / updates take a normally-uncontended shared lock that can block behind an `O(depth)` fill-or-kill match
 //!
 //! The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 //!
@@ -154,10 +154,13 @@
 //!   are affected; nothing else is.
 //! - **Matching concurrency contract.** [`PriceLevel::match_order`] assumes a
 //!   single logical matcher per level at a time. Concurrent `add_order` /
-//!   `cancel` from other threads are safe, but two concurrent `match_order`
-//!   calls on the *same* level — or a `match_order` racing a `cancel` of the
-//!   resting order it is currently matching — are the caller's responsibility
-//!   to serialize.
+//!   `update_order` (including a `cancel` of the resting order the matcher is
+//!   currently consuming) from other threads are safe and linearizable — the
+//!   match and the cancel serialize on the maker's per-entry lock (issue #81),
+//!   and a fill-or-kill match additionally takes a level-exclusive guard so it
+//!   stays all-or-nothing against those mutators (issue #112). Only two
+//!   concurrent `match_order` calls on the *same* level remain the caller's
+//!   responsibility to serialize.
 //! - **Reserve replenish amounts are now `NonZeroU64`** (issue #70). A
 //!   replenish amount of `0` is structurally invalid: it would draw an empty
 //!   visible tranche from the hidden quantity, silently leaving nothing
