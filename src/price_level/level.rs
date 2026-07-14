@@ -1386,12 +1386,22 @@ impl PriceLevel {
                         // `PriceLevelStatistics::stats_degraded`), leaving the
                         // trade stream unaffected. Log the drop rather than
                         // discard it silently.
+                        // Read the degraded flag BEFORE recording: under the
+                        // single-matcher-per-level model this is the faithful
+                        // witness of the `false -> true` transition (issue #129).
+                        // `record_execution` sets the flag atomically via
+                        // `compare_exchange`; we log the WARN only on the FIRST
+                        // drop that transitions it, so a burst of dropped
+                        // executions logs once, not once per drop — the sticky
+                        // flag remains the durable signal for the rest.
+                        let was_degraded = self.stats.stats_degraded();
                         if let Err(err) = self.stats.record_execution(
                             data.consumed,
                             data.maker_price,
                             data.maker_timestamp,
                             timestamp.as_u64(),
-                        ) {
+                        ) && !was_degraded
+                        {
                             // WARN, not ERROR: the match is not aborted — this is
                             // a recoverable observability anomaly flagged by the
                             // sticky degraded flag (the trade is committed).

@@ -18,22 +18,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 ///
 /// # Atomic ordering
 ///
-/// **Every atomic access in this type uses [`Ordering::Relaxed`], deliberately.**
-/// These are pure observability counters: nothing in the engine reads a
-/// statistic to gate a queue mutation, and no other field's visibility is
-/// published through them. They carry no happens-before relationship — each
-/// counter is independent and may be read mid-update, so a multi-field read
-/// (serde, [`Display`](std::fmt::Display), [`Clone`]) is an explicitly
-/// best-effort, non-transactional point-in-time view that can be torn across
-/// fields. This is unlike `PriceLevel::snapshot`, which is internally
-/// consistent (it derives its aggregates from one materialized order vector);
-/// these statistics counters are not part of that consistency guarantee.
-/// `Relaxed` is therefore both correct and the
-/// cheapest valid choice; a stronger ordering would only add cost without
-/// buying any guarantee a consumer relies on. The lone read-modify-write loop
-/// in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64) is a standard
-/// `compare_exchange_weak` CAS retry — see the note there for why both its
-/// success and failure orderings are `Relaxed`.
+/// The individual counters are `Relaxed` observability atomics: nothing in the
+/// engine reads a statistic to gate a queue mutation, and no other field's
+/// visibility is published through them. Point accessors ([`orders_executed`](Self::orders_executed),
+/// the average ratios, …) load them `Relaxed` and remain best-effort — a ratio
+/// across two counters can still be transiently torn and self-corrects once
+/// recording quiesces.
+///
+/// A **multi-field** read — [`Clone`] (which backs the checksummed
+/// `PriceLevel::snapshot`) and the serde / [`Display`](std::fmt::Display)
+/// serialization paths — instead goes through a **seqlock** (issue #129) so it
+/// copies a consistent set that never mixes a pre- and post-`record_execution`
+/// prefix (which would otherwise checksum a state the level never held). The
+/// `stats_seq` sequence counter is bumped to odd on a writer's entry
+/// ([`record_execution`](Self::record_execution) / [`reset`](Self::reset)) and
+/// back to even on its exit, both `Release`; a reader loads it `Acquire`, copies
+/// the fields, `Acquire`-fences, re-loads it, and retries if it changed or was
+/// odd. Writers are serialized by the engine model (one matcher per level +
+/// `reset`'s quiescence contract), which the seqlock assumes. The lone
+/// read-modify-write loop in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64)
+/// is a standard `compare_exchange_weak` CAS retry.
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
@@ -69,6 +73,58 @@ pub struct PriceLevelStatistics {
     /// is the observable signal that the recorded aggregates under-count the
     /// true executions. Serialized so it round-trips through a snapshot.
     stats_degraded: AtomicBool,
+
+    /// Seqlock sequence for consistent multi-field reads (issue #129). Even when
+    /// no writer is in a section, odd while a writer ([`record_execution`](Self::record_execution)
+    /// / [`reset`](Self::reset)) is mutating. Purely internal — never serialized
+    /// — so a restored / cloned value starts even (0).
+    stats_seq: AtomicU64,
+}
+
+/// RAII guard bracketing a statistics WRITE section for the seqlock (issue
+/// #129). Constructing it bumps `stats_seq` to odd; dropping it bumps back to
+/// even, so a concurrent multi-field reader retries if it overlapped either
+/// increment. Using a guard keeps the section correct across the early returns
+/// in [`PriceLevelStatistics::record_execution`].
+struct WriteSeqGuard<'a> {
+    seq: &'a AtomicU64,
+}
+
+impl<'a> WriteSeqGuard<'a> {
+    #[inline]
+    fn new(seq: &'a AtomicU64) -> Self {
+        // Enter: even -> odd. `Relaxed` RMW plus a `Release` fence so the field
+        // writes that follow cannot be reordered before the odd marker a reader
+        // watches for.
+        seq.fetch_add(1, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::Release);
+        Self { seq }
+    }
+}
+
+impl Drop for WriteSeqGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        // Exit: odd -> even, `Release` so every field write in the section
+        // happens-before a reader's `Acquire` load of the (now even) sequence.
+        self.seq.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// A consistent point-in-time copy of every statistics field, read under the
+/// seqlock (issue #129). Plain values, no atomics — so `Clone` / serialize
+/// materialize a coherent set rather than a torn mix of counters.
+#[derive(Clone, Copy)]
+struct StatsData {
+    orders_added: usize,
+    orders_removed: usize,
+    orders_executed: usize,
+    quantity_executed: u64,
+    value_executed: u64,
+    last_execution_time: u64,
+    first_arrival_time: u64,
+    sum_waiting_time: u64,
+    stats_degraded: bool,
 }
 
 impl PriceLevelStatistics {
@@ -104,6 +160,108 @@ impl PriceLevelStatistics {
         }
     }
 
+    /// Checked `+= value` on a `usize` counter, mirroring
+    /// [`checked_fetch_add_u64`](Self::checked_fetch_add_u64). `orders_executed`
+    /// can be seeded to `usize::MAX` through `FromStr` / serde, so a plain
+    /// `fetch_add(1)` could wrap while the other aggregates advance (issue #129);
+    /// this rejects the overflow so the all-or-nothing rollback can undo the
+    /// prefix instead.
+    fn checked_fetch_add_usize(
+        target: &AtomicUsize,
+        value: usize,
+        field: &str,
+    ) -> Result<(), PriceLevelError> {
+        let mut current = target.load(Ordering::Relaxed);
+        loop {
+            let next =
+                current
+                    .checked_add(value)
+                    .ok_or_else(|| PriceLevelError::InvalidOperation {
+                        message: format!("{field} overflow"),
+                    })?;
+            match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Set the sticky degraded flag; returns `true` iff THIS call transitioned it
+    /// `false -> true` (issue #129). The caller (`PriceLevel::match_order`) logs
+    /// the WARN only on that transition, so a burst of dropped executions marks
+    /// the level degraded once and logs once, not once per drop.
+    pub(crate) fn mark_degraded(&self) -> bool {
+        self.stats_degraded
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    /// Read a consistent snapshot of every field under the seqlock (issue #129).
+    ///
+    /// Retries until a full copy brackets an even, unchanged sequence — i.e. no
+    /// writer transaction ([`record_execution`](Self::record_execution) /
+    /// [`reset`](Self::reset)) overlapped it, so the copy is NEVER a torn mix of
+    /// a pre- and post-write prefix (a bounded fallback that returned a torn copy
+    /// would defeat the checksummed snapshot this backs).
+    ///
+    /// # Liveness
+    ///
+    /// The loop's work PER attempt is bounded (one sequence load + a nine-field
+    /// copy), and it converges under the advisory writer-serialization contract
+    /// (one matcher per level + `reset`'s quiescence): a writer holds the section
+    /// for only a short, allocation-free burst before dropping the guard back to
+    /// even, and `record_execution` is finite, so a reader exits on the first
+    /// iteration when uncontended and otherwise as soon as recording quiesces
+    /// (which it always does — the matcher cannot record forever). A panicking
+    /// writer still restores the even sequence via the guard's `Drop`, so the
+    /// reader is never stranded on a permanently-odd sequence.
+    fn read_consistent(&self) -> StatsData {
+        loop {
+            let s1 = self.stats_seq.load(Ordering::Acquire);
+            if s1 & 1 != 0 {
+                // A writer is mid-section; spin until it exits.
+                std::hint::spin_loop();
+                continue;
+            }
+            let data = StatsData {
+                orders_added: self.orders_added.load(Ordering::Relaxed),
+                orders_removed: self.orders_removed.load(Ordering::Relaxed),
+                orders_executed: self.orders_executed.load(Ordering::Relaxed),
+                quantity_executed: self.quantity_executed.load(Ordering::Relaxed),
+                value_executed: self.value_executed.load(Ordering::Relaxed),
+                last_execution_time: self.last_execution_time.load(Ordering::Relaxed),
+                first_arrival_time: self.first_arrival_time.load(Ordering::Relaxed),
+                sum_waiting_time: self.sum_waiting_time.load(Ordering::Relaxed),
+                stats_degraded: self.stats_degraded.load(Ordering::Relaxed),
+            };
+            // Ensure the field loads complete before re-reading the sequence.
+            std::sync::atomic::fence(Ordering::Acquire);
+            let s2 = self.stats_seq.load(Ordering::Relaxed);
+            if s1 == s2 {
+                return data;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Reconstruct from a plain [`StatsData`] copy (seqlock reader output), with
+    /// a fresh even sequence.
+    fn from_data(data: StatsData) -> Self {
+        Self {
+            orders_added: AtomicUsize::new(data.orders_added),
+            orders_removed: AtomicUsize::new(data.orders_removed),
+            orders_executed: AtomicUsize::new(data.orders_executed),
+            quantity_executed: AtomicU64::new(data.quantity_executed),
+            value_executed: AtomicU64::new(data.value_executed),
+            last_execution_time: AtomicU64::new(data.last_execution_time),
+            first_arrival_time: AtomicU64::new(data.first_arrival_time),
+            sum_waiting_time: AtomicU64::new(data.sum_waiting_time),
+            stats_degraded: AtomicBool::new(data.stats_degraded),
+            stats_seq: AtomicU64::new(0),
+        }
+    }
+
     #[inline]
     fn current_timestamp_milliseconds() -> Result<u64, PriceLevelError> {
         SystemTime::now()
@@ -134,6 +292,7 @@ impl PriceLevelStatistics {
             first_arrival_time: AtomicU64::new(current_time),
             sum_waiting_time: AtomicU64::new(0),
             stats_degraded: AtomicBool::new(false),
+            stats_seq: AtomicU64::new(0),
         }
     }
 
@@ -192,6 +351,13 @@ impl PriceLevelStatistics {
     ) -> Result<(), PriceLevelError> {
         let current_time = execution_timestamp;
 
+        // Bracket the whole record as a seqlock WRITE (issue #129): a concurrent
+        // multi-field reader (`Clone` / serialize) retries rather than capture an
+        // in-flight prefix, and `reset` — also a writer — cannot interleave this
+        // transaction's rollback. The guard's `Drop` closes the section (back to
+        // even) on EVERY return path below, including the early validation errors.
+        let _write = WriteSeqGuard::new(&self.stats_seq);
+
         // Validate everything that can fail BEFORE mutating any counter, so a
         // rejected record leaves the statistics untouched. Any failure marks the
         // stats degraded: this execution's contribution is being dropped.
@@ -199,7 +365,7 @@ impl PriceLevelStatistics {
             match current_time.checked_sub(order_timestamp) {
                 Some(value) => Some(value),
                 None => {
-                    self.stats_degraded.store(true, Ordering::Relaxed);
+                    self.mark_degraded();
                     return Err(PriceLevelError::InvalidOperation {
                         message: format!(
                             "order timestamp {order_timestamp} is in the future of current time {current_time}"
@@ -217,7 +383,7 @@ impl PriceLevelStatistics {
         {
             Some(value) => value,
             None => {
-                self.stats_degraded.store(true, Ordering::Relaxed);
+                self.mark_degraded();
                 return Err(PriceLevelError::InvalidOperation {
                     message: "value_executed overflow (quantity * price exceeds u64 storage)"
                         .to_string(),
@@ -227,17 +393,22 @@ impl PriceLevelStatistics {
 
         // Commit the additive aggregates with a rollback of the already-committed
         // prefix on a later overflow (all-or-nothing). `orders_executed` is a
-        // `usize` counter that cannot overflow in practice, but it is part of the
-        // transaction so it is rolled back too. `last_execution_time` is a
-        // non-additive "latest" store, applied only after every additive commit
-        // succeeds so a rejected record never advances it.
-        self.orders_executed.fetch_add(1, Ordering::Relaxed);
+        // `usize` counter that could be seeded to `usize::MAX` via FromStr / serde
+        // (issue #129), so it is a CHECKED add and part of the transaction —
+        // rolled back like the others. `last_execution_time` is a non-additive
+        // "latest" store, applied only after every additive commit succeeds so a
+        // rejected record never advances it.
+        if let Err(err) = Self::checked_fetch_add_usize(&self.orders_executed, 1, "orders_executed")
+        {
+            self.mark_degraded();
+            return Err(err);
+        }
 
         if let Err(err) =
             Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")
         {
             self.orders_executed.fetch_sub(1, Ordering::Relaxed);
-            self.stats_degraded.store(true, Ordering::Relaxed);
+            self.mark_degraded();
             return Err(err);
         }
 
@@ -247,7 +418,7 @@ impl PriceLevelStatistics {
             self.quantity_executed
                 .fetch_sub(quantity, Ordering::Relaxed);
             self.orders_executed.fetch_sub(1, Ordering::Relaxed);
-            self.stats_degraded.store(true, Ordering::Relaxed);
+            self.mark_degraded();
             return Err(err);
         }
 
@@ -262,12 +433,15 @@ impl PriceLevelStatistics {
             self.quantity_executed
                 .fetch_sub(quantity, Ordering::Relaxed);
             self.orders_executed.fetch_sub(1, Ordering::Relaxed);
-            self.stats_degraded.store(true, Ordering::Relaxed);
+            self.mark_degraded();
             return Err(err);
         }
 
+        // Monotonic (issue #129): a concurrent / out-of-order record can never
+        // move the "latest execution" backwards. Belt-and-braces with the
+        // seqlock, but cheap and independently correct.
         self.last_execution_time
-            .store(current_time, Ordering::Relaxed);
+            .fetch_max(current_time, Ordering::Relaxed);
 
         Ok(())
     }
@@ -402,13 +576,23 @@ impl PriceLevelStatistics {
     ///
     /// This must only be called on a **quiescent** level — with no in-flight
     /// [`record_execution`](Self::record_execution) (and hence no in-flight
-    /// `PriceLevel::match_order`). `reset` `store(0)`s each counter directly; a
-    /// concurrent `record_execution` overflow rollback (`fetch_sub`) racing that
-    /// `store(0)` would wrap a counter toward `u64::MAX`. No engine path calls
-    /// `reset` during matching, so this does not occur today, but it is a
-    /// caller obligation because `reset` is public.
+    /// `PriceLevel::match_order`). `reset` participates in the seqlock as a
+    /// WRITER (issue #129), so it can never interleave the middle of a
+    /// `record_execution` transaction's rollback (which would otherwise wrap a
+    /// counter toward `u64::MAX` via a `store(0)` racing a `fetch_sub`) — but the
+    /// seqlock protects READERS, it does not serialize two writers. The
+    /// single-matcher-per-level model already serializes `record_execution`, and
+    /// this quiescence requirement extends that to `reset`. No engine path calls
+    /// `reset` during matching, so the race does not occur today; it remains a
+    /// caller obligation because `reset` is public. A multi-field reader
+    /// (`Clone` / serialize) racing `reset` retries and observes either the
+    /// pre-reset or fully-reset state, never a mix.
     pub fn reset(&self) {
         let current_time = Self::current_timestamp_milliseconds_or_zero();
+
+        // Seqlock write section: a concurrent multi-field reader retries rather
+        // than capture a half-reset copy.
+        let _write = WriteSeqGuard::new(&self.stats_seq);
 
         self.orders_added.store(0, Ordering::Relaxed);
         self.orders_removed.store(0, Ordering::Relaxed);
@@ -430,44 +614,37 @@ impl Default for PriceLevelStatistics {
 }
 
 impl Clone for PriceLevelStatistics {
-    /// Clones the statistics by snapshotting each atomic counter.
+    /// Clones the statistics by reading a **consistent** snapshot of every field
+    /// under the seqlock (issue #129).
     ///
-    /// Each counter is read with [`Ordering::Relaxed`]: the clone is a
-    /// best-effort point-in-time copy of independent counters (the same
-    /// contract as the serde path and `snapshot()`), not a globally consistent
-    /// transactional read across all eight fields. This is the representation
-    /// persisted in [`PriceLevelSnapshot`](crate::price_level::PriceLevelSnapshot),
-    /// so a restored level carries the recorded statistics rather than a fresh,
-    /// zeroed set.
+    /// This is the representation persisted in
+    /// [`PriceLevelSnapshot`](crate::price_level::PriceLevelSnapshot) and hence
+    /// covered by that snapshot's SHA-256 checksum, so the copy must not mix a
+    /// pre- and post-`record_execution` prefix — the seqlock retries until it
+    /// captures a state the level actually held. A restored level therefore
+    /// carries the recorded statistics rather than a fresh, zeroed set.
     fn clone(&self) -> Self {
-        Self {
-            orders_added: AtomicUsize::new(self.orders_added.load(Ordering::Relaxed)),
-            orders_removed: AtomicUsize::new(self.orders_removed.load(Ordering::Relaxed)),
-            orders_executed: AtomicUsize::new(self.orders_executed.load(Ordering::Relaxed)),
-            quantity_executed: AtomicU64::new(self.quantity_executed.load(Ordering::Relaxed)),
-            value_executed: AtomicU64::new(self.value_executed.load(Ordering::Relaxed)),
-            last_execution_time: AtomicU64::new(self.last_execution_time.load(Ordering::Relaxed)),
-            first_arrival_time: AtomicU64::new(self.first_arrival_time.load(Ordering::Relaxed)),
-            sum_waiting_time: AtomicU64::new(self.sum_waiting_time.load(Ordering::Relaxed)),
-            stats_degraded: AtomicBool::new(self.stats_degraded.load(Ordering::Relaxed)),
-        }
+        Self::from_data(self.read_consistent())
     }
 }
 
 impl fmt::Display for PriceLevelStatistics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Consistent multi-field read (issue #129): the emitted string is a
+        // coherent snapshot, not a torn mix, and round-trips through `FromStr`.
+        let d = self.read_consistent();
         write!(
             f,
             "PriceLevelStatistics:orders_added={};orders_removed={};orders_executed={};quantity_executed={};value_executed={};last_execution_time={};first_arrival_time={};sum_waiting_time={};stats_degraded={}",
-            self.orders_added.load(Ordering::Relaxed),
-            self.orders_removed.load(Ordering::Relaxed),
-            self.orders_executed.load(Ordering::Relaxed),
-            self.quantity_executed.load(Ordering::Relaxed),
-            self.value_executed.load(Ordering::Relaxed),
-            self.last_execution_time.load(Ordering::Relaxed),
-            self.first_arrival_time.load(Ordering::Relaxed),
-            self.sum_waiting_time.load(Ordering::Relaxed),
-            self.stats_degraded.load(Ordering::Relaxed)
+            d.orders_added,
+            d.orders_removed,
+            d.orders_executed,
+            d.quantity_executed,
+            d.value_executed,
+            d.last_execution_time,
+            d.first_arrival_time,
+            d.sum_waiting_time,
+            d.stats_degraded
         )
     }
 }
@@ -565,6 +742,7 @@ impl FromStr for PriceLevelStatistics {
             first_arrival_time: AtomicU64::new(first_arrival_time),
             sum_waiting_time: AtomicU64::new(sum_waiting_time),
             stats_degraded: AtomicBool::new(stats_degraded),
+            stats_seq: AtomicU64::new(0),
         })
     }
 }
@@ -574,47 +752,34 @@ impl Serialize for PriceLevelStatistics {
     where
         S: Serializer,
     {
+        // Read all fields as ONE consistent seqlock snapshot (issue #129) so a
+        // concurrent `record_execution` can never make the serialized (and hence
+        // checksummed) statistics a torn pre/post-write mix.
+        let d = self.read_consistent();
+
         // Serialize `stats_degraded` ONLY when it is `true` (dynamic 8/9-field
         // count). A non-degraded level then serializes in the exact pre-#117
         // 8-field form — byte-identical to a v2 statistics payload persisted
         // before this flag existed — so a `PriceLevelSnapshotPackage`'s SHA-256
         // checksum, recomputed over the re-serialized bytes on
-        // `validate` / `from_snapshot_json`, still matches. A degraded level
-        // adds the field; `Deserialize` / `FromStr` default a missing flag to
-        // `false`, so both directions round-trip.
-        let degraded = self.stats_degraded.load(Ordering::Relaxed);
+        // `validate` / `from_snapshot_json`, still matches for BOTH a legacy v2
+        // and a new v3 non-degraded package (issue #129 keeps checksum
+        // recomputation version-agnostic — see `SNAPSHOT_FORMAT_VERSION`). A
+        // degraded level adds the 9th field (the v3-only shape); `Deserialize` /
+        // `FromStr` default a missing flag to `false`, so both directions
+        // round-trip.
+        let degraded = d.stats_degraded;
         let field_count = if degraded { 9 } else { 8 };
         let mut state = serializer.serialize_struct("PriceLevelStatistics", field_count)?;
 
-        state.serialize_field("orders_added", &self.orders_added.load(Ordering::Relaxed))?;
-        state.serialize_field(
-            "orders_removed",
-            &self.orders_removed.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "orders_executed",
-            &self.orders_executed.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "quantity_executed",
-            &self.quantity_executed.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "value_executed",
-            &self.value_executed.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "last_execution_time",
-            &self.last_execution_time.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "first_arrival_time",
-            &self.first_arrival_time.load(Ordering::Relaxed),
-        )?;
-        state.serialize_field(
-            "sum_waiting_time",
-            &self.sum_waiting_time.load(Ordering::Relaxed),
-        )?;
+        state.serialize_field("orders_added", &d.orders_added)?;
+        state.serialize_field("orders_removed", &d.orders_removed)?;
+        state.serialize_field("orders_executed", &d.orders_executed)?;
+        state.serialize_field("quantity_executed", &d.quantity_executed)?;
+        state.serialize_field("value_executed", &d.value_executed)?;
+        state.serialize_field("last_execution_time", &d.last_execution_time)?;
+        state.serialize_field("first_arrival_time", &d.first_arrival_time)?;
+        state.serialize_field("sum_waiting_time", &d.sum_waiting_time)?;
         if degraded {
             state.serialize_field("stats_degraded", &true)?;
         }
@@ -785,6 +950,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                     first_arrival_time: AtomicU64::new(first_arrival_time),
                     sum_waiting_time: AtomicU64::new(sum_waiting_time),
                     stats_degraded: AtomicBool::new(stats_degraded),
+                    stats_seq: AtomicU64::new(0),
                 })
             }
         }

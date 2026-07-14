@@ -444,6 +444,23 @@
 //! changes are required at the call sites: `snapshot_to_json()` /
 //! `from_snapshot_json()` keep the same signatures.
 //!
+//! ## Migration Guide (snapshot format v2 → v3)
+//!
+//! `SNAPSHOT_FORMAT_VERSION` is bumped from `2` to `3` (issue #129). Version 3
+//! owns the optional 9th statistics field, `stats_degraded` (issue #117): a
+//! **degraded** level — one where an execution's statistics contribution was
+//! dropped all-or-nothing — serializes that field, and such a payload is now a
+//! v3 package rather than a v2 package mislabelled with an extra field an old
+//! 8-field-only reader would reject.
+//!
+//! Restore is **backward compatible**: [`PriceLevelSnapshotPackage::validate`]
+//! accepts **both** v2 (legacy, 8-field statistics, `stats_degraded` defaults
+//! `false`) and v3, so snapshots written by the previous release keep restoring
+//! unchanged; only v1 is still rejected. Checksum recomputation is
+//! version-agnostic — a non-degraded level serializes the same 8 fields under
+//! either version, so a legacy v2 package's SHA-256 still matches. New snapshots
+//! are written at v3. No code changes are required at the call sites.
+//!
 //! ## Migration Guide (`Trade::total_value` is now checked)
 //!
 //! [`Trade::total_value`](crate::execution::Trade::total_value) now returns

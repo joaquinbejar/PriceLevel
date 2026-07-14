@@ -598,4 +598,158 @@ mod tests {
             serde_json::from_str(&degraded_json).expect("deserialize degraded");
         assert!(degraded_back.stats_degraded(), "the flag must round-trip");
     }
+
+    #[test]
+    fn test_orders_executed_overflow_seeded_via_fromstr_is_all_or_nothing() {
+        // Issue #129: `orders_executed` can be seeded to `usize::MAX` through
+        // FromStr / serde. A later record's checked `+1` must reject the overflow
+        // all-or-nothing — no counter wraps, and no OTHER aggregate advances.
+        let seeded = format!(
+            "PriceLevelStatistics:orders_added=0;orders_removed=0;orders_executed={};quantity_executed=0;value_executed=0;last_execution_time=0;first_arrival_time=0;sum_waiting_time=0;stats_degraded=false",
+            usize::MAX
+        );
+        let stats = PriceLevelStatistics::from_str(&seeded).expect("parse MAX orders_executed");
+        assert_eq!(stats.orders_executed(), usize::MAX);
+
+        assert!(
+            stats.record_execution(5, 100, 0, 1_000).is_err(),
+            "the checked orders_executed overflow must be rejected"
+        );
+        // No wrap, and nothing else moved (all-or-nothing).
+        assert_eq!(stats.orders_executed(), usize::MAX, "no wrap to 0");
+        assert_eq!(stats.quantity_executed(), 0);
+        assert_eq!(stats.value_executed(), 0);
+        assert_eq!(stats.sum_waiting_time(), 0);
+        assert!(
+            stats.stats_degraded(),
+            "the dropped execution is observable"
+        );
+    }
+
+    #[test]
+    fn test_mark_degraded_transitions_once() {
+        // Issue #129: only the FIRST drop transitions the sticky flag
+        // (compare_exchange), so `PriceLevel::match_order` logs one WARN per
+        // degraded episode rather than one per dropped execution.
+        let stats = PriceLevelStatistics::new();
+        assert!(!stats.stats_degraded());
+        assert!(
+            stats.mark_degraded(),
+            "first drop transitions false -> true"
+        );
+        assert!(stats.stats_degraded());
+        assert!(!stats.mark_degraded(), "second drop is silent");
+        assert!(!stats.mark_degraded(), "still silent");
+        // A reset re-arms the transition.
+        stats.reset();
+        assert!(!stats.stats_degraded());
+        assert!(stats.mark_degraded(), "post-reset drop transitions again");
+    }
+
+    #[test]
+    fn test_last_execution_time_is_monotonic() {
+        // Issue #129: `fetch_max` — recording an OLDER execution after a newer
+        // one never moves `last_execution_time` backwards.
+        let stats = PriceLevelStatistics::new();
+        stats.record_execution(1, 100, 0, 5_000).expect("newer");
+        assert_eq!(stats.last_execution_time(), 5_000);
+        stats.record_execution(1, 100, 0, 2_000).expect("older");
+        assert_eq!(
+            stats.last_execution_time(),
+            5_000,
+            "an older record must not move the last-execution time back"
+        );
+        stats.record_execution(1, 100, 0, 9_000).expect("newest");
+        assert_eq!(stats.last_execution_time(), 9_000);
+    }
+
+    #[test]
+    fn test_last_execution_time_max_wins_under_barrier() {
+        // Issue #129: two records with distinct timestamps racing — the max wins
+        // regardless of order (`fetch_max` is atomic, independent of the seqlock).
+        use std::sync::{Arc as StdArc, Barrier};
+
+        const HI: u64 = 9_000;
+        const LO: u64 = 3_000;
+        for _ in 0..500 {
+            let stats = StdArc::new(PriceLevelStatistics::new());
+            let barrier = StdArc::new(Barrier::new(2));
+            let hi = {
+                let stats = StdArc::clone(&stats);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let _ = stats.record_execution(1, 100, 0, HI);
+                })
+            };
+            let lo = {
+                let stats = StdArc::clone(&stats);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let _ = stats.record_execution(1, 100, 0, LO);
+                })
+            };
+            hi.join().expect("hi");
+            lo.join().expect("lo");
+            assert_eq!(
+                stats.last_execution_time(),
+                HI,
+                "the max timestamp must win"
+            );
+        }
+    }
+
+    #[test]
+    fn test_clone_is_consistent_under_concurrent_record() {
+        // Issue #129 (F5): a `Clone` (which backs the checksummed snapshot) must
+        // capture a COHERENT set under a concurrent single writer. Each record
+        // adds qty=1 / value=100 / orders+1 inside the seqlock, so a consistent
+        // copy always has `value == 100 * quantity` AND `orders == quantity`. A
+        // pre-#129 torn clone could mix `orders=k` with `quantity=k-1`.
+        use std::sync::{Arc as StdArc, Barrier};
+
+        const N: u64 = 3_000;
+        let stats = StdArc::new(PriceLevelStatistics::new());
+        let barrier = StdArc::new(Barrier::new(2));
+
+        let writer = {
+            let stats = StdArc::clone(&stats);
+            let barrier = StdArc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..N {
+                    stats.record_execution(1, 100, 0, 1_000).expect("record");
+                }
+            })
+        };
+        let reader = {
+            let stats = StdArc::clone(&stats);
+            let barrier = StdArc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..50_000 {
+                    let copy = (*stats).clone();
+                    let q = copy.quantity_executed();
+                    assert_eq!(
+                        copy.value_executed(),
+                        q * 100,
+                        "clone must not tear value vs quantity"
+                    );
+                    assert_eq!(
+                        copy.orders_executed() as u64,
+                        q,
+                        "clone must not tear orders vs quantity"
+                    );
+                }
+            })
+        };
+
+        writer.join().expect("writer");
+        reader.join().expect("reader");
+
+        assert_eq!(stats.orders_executed() as u64, N);
+        assert_eq!(stats.quantity_executed(), N);
+        assert_eq!(stats.value_executed(), N * 100);
+    }
 }
