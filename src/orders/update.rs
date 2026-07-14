@@ -16,10 +16,17 @@ pub enum OrderUpdate {
     },
 
     /// Update the quantity of an order
+    ///
+    /// For two-tranche orders (iceberg / reserve) `new_quantity` applies to the
+    /// **visible** tranche only; the hidden tranche is left untouched, so the
+    /// order's new total is `new_quantity + hidden`. Reducing hidden depth is
+    /// not reachable through this update — cancel and re-submit instead. The
+    /// increase-vs-decrease priority policy (documented on the price level's
+    /// `update_order`) is likewise driven by the visible delta.
     UpdateQuantity {
         /// ID of the order to update
         order_id: Id,
-        /// New quantity for the order
+        /// New quantity for the order (visible tranche for iceberg / reserve)
         new_quantity: Quantity,
     },
 
