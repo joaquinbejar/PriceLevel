@@ -88,7 +88,15 @@ impl OrderQueue {
         }
     }
 
-    /// Add an order to the tail of the queue (newest time priority).
+    /// Add an order to the tail of the queue (newest time priority),
+    /// **unconditionally overwriting** any existing entry for the same id.
+    ///
+    /// This is the re-insert primitive for a maker that was just removed and is
+    /// being put back under a fresh sequence (the upsize `remove` + `push`
+    /// demotion), where the id is guaranteed absent. For *admission*, where the
+    /// id may collide with a live order, use [`OrderQueue::try_push`], which
+    /// rejects the duplicate instead of overwriting it (leaving the id-keyed map
+    /// and the ordered index disagreeing).
     pub fn push(&self, order: Arc<OrderType<()>>) {
         // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
         // counter matter. The happens-before ordering between concurrent
@@ -98,6 +106,44 @@ impl OrderQueue {
         let order_id = order.id();
         self.orders.insert(order_id, (seq, order));
         self.index.insert(seq, order_id);
+    }
+
+    /// Insert an order only if its id is not already present — the admission
+    /// primitive.
+    ///
+    /// Uses the `DashMap` entry API so the insert-if-absent decision is atomic
+    /// under the per-shard lock: given several concurrent submissions of the
+    /// same id, exactly one observes `Vacant` and inserts; every other observes
+    /// `Occupied` and is rejected with
+    /// [`PriceLevelError::DuplicateOrderId`], leaving the map value, the index,
+    /// and the sequence counter untouched. A duplicate admitted through this
+    /// method therefore can never produce the two-sequences-for-one-id state
+    /// that a blind [`OrderQueue::push`] would. (The quantity-increase update
+    /// path still vacates the id across its remove-then-push re-insert; that
+    /// residual window is closed by the atomic re-sequencing work in #119.)
+    ///
+    /// The insertion sequence is minted **inside** the `Vacant` arm, so a
+    /// rejected duplicate does not consume a sequence (no gaps) and the index
+    /// entry is added only for the order that actually landed in the map.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::DuplicateOrderId`] if an order with the same
+    /// id already rests in the queue.
+    #[must_use = "a rejected duplicate must be handled, not ignored"]
+    pub fn try_push(&self, order: Arc<OrderType<()>>) -> Result<(), PriceLevelError> {
+        let order_id = order.id();
+        match self.orders.entry(order_id) {
+            Entry::Occupied(_) => Err(PriceLevelError::DuplicateOrderId(order_id.to_string())),
+            Entry::Vacant(slot) => {
+                // Mint the sequence only now that we know the id is free, so a
+                // rejected duplicate leaves the counter (and the index) alone.
+                let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                slot.insert((seq, order));
+                self.index.insert(seq, order_id);
+                Ok(())
+            }
+        }
     }
 
     /// Pop the front (oldest) order together with its insertion sequence,
@@ -444,12 +490,18 @@ impl OrderQueue {
     ///
     /// A new `OrderQueue` instance containing all the orders from the input vector.
     ///
+    /// Note: this infallible constructor drops later orders that repeat an id
+    /// already inserted (keep-first), so the queue's id-keyed map and its
+    /// ordered index always stay 1:1. Callers that must *reject* a
+    /// duplicate-bearing vector (e.g. snapshot restore) validate uniqueness
+    /// upstream where a `Result` can be returned.
     #[allow(dead_code)]
     #[must_use]
     pub fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
-            queue.push(order);
+            // Keep-first on a duplicate id: the index must stay 1:1.
+            let _ = queue.try_push(order);
         }
         queue
     }
@@ -520,7 +572,8 @@ impl FromStr for OrderQueue {
                     OrderType::from_str(order_str).map_err(|e| PriceLevelError::ParseError {
                         message: format!("Order parse error: {e}"),
                     })?;
-                queue.push(Arc::new(order));
+                // Reject a repeated id rather than overwriting it.
+                queue.try_push(Arc::new(order))?;
             }
         }
 
@@ -544,10 +597,13 @@ impl Display for OrderQueue {
 }
 
 impl From<Vec<Arc<OrderType<()>>>> for OrderQueue {
+    /// Infallible conversion: a repeated id is dropped (keep-first) so the map
+    /// and index stay 1:1. Restore paths that must reject duplicates validate
+    /// uniqueness upstream (see [`crate::price_level::PriceLevel::from_snapshot`]).
     fn from(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
-            queue.push(order);
+            let _ = queue.try_push(order);
         }
         queue
     }
@@ -579,9 +635,12 @@ impl<'de> Visitor<'de> for OrderQueueVisitor {
     {
         let queue = OrderQueue::new();
 
-        // Deserialize each order and add it to the queue
+        // Deserialize each order and add it to the queue, rejecting a repeated
+        // id rather than silently overwriting it.
         while let Some(order) = seq.next_element::<OrderType<()>>()? {
-            queue.push(Arc::new(order));
+            queue
+                .try_push(Arc::new(order))
+                .map_err(serde::de::Error::custom)?;
         }
 
         Ok(queue)

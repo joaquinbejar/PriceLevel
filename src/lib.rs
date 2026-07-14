@@ -505,6 +505,16 @@
 //! success. Admissions that stay within `u64` (all normal use) behave exactly
 //! as before.
 //!
+//! `add_order` also now **rejects a duplicate id**: publishing is an
+//! insert-if-absent, so reusing the id of an order already resting at the level
+//! returns the new [`PriceLevelError::DuplicateOrderId`] variant (again leaving
+//! the level unchanged) instead of overwriting the live order and leaving the
+//! id-keyed map and the ordered index disagreeing. Snapshot restore
+//! ([`PriceLevel::from_snapshot`] and the JSON / package forms) likewise
+//! rejects an orders vector that repeats an id rather than silently
+//! overwriting. Submitting genuinely distinct ids (all normal use) is
+//! unaffected.
+//!
 
 mod orders;
 mod price_level;

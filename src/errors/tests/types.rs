@@ -60,6 +60,7 @@ mod tests {
             PriceLevelError::InvalidFormat,
             PriceLevelError::UnknownOrderType("TestOrder".to_string()),
             PriceLevelError::MissingField("id".to_string()),
+            PriceLevelError::DuplicateOrderId("42".to_string()),
             PriceLevelError::InvalidFieldValue {
                 field: "side".to_string(),
                 value: "MIDDLE".to_string(),
