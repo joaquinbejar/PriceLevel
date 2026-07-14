@@ -6327,29 +6327,123 @@ mod tests {
     }
 
     #[test]
-    fn test_reserve_replenish_overflow_no_trade_maker_preserved() {
-        // A reserve whose visible + hidden exceed u64::MAX is admissible (the
-        // two are separate u64 counters). A partial match that would replenish
-        // it computes `new_visible + replenish_qty`, which overflows u64. The
-        // match step must fail atomically: no trade, maker unchanged, no panic
-        // (this test runs under debug assertions, where an unchecked `+` would
-        // panic).
+    fn test_reserve_own_total_overflow_rejected_at_admission() {
+        // A reserve whose OWN visible + hidden overflows u64 is now rejected at
+        // admission (issue #111 follow-up): the level cannot hold an order whose
+        // total quantity is not representable, and the match sweep's replenish
+        // add relies on that invariant. Nothing is mutated on rejection.
+        let level = PriceLevel::new(10_000);
+        match level.add_order(create_reserve_order(
+            1,
+            10_000,
+            u64::MAX,       // visible
+            u64::MAX,       // hidden -> visible + hidden overflows u64
+            u64::MAX,       // threshold
+            true,           // auto_replenish
+            Some(u64::MAX), // replenish amount
+        )) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order total quantity overflows u64"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected order-total-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // The level is untouched: no counters, no order, no stats moved.
+        assert_eq!(level.visible_quantity(), 0);
+        assert_eq!(level.hidden_quantity(), 0);
+        assert_eq!(level.order_count(), 0);
+        assert_eq!(level.snapshot_by_insertion_seq().len(), 0);
+    }
+
+    #[test]
+    fn test_iceberg_own_total_overflow_rejected_at_admission() {
+        // Same per-order invariant for an iceberg: visible + hidden must fit u64.
+        let level = PriceLevel::new(10_000);
+        match level.add_order(create_iceberg_order(1, 10_000, u64::MAX, u64::MAX)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order total quantity overflows u64"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected order-total-overflow InvalidOperation, got {other:?}"),
+        }
+
+        assert_eq!(level.visible_quantity(), 0);
+        assert_eq!(level.hidden_quantity(), 0);
+        assert_eq!(level.order_count(), 0);
+        assert_eq!(level.snapshot_by_insertion_seq().len(), 0);
+    }
+
+    #[test]
+    fn test_from_snapshot_rejects_order_own_total_overflow() {
+        // The restore path admits orders too, so it enforces the SAME per-order
+        // total invariant as add_order: a snapshot carrying an order whose own
+        // visible + hidden overflows u64 is rejected (via the topology scan in
+        // `refresh_aggregates`, shared by `from_snapshot` and the checksum
+        // package path) rather than smuggled in.
+        let overflowing = create_iceberg_order(1, 10_000, u64::MAX, u64::MAX);
+        let snapshot = crate::price_level::PriceLevelSnapshot::from_raw_parts(
+            Price::new(10_000),
+            // Stored aggregates are recomputed by `refresh_aggregates`; the
+            // per-order scan rejects the order before they matter.
+            Quantity::new(0),
+            Quantity::new(0),
+            1,
+            vec![std::sync::Arc::new(overflowing)],
+        );
+
+        match PriceLevel::from_snapshot(snapshot) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order total quantity overflows u64"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => {
+                panic!("expected order-total-overflow InvalidOperation on restore, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_replenish_would_wrap_level_counter_aborts_sweep_no_trade() {
+        // Issue #111 follow-up, finding 2: even when every order's OWN total
+        // fits u64, converting hidden depth to visible can push the LEVEL visible
+        // counter (and the true queue visible sum) past u64::MAX. The sweep must
+        // abort at the FIFO front rather than wrap the counter or trade a younger
+        // maker.
+        //
+        // auto-reserve(visible 1, hidden 100, replenish 100) admitted FIRST
+        // (own total 101, fits) + standard(visible u64::MAX - 1) admitted second
+        // (own total fits). Level visible counter = 1 + (u64::MAX - 1) = u64::MAX.
         let level = PriceLevel::new(10_000);
         level
             .add_order(create_reserve_order(
                 1,
                 10_000,
-                u64::MAX,       // visible
-                u64::MAX,       // hidden
-                u64::MAX,       // threshold: any partial fill falls below -> replenish
-                true,           // auto_replenish
-                Some(u64::MAX), // replenish amount: draws the full hidden
+                1,
+                100,
+                100,
+                true,
+                Some(100),
             ))
-            .expect("reserve with separately-valid u64 components must admit");
+            .expect("reserve own total fits u64");
+        level
+            .add_order(create_standard_order(2, 10_000, u64::MAX - 1))
+            .expect("standard own total fits u64");
+        assert_eq!(level.visible_quantity(), u64::MAX);
+
+        let before_json = level.snapshot_to_json().expect("snapshot serializes");
 
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let generator = UuidGenerator::new(namespace);
-        // A tiny taker triggers a partial fill and the overflowing replenish.
+        // A one-unit taker: consuming the reserve's visible 1 IS representable,
+        // but the +100 replenish would take the level visible counter to
+        // u64::MAX + 99 -> the sweep aborts at the reserve.
         let result = level.match_order(
             1,
             Id::from_u64(999),
@@ -6359,31 +6453,82 @@ mod tests {
             &generator,
         );
 
-        // No trade emitted and the taker is left fully unconsumed.
-        assert_eq!(
-            result.trades().len(),
-            0,
-            "an overflowing replenish must emit no trade"
-        );
+        // Zero trades, taker remainder full: the reserve's 1-unit fill was NOT
+        // emitted because it is inseparable from the overflowing replenish.
+        assert_eq!(result.trades().len(), 0, "aborted sweep must emit no trade");
         assert_eq!(
             result.remaining_quantity().as_u64(),
             1,
             "the taker must be left fully unconsumed"
         );
 
-        // The maker is still resting, unchanged.
-        let resting = level.snapshot_by_insertion_seq();
-        assert_eq!(resting.len(), 1, "the maker must still rest");
-        assert_eq!(resting[0].id(), Id::from_u64(1));
+        // NO wrap: the level visible counter is still exactly u64::MAX.
         assert_eq!(
-            resting[0].visible_quantity().as_u64(),
+            level.visible_quantity(),
             u64::MAX,
-            "maker visible quantity must be unchanged"
+            "the level visible counter must not have wrapped"
         );
+        assert_eq!(level.hidden_quantity(), 100, "hidden counter unchanged");
+        assert_eq!(level.order_count(), 2, "both makers still rest");
+
+        // Both makers are byte-identical, and FIFO is preserved: the younger
+        // standard maker did NOT trade and the reserve is untouched.
+        let resting = level.snapshot_by_insertion_seq();
+        assert_eq!(resting.len(), 2);
+        assert_eq!(resting[0].id(), Id::from_u64(1));
+        assert_eq!(resting[0].visible_quantity().as_u64(), 1);
+        assert_eq!(resting[0].hidden_quantity().as_u64(), 100);
+        assert_eq!(resting[1].id(), Id::from_u64(2));
+        assert_eq!(resting[1].visible_quantity().as_u64(), u64::MAX - 1);
+
+        // counters == queue == snapshot: the snapshot is byte-identical to the
+        // pre-match one, proving no counter drifted from the queue.
+        let after_json = level.snapshot_to_json().expect("snapshot serializes");
         assert_eq!(
-            resting[0].hidden_quantity().as_u64(),
-            u64::MAX,
-            "maker hidden quantity must be unchanged"
+            before_json, after_json,
+            "an aborted sweep must leave the level byte-identical"
+        );
+    }
+
+    #[test]
+    fn test_update_order_upsize_wrapping_level_counter_rejected() {
+        // update_order must reject a quantity update whose counter delta would
+        // wrap the level visible counter, leaving the level unchanged and
+        // deterministic. Fill the visible counter to u64::MAX with a standard
+        // maker, add a tiny second maker, then try to upsize the tiny one — its
+        // +delta would take the counter past u64::MAX.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, u64::MAX - 5))
+            .expect("first admission ok");
+        level
+            .add_order(create_standard_order(2, 10_000, 5))
+            .expect("second admission reaches exactly u64::MAX");
+        assert_eq!(level.visible_quantity(), u64::MAX);
+
+        let before_json = level.snapshot_to_json().expect("snapshot serializes");
+
+        // Upsize maker 2 from 5 to 10: delta +5 would wrap the level counter.
+        match level.update_order(OrderUpdate::UpdateQuantity {
+            order_id: Id::from_u64(2),
+            new_quantity: Quantity::new(10),
+        }) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("price level quantity counter overflow on update"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected counter-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // Nothing mutated: counters, order sizes, and a byte-identical snapshot.
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.order_count(), 2);
+        let after_json = level.snapshot_to_json().expect("snapshot serializes");
+        assert_eq!(
+            before_json, after_json,
+            "a rejected update must leave the level byte-identical"
         );
     }
 

@@ -449,6 +449,56 @@ mod tests {
     }
 
     #[test]
+    fn test_match_against_reserve_replenish_overflow_sentinel_no_progress() {
+        // Defense-in-depth sentinel for a state `PriceLevel::add_order` /
+        // `refresh_aggregates` now REJECT at admission: a reserve whose own
+        // visible + hidden overflows `u64`. Such an order can never rest at a
+        // level, but `match_against` is a pure function that can still be handed
+        // one directly (as here), so it must not panic in debug / wrap in
+        // release when the replenish add `new_visible + replenish_qty` overflows.
+        // It must make NO progress: consumed 0, remaining untouched, maker handed
+        // back byte-identical, no hidden drawn — the no-progress sentinel the
+        // sweep and the fill-or-kill dry run both detect.
+        let order = OrderType::<()>::ReserveOrder {
+            id: Id::from_u64(200),
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(u64::MAX),
+            hidden_quantity: Quantity::new(u64::MAX),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1616823000000),
+            time_in_force: TimeInForce::Gtc,
+            // Any partial fill leaves visible below threshold -> replenish.
+            replenish_threshold: Quantity::new(u64::MAX),
+            replenish_amount: Some(nz(u64::MAX)),
+            auto_replenish: true,
+            extra_fields: (),
+        };
+
+        // A one-unit taker triggers a partial fill: new_visible = u64::MAX - 1,
+        // replenish_qty = min(u64::MAX, u64::MAX) = u64::MAX, and their sum
+        // overflows u64 -> the sentinel fires.
+        let (consumed, updated, hidden_reduced, remaining) = order.match_against(1);
+        assert_eq!(consumed, 0, "overflowing replenish must consume nothing");
+        assert_eq!(
+            hidden_reduced, 0,
+            "overflowing replenish must draw no hidden"
+        );
+        assert_eq!(remaining, 1, "the taker's remaining must be untouched");
+        match updated {
+            Some(OrderType::<()>::ReserveOrder {
+                visible_quantity,
+                hidden_quantity,
+                ..
+            }) => {
+                assert_eq!(visible_quantity, Quantity::new(u64::MAX));
+                assert_eq!(hidden_quantity, Quantity::new(u64::MAX));
+            }
+            _ => panic!("Expected the maker handed back unchanged"),
+        }
+    }
+
+    #[test]
     fn test_from_str_standard() {
         let order_str = "Standard:id=00000000-0000-007b-0000-000000000000;price=10000;quantity=5;side=BUY;timestamp=1616823000000;time_in_force=GTC";
         let order: OrderType<()> = OrderType::from_str(order_str).unwrap();

@@ -867,17 +867,22 @@ impl<T: Clone> OrderType<T> {
                         && *auto_replenish
                     {
                         // Refreshed visible is `new_visible + replenish_qty`.
-                        // Guard the sum with `checked_add`: a reserve whose
-                        // visible + hidden exceeds `u64::MAX` is admissible (the
-                        // two are separate `u64` components) yet would panic in
-                        // debug / wrap in release here. On overflow make NO
-                        // progress — hand the maker back unchanged with
-                        // `consumed == 0` and `remaining` untouched. That is the
+                        // This sum is provably `<= u64::MAX` for any order the
+                        // level admits: `new_visible <= visible_quantity`,
+                        // `replenish_qty` is capped by `.min(hidden_quantity)`
+                        // above, and `PriceLevel::add_order` /
+                        // `PriceLevelSnapshot::refresh_aggregates` reject any
+                        // order whose own `visible + hidden` overflows `u64`,
+                        // so `new_visible + replenish_qty <= visible + hidden
+                        // <= u64::MAX`. The `checked_add` is therefore kept as
+                        // defense-in-depth against an unadmitted / internally
+                        // constructed order (e.g. a direct `match_against` unit
+                        // test): on the unreachable overflow it makes NO progress
+                        // — the maker is handed back unchanged with
+                        // `consumed == 0` and `remaining` untouched, the
                         // no-progress sentinel both the real sweep and the
-                        // fill-or-kill dry run already detect and set aside, so
-                        // the match step fails atomically: no trade emitted, and
-                        // maker + taker state preserved. Never a partial or a
-                        // manufactured (wrapped) fill.
+                        // fill-or-kill dry run detect and set aside — never a
+                        // partial or a manufactured (wrapped) fill.
                         let Some(refreshed_visible) = new_visible.checked_add(replenish_qty) else {
                             return (0, Some(self.clone()), 0, incoming_quantity);
                         };
