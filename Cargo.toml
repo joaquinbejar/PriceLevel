@@ -1,6 +1,6 @@
 [package]
 name = "pricelevel"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["Joaquin Bejar <jb@taunais.com>"]
 description = "A high-performance, lock-free price level implementation for limit order books in Rust. This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns."
@@ -54,6 +54,10 @@ criterion = { version = "0.8", default-features = false, features = ["html_repor
 # `rusty-fork` / `wait-timeout` deps) we do not use; `std` keeps the core
 # strategy API.
 proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
+# bincode is dev-only: it pins the non-self-describing serde round-trip of
+# `MatchResult` (issue #135) — the shape downstream consumers (OrderBook-rs's
+# NATS bincode path) encode with. It never ships in the library surface.
+bincode = { version = "2.0", default-features = false, features = ["serde", "std"] }
 # loom is a dev-only model checker, gated behind `--cfg loom`. It is NOT a
 # runtime dependency. It models the cancel-vs-partial-fill linearization (issue
 # #81); see `tests/loom/cancel_match.rs`. loom cannot instrument dashmap /

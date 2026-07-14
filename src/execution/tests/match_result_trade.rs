@@ -768,19 +768,91 @@ mod tests {
         result
     }
 
+    /// #135 regression: the `Serialize` shape must be symmetric with the
+    /// validated wire struct. Before the fix the bare `outcome` variant index
+    /// landed where the wire's `Option` tag was expected and bincode decode
+    /// failed with `UnexpectedVariant` on every payload 0.9.0 produced.
+    #[test]
+    fn bincode_round_trip_is_symmetric_issue_135() {
+        // Empty result (NotFilled) — the minimal shape that 0.9.0 failed on.
+        let empty = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        let bytes = match bincode::serde::encode_to_vec(&empty, bincode::config::standard()) {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("bincode encode failed: {error}"),
+        };
+        let decoded: MatchResult =
+            match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
+                Ok((value, _)) => value,
+                Err(error) => panic!("bincode decode failed: {error}"),
+            };
+        assert_eq!(decoded.outcome(), MatchOutcome::NotFilled);
+        assert_eq!(decoded.remaining_quantity().as_u64(), 100);
+
+        // Partially filled result with a trade — outcome variant index 1.
+        let mut partial = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(partial.add_trade(sample_trade(25)).is_ok());
+        let bytes = match bincode::serde::encode_to_vec(&partial, bincode::config::standard()) {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("bincode encode failed: {error}"),
+        };
+        let decoded: MatchResult =
+            match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
+                Ok((value, _)) => value,
+                Err(error) => panic!("bincode decode failed: {error}"),
+            };
+        assert_eq!(decoded.outcome(), MatchOutcome::PartiallyFilled);
+        assert_eq!(decoded.remaining_quantity().as_u64(), 75);
+        assert_eq!(decoded.trades().len(), 1);
+    }
+
+    /// #135 guard: wrapping `outcome` in `Some` on the serialize side must
+    /// not change the JSON payload — serde flattens the option away, so the
+    /// key still carries the bare snake_case value.
+    #[test]
+    fn json_payload_keeps_bare_outcome_issue_135() {
+        let result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        let json = match serde_json::to_string(&result) {
+            Ok(json) => json,
+            Err(error) => panic!("json encode failed: {error}"),
+        };
+        assert!(
+            json.contains("\"outcome\":\"not_filled\""),
+            "outcome must stay a bare value in JSON, got: {json}"
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 
-        /// Any valid result built through the public API round-trips both serde
-        /// JSON (outcome preserved) and Display/FromStr (benign outcome
-        /// re-derived identically) with no field drift — the validator never
-        /// rejects a legitimately-constructed value.
+        /// Any valid result built through the public API round-trips serde
+        /// JSON (outcome preserved), bincode (positional, non-self-describing
+        /// — pins the encode/decode shape symmetry of #135), and
+        /// Display/FromStr (benign outcome re-derived identically) with no
+        /// field drift — the validator never rejects a
+        /// legitimately-constructed value.
         #[test]
         fn valid_result_round_trips_both_encodings(
             initial in 1u64..=100_000,
             specs in prop::collection::vec((20u64..=40, 1u64..=100_000, any::<bool>()), 0..12),
         ) {
             let original = build_valid_result(initial, &specs);
+
+            // bincode is positional: it only decodes if the Serialize shape
+            // matches the wire struct field-for-field (#135).
+            let bytes = bincode::serde::encode_to_vec(&original, bincode::config::standard())
+                .map_err(|e| TestCaseError::fail(format!("bincode encode: {e}")))?;
+            let (bin_decoded, _): (MatchResult, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                    .map_err(|e| TestCaseError::fail(format!("valid bincode must decode: {e}")))?;
+            prop_assert_eq!(bin_decoded.order_id(), original.order_id());
+            prop_assert_eq!(
+                bin_decoded.remaining_quantity().as_u64(),
+                original.remaining_quantity().as_u64()
+            );
+            prop_assert_eq!(bin_decoded.is_complete(), original.is_complete());
+            prop_assert_eq!(bin_decoded.outcome(), original.outcome());
+            prop_assert_eq!(bin_decoded.trades().len(), original.trades().len());
+            prop_assert_eq!(bin_decoded.filled_order_ids(), original.filled_order_ids());
 
             // serde JSON must decode and preserve every field, outcome included.
             let json = serde_json::to_string(&original)

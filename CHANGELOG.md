@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-07-14
+
+### Fixed
+
+- **`MatchResult` round-trips non-self-describing serde formats again
+  (#135).** 0.9.0's decode-time validation (#117) deserializes through a wire
+  struct whose `outcome` is `Option<MatchOutcome>`, but `Serialize` still
+  emitted a bare `MatchOutcome`. JSON tolerated the asymmetry; a positional
+  decoder (bincode) read the enum variant index where the option tag was
+  expected and failed with `UnexpectedVariant` on every 0.9.0 payload.
+  `outcome` is now serialized as `Some(outcome)`: the JSON payload is
+  byte-identical (serde flattens `Some`), and bincode encode/decode are
+  symmetric. Bincode payloads written by 0.9.0 do not decode (they never
+  did — 0.9.0 could not decode its own output); JSON payloads from any
+  version are unaffected. Pinned by a bincode leg on the round-trip
+  property test plus deterministic shape guards (`bincode` added as a
+  dev-dependency only).
+
 ## [0.9.0] - 2026-07-14
 
 Major hardening release: ten engine-correctness issues (#111–#120, PRs
