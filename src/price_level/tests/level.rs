@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::errors::PriceLevelError;
-    use crate::execution::{MatchOutcome, TakerKind};
+    use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};
     use crate::price_level::PriceLevelSnapshotPackage;
     use crate::price_level::level::{PriceLevel, PriceLevelData};
@@ -7342,6 +7342,252 @@ mod tests {
             ),
             "from_snapshot must reject a mixed-side snapshot"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #119 — atomic quantity-increase re-sequencing
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_upsize_vs_cancel_race_no_lost_cancel_or_resurrection() {
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 1_500;
+        for iter in 0..ITERATIONS {
+            let level = StdArc::new(PriceLevel::new(10_000));
+            level
+                .add_order(create_standard_order(1, 10_000, 100))
+                .expect("seed maker");
+            let id = Id::from_u64(1);
+            let barrier = StdArc::new(Barrier::new(2));
+
+            let updater = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    // Quantity INCREASE -> in-place demotion to the tail.
+                    level
+                        .update_order(OrderUpdate::UpdateQuantity {
+                            order_id: id,
+                            new_quantity: Quantity::new(200),
+                        })
+                        .expect("update must not error")
+                })
+            };
+            let canceller = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::Cancel { order_id: id })
+                        .expect("cancel must not error")
+                })
+            };
+
+            let _ = updater.join().expect("updater panicked");
+            let cancelled = canceller.join().expect("canceller panicked");
+
+            let is_resting = level
+                .snapshot_by_insertion_seq()
+                .iter()
+                .any(|o| o.id() == id);
+
+            // The id never leaves the map, so the cancel is the only remover: it
+            // must always succeed (Some), and the order must then be gone. It is
+            // NEVER the case that the cancel returned None while the order still
+            // rests (the lost-cancel / resurrection bug the old remove+push
+            // demotion allowed).
+            assert!(
+                cancelled.is_some(),
+                "iter {iter}: cancel returned None (the order was momentarily absent — resurrection window)"
+            );
+            assert!(
+                !is_resting,
+                "iter {iter}: order still resting after a winning cancel (resurrection)"
+            );
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_upsize_vs_duplicate_admission_race_always_rejected() {
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 1_500;
+        for iter in 0..ITERATIONS {
+            let level = StdArc::new(PriceLevel::new(10_000));
+            level
+                .add_order(create_standard_order(1, 10_000, 100))
+                .expect("seed maker");
+            let id = Id::from_u64(1);
+            let barrier = StdArc::new(Barrier::new(2));
+
+            let updater = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level
+                        .update_order(OrderUpdate::UpdateQuantity {
+                            order_id: id,
+                            new_quantity: Quantity::new(200),
+                        })
+                        .expect("update must not error")
+                })
+            };
+            let admitter = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    // Same id, distinct order. Since the upsize never vacates the
+                    // id, this must ALWAYS be rejected as a duplicate.
+                    level.add_order(create_standard_order(1, 10_000, 50))
+                })
+            };
+
+            let _ = updater.join().expect("updater panicked");
+            let admit = admitter.join().expect("admitter panicked");
+
+            assert!(
+                matches!(admit, Err(PriceLevelError::DuplicateOrderId(_))),
+                "iter {iter}: duplicate admission must always be rejected (id never leaves the map); got {admit:?}"
+            );
+
+            // No counter drift, exactly one resting id, map/index 1:1.
+            assert_counters_match_queue(&level);
+            let ids: Vec<Id> = level
+                .snapshot_by_insertion_seq()
+                .iter()
+                .map(|o| o.id())
+                .collect();
+            assert_eq!(ids, vec![id], "iter {iter}: id 1 must rest exactly once");
+            assert_eq!(level.order_count(), 1);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_upsize_and_match_stays_consistent() {
+        // Stress the stale-front-selection guard: one thread performs a bounded
+        // burst of upsizes (each a tail demotion that re-sequences the maker
+        // mid-sweep) while a single matcher races it with small takers, then
+        // fully drains once the burst ends. Invariants: never panics; every
+        // consumed maker id is a real maker (a stale front cannot act on a
+        // garbage / re-sequenced-away entry); and the level drains to empty with
+        // counters consistent.
+        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+        use std::sync::{Arc as StdArc, Barrier, Mutex};
+        use std::thread;
+
+        const MAKERS: u64 = 6;
+        const PRICE: u128 = 10_000;
+        const UPSIZE_ROUNDS: usize = 150;
+
+        for iter in 0..25 {
+            let level = StdArc::new(PriceLevel::new(PRICE));
+            for id in 1..=MAKERS {
+                level
+                    .add_order(create_standard_order(id, PRICE, 100))
+                    .expect("seed maker");
+            }
+            let barrier = StdArc::new(Barrier::new(2));
+            let burst_done = StdArc::new(AtomicBool::new(false));
+            let consumed = StdArc::new(Mutex::new(Vec::<Id>::new()));
+
+            let upsizer = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                let burst_done = StdArc::clone(&burst_done);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut q = 100u64;
+                    // A BOUNDED burst so the level can actually be drained.
+                    for _ in 0..UPSIZE_ROUNDS {
+                        for id in 1..=MAKERS {
+                            q += 1;
+                            // Ignore the result: the maker may already be gone
+                            // (consumed by the matcher), which returns Ok(None).
+                            let _ = level.update_order(OrderUpdate::UpdateQuantity {
+                                order_id: Id::from_u64(id),
+                                new_quantity: Quantity::new(q),
+                            });
+                        }
+                    }
+                    burst_done.store(true, AtomicOrdering::Release);
+                })
+            };
+            let matcher = {
+                let level = StdArc::clone(&level);
+                let barrier = StdArc::clone(&barrier);
+                let burst_done = StdArc::clone(&burst_done);
+                let consumed = StdArc::clone(&consumed);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let generator = UuidGenerator::new(Uuid::from_u128(0xBEEF_0000 + iter as u128));
+                    let record = |result: &MatchResult| {
+                        let mut guard = consumed.lock().expect("lock");
+                        for trade in result.trades().as_vec() {
+                            guard.push(trade.maker_order_id());
+                        }
+                    };
+                    // Race the burst with small takers.
+                    while !burst_done.load(AtomicOrdering::Acquire) {
+                        let result = level.match_order(
+                            7,
+                            Id::from_u64(9_999),
+                            TimeInForce::Gtc,
+                            TakerKind::Standard,
+                            TimestampMs::new(1_700_000_000_000),
+                            &generator,
+                        );
+                        record(&result);
+                    }
+                    // Burst over: drain whatever remains with a large taker.
+                    loop {
+                        if level.order_count() == 0 {
+                            break;
+                        }
+                        let result = level.match_order(
+                            u64::MAX,
+                            Id::from_u64(9_999),
+                            TimeInForce::Gtc,
+                            TakerKind::Standard,
+                            TimestampMs::new(1_700_000_000_001),
+                            &generator,
+                        );
+                        record(&result);
+                        if result.trades().as_vec().is_empty() {
+                            break; // safety: no progress
+                        }
+                    }
+                })
+            };
+
+            upsizer.join().expect("upsizer panicked");
+            matcher.join().expect("matcher panicked");
+
+            assert_eq!(
+                level.order_count(),
+                0,
+                "iter {iter}: level must drain empty"
+            );
+            assert_counters_match_queue(&level);
+
+            // Every consumed maker id is one of the real makers — a stale front
+            // never surfaces a phantom / re-sequenced-away entry.
+            let expected: std::collections::HashSet<Id> = (1..=MAKERS).map(Id::from_u64).collect();
+            let guard = consumed.lock().expect("lock");
+            for maker in guard.iter() {
+                assert!(
+                    expected.contains(maker),
+                    "iter {iter}: consumed an unexpected maker id {maker}"
+                );
+            }
+        }
     }
 }
 

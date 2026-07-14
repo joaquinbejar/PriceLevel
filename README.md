@@ -581,6 +581,25 @@ order ids owned by the same `user_id` will still trade. Account-level STP is
 the responsibility of the order book composing these levels, which owns the
 account relationships a single price level does not.
 
+### Migration Guide (atomic quantity-increase re-sequencing)
+
+A quantity increase via [`PriceLevel::update_order`] still demotes the maker
+to the back of the queue (fresh tail sequence, original timestamp), but it
+now does so **in place** — the order id never leaves the internal map. This
+closes the concurrency window the previous `remove` + re-insert opened
+(issue #119): a concurrent cancel can no longer be lost or resurrect the
+order, a concurrent same-id admission can no longer slip into the gap
+(`add_order` for a live id is always rejected), and the match sweep can no
+longer act on a stale front position. The public behaviour of `update_order`
+is unchanged; only its concurrency safety improves.
+
+The internal `OrderQueue::push` — a blind, overwrite-on-collision insert
+with no remaining production caller — is removed from the public API (it is
+now test-only). Admission uses `try_push` (insert-if-absent) and the
+quantity-increase demotion uses the internal atomic re-sequence, so `push`
+was a footgun with no safe use; construct queues through [`PriceLevel`]'s
+public surface instead.
+
 
  ## Setup Instructions
 
