@@ -2288,7 +2288,16 @@ impl PriceLevel {
     }
 }
 
-/// Serializable representation of a price level for easier data transfer and storage
+/// Serializable representation of a price level for easier data transfer and storage.
+///
+/// The `orders` vector is materialized in **queue-consumption order**
+/// (ascending insertion sequence — exactly as `match_order` sweeps), and
+/// [`TryFrom<PriceLevelData>`](PriceLevel#impl-TryFrom<PriceLevelData>-for-PriceLevel)
+/// re-admits in vector order, so a `PriceLevelData` round-trip preserves
+/// price-time (FIFO) priority just like the checksum-protected snapshot
+/// package. Unlike the package, this plain representation carries no checksum
+/// and no statistics — prefer [`PriceLevel::snapshot_package`] for
+/// persistence.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PriceLevelData {
@@ -2311,8 +2320,14 @@ impl From<&PriceLevel> for PriceLevelData {
             visible_quantity: price_level.visible_quantity(),
             hidden_quantity: price_level.hidden_quantity(),
             order_count: price_level.order_count(),
+            // Consumption (insertion-sequence) order, NOT the unordered DashMap
+            // iteration: `TryFrom<PriceLevelData>` re-admits in vector order,
+            // so this is what makes the round-trip preserve price-time / FIFO
+            // priority (issue #131) — the same contract the snapshot package
+            // has kept since issue #109.
             orders: price_level
-                .iter_orders()
+                .snapshot_by_insertion_seq()
+                .into_iter()
                 .map(|order_arc| *order_arc)
                 .collect(),
         }
