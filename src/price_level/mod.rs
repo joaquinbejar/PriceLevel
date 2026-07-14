@@ -4,16 +4,21 @@
    Date: 28/3/25
 ******************************************************************************/
 
-//! Core price level module: lock-free order queue, matching, snapshots, and statistics.
+//! Core price level module: order queue, matching, snapshots, and statistics,
+//! lock-free on the common paths.
 //!
 //! This module provides the central [`PriceLevel`] type that represents a single price
-//! point in a limit order book. It manages a lock-free queue of orders, performs matching,
-//! tracks statistics, and supports snapshot persistence with checksum protection.
+//! point in a limit order book. It manages a queue of orders (lock-free on add / match /
+//! cancel), performs matching, tracks statistics, and supports snapshot persistence with
+//! checksum protection. A fill-or-kill match takes a level-exclusive guard across its
+//! feasibility check and sweep so it stays all-or-nothing against concurrent mutation
+//! (issue #112).
 //!
 //! # Key Types
 //!
-//! - [`PriceLevel`] — the main lock-free price level implementation supporting concurrent
-//!   add, match, update, and cancel operations via atomic counters and crossbeam queues.
+//! - [`PriceLevel`] — the main price level implementation supporting concurrent add, match,
+//!   update, and cancel operations via atomic counters and crossbeam queues, lock-free on
+//!   those common paths (a fill-or-kill match takes a brief level-exclusive guard).
 //! - [`PriceLevelData`] — a serializable representation for data transfer and storage.
 //! - [`PriceLevelSnapshot`] — a point-in-time snapshot of all orders at a price level.
 //! - [`PriceLevelSnapshotPackage`] — a checksum-protected wrapper around a snapshot for

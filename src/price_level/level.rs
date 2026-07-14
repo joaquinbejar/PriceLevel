@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 /// Bit layout of the [`PriceLevel::topology`] word (issue #126): the high two
 /// bits carry the pinned-side tag, the low bits the resting-order count. Packing
@@ -64,7 +64,14 @@ mod topology {
     }
 }
 
-/// A lock-free implementation of a price level in a limit order book.
+/// A price level in a limit order book, lock-free on its common paths.
+///
+/// Add, match (`Gtc` / `Ioc` / `Day`), and cancel take no lock — they run on
+/// atomic counters and lock-free structures. A fill-or-kill match is the one
+/// exception: it takes a level-exclusive guard across its feasibility check and
+/// sweep so it stays all-or-nothing against concurrent mutation, and admissions
+/// / updates pay one uncontended shared acquisition (see the `fok_guard` field
+/// and [`Self::match_order`] for the full argument — issue #112).
 ///
 /// # Topology
 ///
@@ -128,6 +135,26 @@ pub struct PriceLevel {
 
     /// Statistics for this price level
     stats: Arc<PriceLevelStatistics>,
+
+    /// Fill-or-kill exclusion guard (issue #112).
+    ///
+    /// A fill-or-kill match must be **all-or-nothing** with respect to
+    /// concurrent `add_order` / `update_order` (cancel / resize): between its
+    /// depth dry-run and its sweep, a concurrent shrink could otherwise leave it
+    /// partially filled. All-or-nothing across N makers is a cross-maker
+    /// transactional property the per-entry atomics cannot express, so the FOK
+    /// path takes this guard's **write** (exclusive) side across its dry-run and
+    /// sweep, and the mutators ([`Self::add_order`] / [`Self::update_order`])
+    /// take the **read** (shared) side. The common paths therefore pay only an
+    /// uncontended shared acquisition; a FOK (a cold, specific TIF) excludes
+    /// mutators for the duration of its feasibility check and sweep — an
+    /// `O(depth)` exclusive section, not a constant-time one. The non-FOK sweep
+    /// takes NO guard — it relies on the
+    /// single-matcher-per-level model and the existing per-entry cancel
+    /// atomicity (issue #81). The guarded value is `()`; a poisoned lock (a
+    /// holder panicked) is recovered with `into_inner`, since there is no state
+    /// to corrupt.
+    fok_guard: RwLock<()>,
 }
 
 impl PriceLevel {
@@ -221,6 +248,7 @@ impl PriceLevel {
             topology_epoch: AtomicU64::new(0),
             orders: queue,
             stats: Arc::new(stats),
+            fok_guard: RwLock::new(()),
         })
     }
 
@@ -274,6 +302,7 @@ impl PriceLevel {
             topology_epoch: AtomicU64::new(0),
             orders: OrderQueue::new(),
             stats: Arc::new(PriceLevelStatistics::new()),
+            fok_guard: RwLock::new(()),
         }
     }
 
@@ -483,6 +512,27 @@ impl PriceLevel {
         self.stats.clone()
     }
 
+    /// Acquire the fill-or-kill guard's **shared (read)** side — the mutator
+    /// side. Multiple mutators proceed concurrently; a fill-or-kill match
+    /// (holding the exclusive side) excludes them. A poisoned lock is recovered
+    /// with `into_inner` because the guarded value is `()` (see the field doc).
+    #[inline]
+    fn fok_read(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.fok_guard
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Acquire the fill-or-kill guard's **exclusive (write)** side — held across
+    /// a fill-or-kill dry-run + sweep so no mutator can change the matchable
+    /// depth mid-decision. A poisoned lock is recovered (see [`Self::fok_read`]).
+    #[inline]
+    fn fok_write(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
+        self.fok_guard
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Add an order to this price level.
     ///
     /// Decides the order's id IDENTITY first, then reserves its visible /
@@ -542,6 +592,11 @@ impl PriceLevel {
     /// already rests at this level. A duplicate id takes precedence over a
     /// counter overflow. In every case the level is unchanged.
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
+        // Hold the fill-or-kill guard's shared side for this admission so a
+        // concurrent fill-or-kill match sees a stable depth (issue #112). This
+        // is an uncontended shared acquisition in the common case (no FOK).
+        let _fok = self.fok_read();
+
         // -------- Admission topology invariants (cheapest checks, no mutation) --------
         //
         // A level holds orders at exactly one price and one side. Reject a
@@ -947,16 +1002,45 @@ impl PriceLevel {
     /// This method still assumes a **single logical matcher per level at a
     /// time**: two concurrent `match_order` calls on the *same* level are NOT
     /// made safe here and must be serialized by the caller (an order book
-    /// typically matches a level from a single thread). The post-only /
-    /// fill-or-kill pre-checks read the queue before the sweep; under that
-    /// single-matcher assumption no concurrent `match_order` can change the
-    /// matchable depth between the pre-check and the sweep. Concurrent
-    /// `add_order` from other threads is likewise safe **for counter / queue
-    /// integrity**. The single-side topology invariant carries an additional
-    /// requirement beyond that integrity: it holds only when a given level's
-    /// admissions arrive from one logical path (see the type-level note on
-    /// [`PriceLevel`]), because the side is derived from the live queue rather
-    /// than stored.
+    /// typically matches a level from a single thread). Concurrent `add_order`
+    /// from other threads is safe **for counter / queue integrity**. The
+    /// single-side topology invariant carries an additional requirement beyond
+    /// that integrity: it holds only when a given level's admissions arrive from
+    /// one logical path (see the type-level note on [`PriceLevel`]), because the
+    /// side is derived from the live queue rather than stored.
+    ///
+    /// ## PostOnly and fill-or-kill are atomic with the sweep (issue #112)
+    ///
+    /// Both the post-only and the fill-or-kill decisions are made
+    /// all-or-nothing with respect to concurrent `add_order` / `update_order`,
+    /// by two different mechanisms:
+    ///
+    /// * **PostOnly never enters the sweep.** A positive post-only taker either
+    ///   crosses resting depth (rejected) or does not (rests) — in NEITHER case
+    ///   is any resting order consumed, and in neither case does it sweep.
+    ///   Because there is no sweep, no concurrently-added maker can be turned
+    ///   into a trade: "post-only emits zero trades" is a *structural* property
+    ///   that holds under every interleaving, needing no lock. The verdict is
+    ///   linearized at the `has_matchable_depth` read — depth committed before
+    ///   it is crossed (reject); depth committed after it is ordered behind this
+    ///   taker (rest), the correct decision at the read instant. A non-crossing
+    ///   post-only taker leaves the level completely untouched; the caller
+    ///   re-admits the residual via `add_order`. The post-only decision is
+    ///   evaluated *before* the [`TimeInForce`] branch, so a post-only taker
+    ///   never takes liquidity even when its TIF is `Fok` or `Ioc` — the
+    ///   never-cross kind dominates the fill-or-kill / immediate-or-cancel
+    ///   semantics.
+    /// * **Fill-or-kill holds an exclusive guard across its dry-run and sweep.**
+    ///   A positive fill-or-kill taker takes the write side of the level's
+    ///   fill-or-kill guard (the `fok_guard` note on [`PriceLevel`]) before its
+    ///   feasibility dry-run and holds it through the sweep, while `add_order` /
+    ///   `update_order` take the shared side. No mutator can then change the
+    ///   matchable depth between the dry-run and the sweep, so with a stable
+    ///   queue the sweep consumes exactly what the dry-run predicted: a
+    ///   fill-or-kill taker either fills in full or is killed with the queue and
+    ///   counters untouched — never a partial fill. The guard is acquired only
+    ///   for fill-or-kill; the ordinary (`Gtc` / `Ioc` / `Day`) sweep is
+    ///   unguarded and pays nothing.
     ///
     /// # Statistics
     ///
@@ -1007,28 +1091,43 @@ impl PriceLevel {
 
         // -------- Taker TIF / kind pre-checks (before any queue mutation) --------
         //
-        // PostOnly: must never take liquidity. If any matchable depth exists for
-        // a positive taker, reject without touching the queue. A zero-quantity
-        // taker has nothing to cross, so it is not rejected (it falls through to
-        // the vacuous-complete sweep below).
-        if taker_kind.is_post_only()
-            && incoming_quantity > 0
-            && self.has_matchable_depth(taker_order_id)
-        {
-            tracing::debug!(
-                taker_order_id = %taker_order_id,
-                incoming_quantity,
-                price = self.price,
-                "post-only taker rejected: would take liquidity"
-            );
-            let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
-            result.mark_rejected(incoming_quantity);
-            return result;
+        // PostOnly: must NEVER take liquidity (issue #112). A positive PostOnly
+        // taker either crosses (reject) or does not (rest) — and in NEITHER case
+        // does it enter the sweep. Not entering the sweep is what makes "PostOnly
+        // emits zero trades" hold under *every* interleaving: no concurrent
+        // `add_order` can turn a resting decision into a trade, because there is
+        // no sweep to consume the newly-added depth. The verdict is linearized at
+        // the `has_matchable_depth` check: depth committed before it is crossed
+        // (reject); depth committed after it is ordered "later" (behind this
+        // taker), so resting is correct at the check instant. No guard is needed.
+        if taker_kind.is_post_only() && incoming_quantity > 0 {
+            if self.has_matchable_depth(taker_order_id) {
+                tracing::debug!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    price = self.price,
+                    "post-only taker rejected: would take liquidity"
+                );
+                let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+                result.mark_rejected(incoming_quantity);
+                return result;
+            }
+            // Not crossable: rest (report no trade) WITHOUT sweeping. The caller
+            // re-admits the residual via `add_order`.
+            return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
         }
 
-        // Fill-or-kill: all-or-nothing. If the level cannot fill the taker in
-        // full, kill it without touching the queue.
-        if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
+        // Fill-or-kill: all-or-nothing w.r.t. concurrent mutators (issue #112).
+        // Take the fill-or-kill guard's EXCLUSIVE side and hold it across BOTH
+        // the feasibility dry-run and the sweep below, so no `add_order` /
+        // `update_order` can change the matchable depth between the two: with a
+        // stable queue the sweep consumes exactly what the dry-run predicted, so
+        // an FOK either fills in full or (insufficient depth) is killed with the
+        // queue and counters untouched — never a partial fill. `_fok_guard` is
+        // `Some` only for a positive FOK taker; it drops at the end of the
+        // method (after the sweep). The non-FOK paths take no guard.
+        let _fok_guard = if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
+            let guard = self.fok_write();
             let available = self.matchable_quantity(incoming_quantity, taker_order_id);
             if available < incoming_quantity {
                 tracing::debug!(
@@ -1042,7 +1141,10 @@ impl PriceLevel {
                 result.mark_killed(incoming_quantity);
                 return result;
             }
-        }
+            Some(guard)
+        } else {
+            None
+        };
 
         // A single sweep emits at most one trade and at most one filled-order
         // id per resting order it actually consumes. Two independent upper
@@ -1627,6 +1729,31 @@ impl PriceLevel {
         &self,
         update: OrderUpdate,
     ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
+        // Hold the fill-or-kill guard's shared side for the whole update so a
+        // concurrent fill-or-kill match cannot observe the depth shrink (cancel
+        // / down-size) or grow mid-decision (issue #112). Uncontended in the
+        // common case (no FOK running). Acquired exactly ONCE here: the
+        // same-price branches of `UpdatePriceAndQuantity` / `Replace` delegate
+        // to the guard-free `update_order_inner` rather than recursing into this
+        // method, because std `RwLock` reads are NOT reentrant. A recursive
+        // `read()` with a writer queued between the two acquisitions (the lock
+        // is writer-preferring, so the queued writer blocks the second reader)
+        // would deadlock against a `fok_write` waiting on the first reader.
+        let _fok = self.fok_read();
+        self.update_order_inner(update)
+    }
+
+    /// Guard-free body of [`Self::update_order`].
+    ///
+    /// The caller MUST already hold the fill-or-kill shared guard
+    /// ([`Self::fok_read`]); this method never acquires it. That is what lets
+    /// the same-price `UpdatePriceAndQuantity` / `Replace` branches re-enter it
+    /// without taking a second, non-reentrant [`std::sync::RwLock`] read
+    /// (issue #112).
+    fn update_order_inner(
+        &self,
+        update: OrderUpdate,
+    ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         match update {
             OrderUpdate::UpdatePrice {
                 order_id,
@@ -1811,8 +1938,11 @@ impl PriceLevel {
                     }
                     Ok(order)
                 } else {
-                    // If price is the same, just update the quantity (reuse logic)
-                    self.update_order(OrderUpdate::UpdateQuantity {
+                    // If price is the same, just update the quantity (reuse
+                    // logic). Call the guard-free inner body — we already hold
+                    // the fill-or-kill shared guard, and a second `fok_read`
+                    // here would be a non-reentrant recursive read (issue #112).
+                    self.update_order_inner(OrderUpdate::UpdateQuantity {
                         order_id,
                         new_quantity,
                     })
@@ -1883,8 +2013,11 @@ impl PriceLevel {
 
                     Ok(order)
                 } else {
-                    // If price is the same, just update the quantity
-                    self.update_order(OrderUpdate::UpdateQuantity {
+                    // If price is the same, just update the quantity. Call the
+                    // guard-free inner body — we already hold the fill-or-kill
+                    // shared guard, and a second `fok_read` here would be a
+                    // non-reentrant recursive read (issue #112).
+                    self.update_order_inner(OrderUpdate::UpdateQuantity {
                         order_id,
                         new_quantity: quantity,
                     })
