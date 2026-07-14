@@ -39,7 +39,9 @@ fn build_level(makers: &[Maker]) -> PriceLevel {
     let level = PriceLevel::new(LEVEL_PRICE);
     for maker in makers {
         // `OrderType<()>` is `Copy`, so this rests a copy of the maker order.
-        let _ = level.add_order(maker.order);
+        let _ = level
+            .add_order(maker.order)
+            .expect("add_order should succeed");
     }
     level
 }
@@ -474,7 +476,7 @@ proptest! {
                 extra_fields: (),
             }
         };
-        let _ = level.add_order(order);
+        let _ = level.add_order(order).expect("add_order should succeed");
         let generator = trade_ids();
 
         let total_before = level

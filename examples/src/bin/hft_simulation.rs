@@ -93,7 +93,9 @@ fn main() {
                     _ => create_pegged_order(order_id),
                 };
 
-                thread_price_level.add_order(order_type);
+                thread_price_level
+                    .add_order(order_type)
+                    .expect("add_order should succeed");
                 local_counter += 1;
 
                 // Update global counter periodically to reduce contention
@@ -321,7 +323,9 @@ fn setup_initial_orders(price_level: &PriceLevel, count: u64) {
             _ => create_reserve_order(i),
         };
 
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 }
 

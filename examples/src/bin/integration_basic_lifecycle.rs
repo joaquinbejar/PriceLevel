@@ -34,7 +34,9 @@ fn main() {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     assert_eq_or_exit(price_level.order_count(), 10, "order_count after add");

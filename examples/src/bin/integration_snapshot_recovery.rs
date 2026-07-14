@@ -22,48 +22,54 @@ fn main() {
 
     // Standard orders
     for i in 1..=5_u64 {
-        original.add_order(OrderType::Standard {
-            id: Id::from_u64(i),
+        original
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(i),
+                price: Price::new(10_000),
+                quantity: Quantity::new(100),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(ts),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
+        ts += 1;
+    }
+
+    // Iceberg order
+    original
+        .add_order(OrderType::IcebergOrder {
+            id: Id::from_u64(10),
             price: Price::new(10_000),
-            quantity: Quantity::new(100),
+            visible_quantity: Quantity::new(20),
+            hidden_quantity: Quantity::new(80),
             side: Side::Buy,
             user_id: Hash32::zero(),
             timestamp: TimestampMs::new(ts),
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
-        });
-        ts += 1;
-    }
-
-    // Iceberg order
-    original.add_order(OrderType::IcebergOrder {
-        id: Id::from_u64(10),
-        price: Price::new(10_000),
-        visible_quantity: Quantity::new(20),
-        hidden_quantity: Quantity::new(80),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(ts),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+        })
+        .expect("add_order should succeed");
     ts += 1;
 
     // Reserve order
-    original.add_order(OrderType::ReserveOrder {
-        id: Id::from_u64(11),
-        price: Price::new(10_000),
-        visible_quantity: Quantity::new(15),
-        hidden_quantity: Quantity::new(60),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(ts),
-        time_in_force: TimeInForce::Gtc,
-        replenish_threshold: Quantity::new(5),
-        replenish_amount: NonZeroU64::new(10),
-        auto_replenish: true,
-        extra_fields: (),
-    });
+    original
+        .add_order(OrderType::ReserveOrder {
+            id: Id::from_u64(11),
+            price: Price::new(10_000),
+            visible_quantity: Quantity::new(15),
+            hidden_quantity: Quantity::new(60),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(ts),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(5),
+            replenish_amount: NonZeroU64::new(10),
+            auto_replenish: true,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     let orig_order_count = original.order_count();
     let orig_visible = original.visible_quantity();

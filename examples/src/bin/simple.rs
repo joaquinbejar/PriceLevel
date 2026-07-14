@@ -54,7 +54,9 @@ fn main() {
                     for i in 0..50 {
                         let order_id = thread_id as u64 * 1000 + i;
                         let order = create_order(thread_id, order_id);
-                        thread_price_level.add_order(order);
+                        thread_price_level
+                            .add_order(order)
+                            .expect("add_order should succeed");
 
                         // Simulate some work
                         thread::sleep(Duration::from_millis(1));
@@ -214,7 +216,9 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     // Add some iceberg orders
@@ -230,7 +234,9 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     // Add some reserve orders
@@ -249,7 +255,9 @@ fn setup_initial_orders(price_level: &PriceLevel) {
             auto_replenish: true,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 }
 

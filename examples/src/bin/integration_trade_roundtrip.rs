@@ -119,16 +119,18 @@ fn main() {
     println!("[Phase 5] MatchResult from real matching...");
     let price_level = PriceLevel::new(10_000);
     for i in 1..=5_u64 {
-        price_level.add_order(OrderType::Standard {
-            id: Id::from_u64(i),
-            price: Price::new(10_000),
-            quantity: Quantity::new(20),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_616_823_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            extra_fields: (),
-        });
+        price_level
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(i),
+                price: Price::new(10_000),
+                quantity: Quantity::new(20),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
 
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8")

@@ -124,7 +124,9 @@ fn setup_mixed_level(order_count: u64) -> PriceLevel {
                 extra_fields: (),
             },
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
     price_level
 }

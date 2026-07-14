@@ -15,7 +15,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = PriceLevel::new(10000);
             for i in 0..100 {
                 let order = create_standard_order(i, 10000, 100);
-                black_box(price_level.add_order(order));
+                black_box(
+                    price_level
+                        .add_order(order)
+                        .expect("add_order should succeed"),
+                );
             }
         })
     });
@@ -26,7 +30,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = PriceLevel::new(10000);
             for i in 0..100 {
                 let order = create_iceberg_order(i, 10000, 50, 150);
-                black_box(price_level.add_order(order));
+                black_box(
+                    price_level
+                        .add_order(order)
+                        .expect("add_order should succeed"),
+                );
             }
         })
     });
@@ -37,7 +45,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let price_level = PriceLevel::new(10000);
             for i in 0..100 {
                 let order = create_reserve_order(i, 10000, 50, 150, 10, true, None);
-                black_box(price_level.add_order(order));
+                black_box(
+                    price_level
+                        .add_order(order)
+                        .expect("add_order should succeed"),
+                );
             }
         })
     });
@@ -54,7 +66,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     3 => create_reserve_order(i, 10000, 50, 150, 10, true, None),
                     _ => create_pegged_order(i, 10000, 100),
                 };
-                black_box(price_level.add_order(order));
+                black_box(
+                    price_level
+                        .add_order(order)
+                        .expect("add_order should succeed"),
+                );
             }
         })
     });
@@ -69,7 +85,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     let price_level = PriceLevel::new(10000);
                     for i in 0..order_count {
                         let order = create_standard_order(i, 10000, 100);
-                        black_box(price_level.add_order(order));
+                        black_box(
+                            price_level
+                                .add_order(order)
+                                .expect("add_order should succeed"),
+                        );
                     }
                 })
             },

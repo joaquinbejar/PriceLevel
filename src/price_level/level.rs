@@ -195,38 +195,97 @@ impl PriceLevel {
         self.stats.clone()
     }
 
-    /// Add an order to this price level
-    pub fn add_order(&self, order: OrderType<()>) -> Arc<OrderType<()>> {
-        // Calculate quantities
+    /// Add an order to this price level.
+    ///
+    /// Reserves the order's visible / hidden quantity and one count slot on the
+    /// atomic counters **before** publishing it to the queue, so an admission
+    /// that would overflow any counter is rejected with nothing mutated: the
+    /// queue, the counters, the statistics, and therefore any snapshot are left
+    /// exactly as they were. On success the returned `Arc` is the admitted
+    /// order.
+    ///
+    /// # Overflow safety
+    ///
+    /// Each counter is bumped with a checked [`AtomicU64::fetch_update`] /
+    /// [`AtomicUsize::fetch_update`] (`checked_add`), which is an atomic
+    /// compare-exchange loop and therefore free of the check-then-`fetch_add`
+    /// TOCTOU race two concurrent admissions near `u64::MAX` would otherwise
+    /// hit. Capacity is reserved in the order visible → hidden → count; if a
+    /// later reservation overflows, the earlier ones are rolled back (by the
+    /// exact delta this call added — a commutative, concurrency-safe undo on
+    /// these advisory counters) before returning, so no counter is ever left
+    /// drifted. Only once all three are reserved is the order published to the
+    /// queue, so the queue can never hold an order whose admission overflowed a
+    /// counter — the invariant this method now upholds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if admitting the order
+    /// would overflow the level's visible-quantity, hidden-quantity, or
+    /// order-count counter. In that case the level is unchanged.
+    pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
+        // Calculate quantities.
         let visible_qty = order.visible_quantity().as_u64();
         let hidden_qty = order.hidden_quantity().as_u64();
 
-        // On this path, publish to the queue FIRST, then bump the counters, so a
-        // concurrent reader of this add tends to see the order resting before it
-        // is counted rather than the reverse. This is a local ordering choice,
-        // not a cross-method guarantee (other paths, e.g. iceberg replenishment
-        // in `match_order`, adjust counters before pushing). The bare counters
-        // are advisory under concurrency; `snapshot()` is the mutually-consistent
-        // view (see `visible_quantity`).
+        // Reserve capacity on each counter BEFORE publishing, using a checked
+        // `fetch_update` (an atomic CAS loop). `Relaxed` on both the success and
+        // failure orderings: these are the advisory counters (issue #68); the
+        // queue publication below carries the real happens-before for a
+        // concurrent reader, so the counters are not a synchronization channel.
+        if self
+            .visible_quantity
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_add(visible_qty)
+            })
+            .is_err()
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level visible quantity overflow on admission".to_string(),
+            });
+        }
+
+        if self
+            .hidden_quantity
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_add(hidden_qty)
+            })
+            .is_err()
+        {
+            // Roll back the visible reservation this call made.
+            self.visible_quantity
+                .fetch_sub(visible_qty, Ordering::Relaxed);
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level hidden quantity overflow on admission".to_string(),
+            });
+        }
+
+        if self
+            .order_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .is_err()
+        {
+            // Roll back the visible + hidden reservations this call made.
+            self.visible_quantity
+                .fetch_sub(visible_qty, Ordering::Relaxed);
+            self.hidden_quantity
+                .fetch_sub(hidden_qty, Ordering::Relaxed);
+            return Err(PriceLevelError::InvalidOperation {
+                message: "price level order count overflow on admission".to_string(),
+            });
+        }
+
+        // All capacity reserved; publish the order to the queue. A concurrent
+        // reader can briefly see the reserved count before the order rests
+        // (the advisory-counter window), but never the reverse overflow the
+        // reservation just ruled out.
         let order_arc = Arc::new(order);
         self.orders.push(order_arc.clone());
 
-        // Update atomic counters. `Relaxed` on all three: these are the
-        // advisory counters (issue #68). The queue publication above (the
-        // `push` into `OrderQueue`'s `SkipMap` / `DashMap`) carries the actual
-        // happens-before for a concurrent reader; the counters are not a
-        // synchronization channel, so a release here would publish nothing a
-        // reader relies on. The RMWs only need to be atomic, not ordered.
-        self.visible_quantity
-            .fetch_add(visible_qty, Ordering::Relaxed);
-        self.hidden_quantity
-            .fetch_add(hidden_qty, Ordering::Relaxed);
-        self.order_count.fetch_add(1, Ordering::Relaxed);
-
-        // Update statistics
+        // Update statistics only after a committed admission.
         self.stats.record_order_added();
 
-        order_arc
+        Ok(order_arc)
     }
 
     /// Creates a non-allocating iterator over current orders in this level.
@@ -1192,9 +1251,10 @@ impl TryFrom<PriceLevelData> for PriceLevel {
     fn try_from(data: PriceLevelData) -> Result<Self, Self::Error> {
         let price_level = PriceLevel::new(data.price);
 
-        // Add orders to the price level
+        // Add orders to the price level. Propagate an admission overflow rather
+        // than panicking while reconstructing from external data.
         for order in data.orders {
-            price_level.add_order(order);
+            price_level.add_order(order)?;
         }
 
         Ok(price_level)
@@ -1281,7 +1341,7 @@ impl FromStr for PriceLevel {
                                 message: format!("Order parse error: {e}"),
                             }
                         })?;
-                        price_level.add_order(order);
+                        price_level.add_order(order)?;
                         last_split = i + 1;
                     }
                     _ => {}
@@ -1295,7 +1355,7 @@ impl FromStr for PriceLevel {
                         message: format!("Order parse error: {e}"),
                     }
                 })?;
-                price_level.add_order(order);
+                price_level.add_order(order)?;
             }
         }
 

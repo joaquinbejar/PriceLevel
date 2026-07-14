@@ -33,28 +33,32 @@ fn test_total_quantity_checked() {
     println!("[total_quantity] Checked addition...");
 
     let level = PriceLevel::new(10_000);
-    level.add_order(OrderType::Standard {
-        id: Id::from_u64(1),
-        price: Price::new(10_000),
-        quantity: Quantity::new(500),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_000),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::Standard {
+            id: Id::from_u64(1),
+            price: Price::new(10_000),
+            quantity: Quantity::new(500),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_000),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
-    level.add_order(OrderType::IcebergOrder {
-        id: Id::from_u64(2),
-        price: Price::new(10_000),
-        visible_quantity: Quantity::new(100),
-        hidden_quantity: Quantity::new(400),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(1_000_001),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::IcebergOrder {
+            id: Id::from_u64(2),
+            price: Price::new(10_000),
+            visible_quantity: Quantity::new(100),
+            hidden_quantity: Quantity::new(400),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_000_001),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     let total = level
         .total_quantity()
@@ -73,16 +77,18 @@ fn test_executed_quantity_and_value(id_gen: &UuidGenerator) {
     let level = PriceLevel::new(5_000);
 
     for i in 1..=3_u64 {
-        level.add_order(OrderType::Standard {
-            id: Id::from_u64(i),
-            price: Price::new(5_000),
-            quantity: Quantity::new(100),
-            side: Side::Buy,
-            user_id: Hash32::zero(),
-            timestamp: TimestampMs::new(1_000_000 + i),
-            time_in_force: TimeInForce::Gtc,
-            extra_fields: (),
-        });
+        level
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(i),
+                price: Price::new(5_000),
+                quantity: Quantity::new(100),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_000_000 + i),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("add_order should succeed");
     }
 
     let result = level.match_order(
@@ -130,16 +136,18 @@ fn test_average_price(id_gen: &UuidGenerator) {
     println!("[average_price] Computation...");
 
     let level = PriceLevel::new(7_500);
-    level.add_order(OrderType::Standard {
-        id: Id::from_u64(50),
-        price: Price::new(7_500),
-        quantity: Quantity::new(200),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(2_000_000),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::Standard {
+            id: Id::from_u64(50),
+            price: Price::new(7_500),
+            quantity: Quantity::new(200),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(2_000_000),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     let result = level.match_order(
         100,
@@ -246,16 +254,18 @@ fn test_match_result_display_fromstr(id_gen: &UuidGenerator) {
     println!("[MatchResult] Display/FromStr with checked fields...");
 
     let level = PriceLevel::new(3_000);
-    level.add_order(OrderType::Standard {
-        id: Id::from_u64(77),
-        price: Price::new(3_000),
-        quantity: Quantity::new(50),
-        side: Side::Buy,
-        user_id: Hash32::zero(),
-        timestamp: TimestampMs::new(3_000_000),
-        time_in_force: TimeInForce::Gtc,
-        extra_fields: (),
-    });
+    level
+        .add_order(OrderType::Standard {
+            id: Id::from_u64(77),
+            price: Price::new(3_000),
+            quantity: Quantity::new(50),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(3_000_000),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        })
+        .expect("add_order should succeed");
 
     let result = level.match_order(
         30,

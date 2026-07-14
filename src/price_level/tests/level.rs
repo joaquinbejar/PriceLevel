@@ -36,8 +36,12 @@ mod tests {
     #[test]
     fn test_price_level_snapshot_roundtrip() {
         let price_level = PriceLevel::new(10000);
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .expect("add_order should succeed");
 
         let package = price_level
             .snapshot_package()
@@ -73,7 +77,9 @@ mod tests {
     #[test]
     fn test_price_level_snapshot_checksum_failure() {
         let price_level = PriceLevel::new(20000);
-        price_level.add_order(create_standard_order(1, 20000, 100));
+        price_level
+            .add_order(create_standard_order(1, 20000, 100))
+            .expect("add_order should succeed");
 
         let package = price_level
             .snapshot_package()
@@ -109,9 +115,15 @@ mod tests {
 
         // Rest several makers so we accumulate non-trivial waiting-time and
         // arrival aggregates, then partially match them to drive every counter.
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
-        price_level.add_order(create_standard_order(3, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(3, 10000, 100))
+            .expect("add_order should succeed");
 
         // Execution timestamp is comfortably after the order arrival timestamps
         // (TIMESTAMP_COUNTER starts at 1_616_823_000_000), so waiting times are
@@ -190,7 +202,9 @@ mod tests {
         // with a clear version mismatch (InvalidOperation), not a checksum error
         // and not a panic.
         let price_level = PriceLevel::new(10000);
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let json = price_level
             .snapshot_to_json()
@@ -225,10 +239,18 @@ mod tests {
     #[test]
     fn test_price_level_from_snapshot_preserves_order_positions() {
         let price_level = PriceLevel::new(15000);
-        price_level.add_order(create_standard_order(1, 15000, 100));
-        price_level.add_order(create_iceberg_order(2, 15000, 40, 120));
-        price_level.add_order(create_post_only_order(3, 15000, 60));
-        price_level.add_order(create_reserve_order(4, 15000, 30, 90, 15, true, Some(20)));
+        price_level
+            .add_order(create_standard_order(1, 15000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 15000, 40, 120))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_post_only_order(3, 15000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_reserve_order(4, 15000, 30, 90, 15, true, Some(20)))
+            .expect("add_order should succeed");
 
         let snapshot = price_level.snapshot();
         let restored = PriceLevel::from(&snapshot);
@@ -258,10 +280,18 @@ mod tests {
     #[test]
     fn test_price_level_from_snapshot_package_preserves_order_positions() {
         let price_level = PriceLevel::new(17500);
-        price_level.add_order(create_standard_order(10, 17500, 80));
-        price_level.add_order(create_trailing_stop_order(11, 17500, 50));
-        price_level.add_order(create_pegged_order(12, 17500, 40));
-        price_level.add_order(create_market_to_limit_order(13, 17500, 70));
+        price_level
+            .add_order(create_standard_order(10, 17500, 80))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_trailing_stop_order(11, 17500, 50))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_pegged_order(12, 17500, 40))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_market_to_limit_order(13, 17500, 70))
+            .expect("add_order should succeed");
 
         let package = price_level
             .snapshot_package()
@@ -460,7 +490,9 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let order = create_standard_order(1, 10000, 100);
 
-        let order_arc = price_level.add_order(order);
+        let order_arc = price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 100);
         assert_eq!(price_level.hidden_quantity(), 0);
@@ -481,7 +513,9 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let order = create_iceberg_order(2, 10000, 50, 200);
 
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 50);
         assert_eq!(price_level.hidden_quantity(), 200);
@@ -494,10 +528,18 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add different order types
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
-        price_level.add_order(create_post_only_order(3, 10000, 75));
-        price_level.add_order(create_reserve_order(4, 10000, 25, 100, 100, true, None));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_post_only_order(3, 10000, 75))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_reserve_order(4, 10000, 25, 100, 100, true, None))
+            .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 250); // 100 + 50 + 75 + 25
         assert_eq!(price_level.hidden_quantity(), 300); // 0 + 200 + 0 + 100
@@ -512,8 +554,12 @@ mod tests {
     fn test_update_order_cancel() {
         let price_level = PriceLevel::new(10000);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .expect("add_order should succeed");
 
         // Cancel the standard order using OrderUpdate
         let result = price_level.update_order(OrderUpdate::Cancel {
@@ -557,8 +603,12 @@ mod tests {
     fn test_iter_orders() {
         let price_level = PriceLevel::new(10000);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 200));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .expect("add_order should succeed");
 
         let orders = price_level.snapshot_orders();
 
@@ -576,7 +626,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Match the entire order
         let taker_id = Id::from_u64(999); // market order ID
@@ -640,9 +692,15 @@ mod tests {
         // the last maker) so the trade stream has multiple entries.
         let run = || {
             let price_level = PriceLevel::new(10000);
-            price_level.add_order(mk(1, 40));
-            price_level.add_order(mk(2, 30));
-            price_level.add_order(mk(3, 50));
+            price_level
+                .add_order(mk(1, 40))
+                .expect("add_order should succeed");
+            price_level
+                .add_order(mk(2, 30))
+                .expect("add_order should succeed");
+            price_level
+                .add_order(mk(3, 50))
+                .expect("add_order should succeed");
 
             let trade_id_generator = UuidGenerator::new(namespace);
             price_level.match_order(
@@ -682,7 +740,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Match part of the order
         let taker_id = Id::from_u64(999);
@@ -725,7 +785,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Match with quantity exceeding available
         let taker_id = Id::from_u64(999);
@@ -768,7 +830,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Add a new iceberg order with a visible quantity of 50 and a hidden quantity of 100.
-        price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 50, 100))
+            .expect("add_order should succeed");
 
         // Match the visible portion of the iceberg order.
         let taker_id = Id::from_u64(999);
@@ -849,7 +913,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Add a new iceberg order with a visible quantity of 50 and a hidden quantity of 100.
-        price_level.add_order(create_iceberg_order(1, 10000, 100, 100));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 100, 100))
+            .expect("add_order should succeed");
 
         // Match the visible portion of the iceberg order.
         let taker_id = Id::from_u64(999);
@@ -931,7 +997,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_iceberg_order(1, 10000, 50, 150));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 50, 150))
+            .expect("add_order should succeed");
 
         // Match part of the visible portion
         let taker_id = Id::from_u64(999);
@@ -963,7 +1031,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish disabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None))
+            .expect("add_order should succeed");
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
@@ -994,7 +1064,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish enabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, true, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 20, true, None))
+            .expect("add_order should succeed");
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
@@ -1031,7 +1103,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with auto-replenish disabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None))
+            .expect("add_order should succeed");
 
         // Match partially, but still above threshold
         let taker_id = Id::from_u64(999);
@@ -1078,15 +1152,17 @@ mod tests {
 
         // Create a reserve order with auto-replenish enabled and a custom replenishment amount
         let custom_amount = 50;
-        price_level.add_order(create_reserve_order(
-            1,
-            10000,
-            50,
-            150,
-            20,
-            true,
-            Some(custom_amount),
-        ));
+        price_level
+            .add_order(create_reserve_order(
+                1,
+                10000,
+                50,
+                150,
+                20,
+                true,
+                Some(custom_amount),
+            ))
+            .expect("add_order should succeed");
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
@@ -1117,7 +1193,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 0 and auto-replenish enabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, true, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 0, true, None))
+            .expect("add_order should succeed");
 
         // Match partially
         let taker_id = Id::from_u64(999);
@@ -1147,7 +1225,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 0 and auto-replenish disabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 0, false, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 0, false, None))
+            .expect("add_order should succeed");
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
@@ -1177,7 +1257,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 1 and auto-replenish disabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 1, false, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 1, false, None))
+            .expect("add_order should succeed");
 
         // Match the entire visible portion
         let taker_id = Id::from_u64(999);
@@ -1207,7 +1289,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Create a reserve order with threshold 20 and auto-replenish disabled
-        price_level.add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 150, 20, false, None))
+            .expect("add_order should succeed");
 
         // Match part of the visible portion, but still above threshold
         let taker_id = Id::from_u64(999);
@@ -1256,7 +1340,9 @@ mod tests {
 
         // Create a reserve order with threshold 20, auto-replenish enabled
         // and default replenish amount (80)
-        price_level.add_order(create_reserve_order(1, 10000, 100, 100, 20, true, None));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 100, 100, 20, true, None))
+            .expect("add_order should succeed");
 
         // Match 80 units, which is above the replenish threshold
         let taker_id = Id::from_u64(999);
@@ -1357,7 +1443,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_post_only_order(1, 10000, 100));
+        price_level
+            .add_order(create_post_only_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Post-only orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
@@ -1382,7 +1470,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_trailing_stop_order(1, 10000, 100));
+        price_level
+            .add_order(create_trailing_stop_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Trailing stop orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
@@ -1407,7 +1497,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_pegged_order(1, 10000, 100));
+        price_level
+            .add_order(create_pegged_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Pegged orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
@@ -1432,7 +1524,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_market_to_limit_order(1, 10000, 100));
+        price_level
+            .add_order(create_market_to_limit_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Market-to-limit orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
@@ -1484,7 +1578,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_post_only_order(1, 10000, 100));
+        price_level
+            .add_order(create_post_only_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             60,
@@ -1512,7 +1608,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_post_only_order(1, 10000, 100));
+        price_level
+            .add_order(create_post_only_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -1545,7 +1643,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_post_only_order(1, 10000, 100));
+        price_level
+            .add_order(create_post_only_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             150,
@@ -1600,7 +1700,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_trailing_stop_order(1, 10000, 100));
+        price_level
+            .add_order(create_trailing_stop_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             40,
@@ -1629,7 +1731,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_trailing_stop_order(1, 10000, 100));
+        price_level
+            .add_order(create_trailing_stop_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -1660,7 +1764,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_trailing_stop_order(1, 10000, 80));
+        price_level
+            .add_order(create_trailing_stop_order(1, 10000, 80))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             120,
@@ -1713,7 +1819,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_pegged_order(1, 10000, 100));
+        price_level
+            .add_order(create_pegged_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             50,
@@ -1741,7 +1849,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_pegged_order(1, 10000, 100));
+        price_level
+            .add_order(create_pegged_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -1771,7 +1881,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_pegged_order(1, 10000, 90));
+        price_level
+            .add_order(create_pegged_order(1, 10000, 90))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             130,
@@ -1826,7 +1938,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_market_to_limit_order(1, 10000, 100));
+        price_level
+            .add_order(create_market_to_limit_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             70,
@@ -1854,7 +1968,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_market_to_limit_order(1, 10000, 100));
+        price_level
+            .add_order(create_market_to_limit_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -1885,7 +2001,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_market_to_limit_order(1, 10000, 60));
+        price_level
+            .add_order(create_market_to_limit_order(1, 10000, 60))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -1958,7 +2076,9 @@ mod tests {
         let level_price = maker.price().as_u128();
         let maker_id = maker.id();
         let price_level = PriceLevel::new(level_price);
-        price_level.add_order(maker);
+        price_level
+            .add_order(maker)
+            .expect("add_order should succeed");
 
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
@@ -2072,10 +2192,12 @@ mod tests {
         let level_price = front.price().as_u128();
         let front_id = front.id();
         let level = PriceLevel::new(level_price);
-        level.add_order(front);
+        level.add_order(front).expect("add_order should succeed");
         // A plain maker queued behind the resized one.
         let behind_id = Id::from_u64(778);
-        level.add_order(create_standard_order(778, level_price, 100));
+        level
+            .add_order(create_standard_order(778, level_price, 100))
+            .expect("add_order should succeed");
 
         let updated = level
             .update_order(OrderUpdate::UpdateQuantity {
@@ -2112,9 +2234,11 @@ mod tests {
         let level_price = front.price().as_u128();
         let front_id = front.id();
         let level = PriceLevel::new(level_price);
-        level.add_order(front);
+        level.add_order(front).expect("add_order should succeed");
         let behind_id = Id::from_u64(778);
-        level.add_order(create_standard_order(778, level_price, 100));
+        level
+            .add_order(create_standard_order(778, level_price, 100))
+            .expect("add_order should succeed");
 
         let updated = level
             .update_order(OrderUpdate::UpdateQuantity {
@@ -2192,8 +2316,12 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_post_only_order(2, 10000, 50));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_post_only_order(2, 10000, 50))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             0,
@@ -2225,7 +2353,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(
@@ -2253,7 +2383,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let taker_id = Id::from_u64(999);
         let match_result = price_level.match_order(
@@ -2294,8 +2426,12 @@ mod tests {
         // available (100) == incoming (100): on the fill side of the boundary.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 60));
-        price_level.add_order(create_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_standard_order(1, 10000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -2322,8 +2458,12 @@ mod tests {
         // exactly one unit. Zero trades, full remainder, queue untouched.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 60));
-        price_level.add_order(create_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_standard_order(1, 10000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             101,
@@ -2374,7 +2514,9 @@ mod tests {
         // taker of 50, so it fills rather than (wrongly) being killed.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_iceberg_order(1, 10000, 10, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 10, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             50,
@@ -2399,8 +2541,12 @@ mod tests {
         // never enqueued; the level is emptied of makers.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 60));
-        price_level.add_order(create_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_standard_order(1, 10000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             150,
@@ -2430,7 +2576,9 @@ mod tests {
         // liquidity -> rejected: zero trades, full remainder, queue untouched.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             60,
@@ -2482,7 +2630,9 @@ mod tests {
         // it falls through to the vacuous-complete sweep.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             0,
@@ -2509,7 +2659,9 @@ mod tests {
         // book to convert/rest. At this layer it behaves like a standard taker.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             140,
@@ -2535,7 +2687,9 @@ mod tests {
         // available (100) == incoming (100): fully filled, no remainder.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -2560,7 +2714,9 @@ mod tests {
         // consumes it normally. (FOK is a taker-side policy.)
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_fill_or_kill_order(1, 10000, 100));
+        price_level
+            .add_order(create_fill_or_kill_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -2582,7 +2738,9 @@ mod tests {
         // partially consumes it and the remainder keeps resting.
         let price_level = PriceLevel::new(10000);
         let trade_gen = fok_namespace_gen();
-        price_level.add_order(create_immediate_or_cancel_order(1, 10000, 100));
+        price_level
+            .add_order(create_immediate_or_cancel_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             50,
@@ -2604,7 +2762,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_good_till_date_order(1, 10000, 100, 1617000000000));
+        price_level
+            .add_order(create_good_till_date_order(1, 10000, 100, 1617000000000))
+            .expect("add_order should succeed");
 
         // GTD orders behave like standard orders for matching
         let taker_id = Id::from_u64(999);
@@ -2642,8 +2802,12 @@ mod tests {
         let trade_id_generator = UuidGenerator::new(namespace);
 
         // Total resting depth = 100 (two Buy makers).
-        price_level.add_order(create_standard_order(1, 10000, 60));
-        price_level.add_order(create_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_standard_order(1, 10000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
         assert_eq!(price_level.visible_quantity(), 100);
         assert_eq!(price_level.order_count(), 2);
 
@@ -2720,7 +2884,9 @@ mod tests {
             "fixture: the GTD maker is expired per TimeInForce::is_expired"
         );
 
-        price_level.add_order(create_good_till_date_order(1, 10000, 100, past_expiry));
+        price_level
+            .add_order(create_good_till_date_order(1, 10000, 100, past_expiry))
+            .expect("add_order should succeed");
 
         // Despite the expired maker, the match fills it like a standard order.
         let result = price_level.match_order(
@@ -2748,9 +2914,15 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let transaction_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 50));
-        price_level.add_order(create_standard_order(2, 10000, 75));
-        price_level.add_order(create_standard_order(3, 10000, 25));
+        price_level
+            .add_order(create_standard_order(1, 10000, 50))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 75))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(3, 10000, 25))
+            .expect("add_order should succeed");
 
         // Match first two orders completely and third partially
         let taker_id = Id::from_u64(999);
@@ -2803,8 +2975,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add some orders
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 50));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 50))
+            .expect("add_order should succeed");
 
         // Create a snapshot
         let snapshot = price_level.snapshot();
@@ -2833,7 +3009,9 @@ mod tests {
 
         // Add an order
         let order = create_standard_order(1, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Update the price to a different value
         let update = OrderUpdate::UpdatePrice {
@@ -2855,7 +3033,9 @@ mod tests {
 
         // Test updating price to same value (should return error)
         let order = create_standard_order(2, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         let same_price_update = OrderUpdate::UpdatePrice {
             order_id: Id::from_u64(2),
@@ -2876,7 +3056,9 @@ mod tests {
 
         // Add an order
         let order = create_standard_order(1, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Update to increase quantity
         let update = OrderUpdate::UpdateQuantity {
@@ -2931,8 +3113,12 @@ mod tests {
 
         // Add makers A (id 1) then B (id 2) at the same price. A is ahead in
         // price-time priority.
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
 
         // Reduce A's quantity (decrease). A must keep its front position.
         let result = price_level.update_order(OrderUpdate::UpdateQuantity {
@@ -2971,8 +3157,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add makers A (id 1) then B (id 2) at the same price.
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
 
         // Increase A's quantity (Standard orders support resizing). This must
         // demote A to the back of the queue, behind B.
@@ -3011,9 +3201,15 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Two standard makers plus an iceberg (so hidden_quantity is exercised).
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
-        price_level.add_order(create_iceberg_order(3, 10000, 50, 200));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(3, 10000, 50, 200))
+            .expect("add_order should succeed");
 
         // Decrease (in place) on a standard order.
         let _ = price_level
@@ -3061,7 +3257,9 @@ mod tests {
 
         // Add an order
         let order = create_standard_order(1, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Update both price and quantity with different price
         let update = OrderUpdate::UpdatePriceAndQuantity {
@@ -3084,7 +3282,9 @@ mod tests {
 
         // Test with same price but different quantity
         let order = create_standard_order(2, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         let update = OrderUpdate::UpdatePriceAndQuantity {
             order_id: Id::from_u64(2),
@@ -3111,7 +3311,9 @@ mod tests {
 
         // Add an order
         let order = create_standard_order(1, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Replace with different price
         let update = OrderUpdate::Replace {
@@ -3135,7 +3337,9 @@ mod tests {
 
         // Test with same price but different quantity
         let order = create_standard_order(2, 10000, 100);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         let update = OrderUpdate::Replace {
             order_id: Id::from_u64(2),
@@ -3163,8 +3367,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add some orders
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 50));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 50))
+            .expect("add_order should succeed");
 
         // Convert to PriceLevelData
         let data: PriceLevelData = (&price_level).into();
@@ -3222,7 +3430,9 @@ mod tests {
     #[test]
     fn test_price_level_display() {
         let price_level = PriceLevel::new(10000);
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let display_str = format!("{price_level}");
 
@@ -3239,11 +3449,21 @@ mod tests {
     #[test]
     fn test_price_level_from_str() {
         let price_level = PriceLevel::new(10000);
-        price_level.add_order(create_standard_order(1, 10000, 50));
-        price_level.add_order(create_standard_order(2, 10000, 75));
-        price_level.add_order(create_good_till_date_order(3, 10000, 100, 1617000000000));
-        price_level.add_order(create_reserve_order(4, 10000, 100, 100, 20, true, None));
-        price_level.add_order(create_iceberg_order(5, 10000, 50, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 50))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 75))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_good_till_date_order(3, 10000, 100, 1617000000000))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_reserve_order(4, 10000, 100, 100, 20, true, None))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(5, 10000, 50, 100))
+            .expect("add_order should succeed");
 
         let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000001;time_in_force=GTC,Standard:id=00000000-0000-0003-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000002;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0004-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000003;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0005-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000004;time_in_force=GTC]";
         let result = PriceLevel::from_str(input);
@@ -3274,7 +3494,9 @@ mod tests {
     #[test]
     fn test_price_level_serde() {
         let price_level = PriceLevel::new(10000);
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Serialize to JSON
         let serialized = serde_json::to_string(&price_level).unwrap();
@@ -3366,7 +3588,9 @@ mod tests {
         let transaction_id_generator = UuidGenerator::new(namespace);
 
         // Add orders with more quantity than we'll match
-        price_level.add_order(create_standard_order(1, 10000, 200));
+        price_level
+            .add_order(create_standard_order(1, 10000, 200))
+            .expect("add_order should succeed");
 
         // Match only part of what's available
         let match_result = price_level.match_order(
@@ -3389,7 +3613,9 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add an order
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Update to a different price (should remove from this level)
         let result = price_level.update_order(OrderUpdate::UpdatePrice {
@@ -3408,7 +3634,9 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add an order
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         // Update the quantity but keep the same price
         let result = price_level.update_order(OrderUpdate::UpdatePriceAndQuantity {
@@ -3429,8 +3657,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
 
         // Add some orders
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 150));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 150))
+            .expect("add_order should succeed");
 
         // Serialize to JSON
         let serialized = serde_json::to_string(&price_level).unwrap();
@@ -3465,7 +3697,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Try to update price to the same value
         let update = OrderUpdate::UpdatePrice {
@@ -3518,7 +3752,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Set up a test that simulates order removal by another thread
         // This can be done by modifying the OrderQueue's internal state directly
@@ -3564,7 +3800,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Update to increase quantity (old visible < new visible)
         let update = OrderUpdate::UpdateQuantity {
@@ -3597,7 +3835,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Verify initial quantities
         assert_eq!(price_level.visible_quantity(), 50);
@@ -3621,7 +3861,9 @@ mod tests {
             order_id: Id::from_u64(1),
         });
         assert!(result.is_ok());
-        price_level.add_order(new_order);
+        price_level
+            .add_order(new_order)
+            .expect("add_order should succeed");
 
         // Verify both visible and hidden quantities were updated
         assert_eq!(price_level.visible_quantity(), 40);
@@ -3644,7 +3886,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
 
         // Update both price and quantity with same price
         let update = OrderUpdate::UpdatePriceAndQuantity {
@@ -3680,7 +3924,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order1);
+        price_level
+            .add_order(order1)
+            .expect("add_order should succeed");
 
         let order2 = OrderType::<()>::IcebergOrder {
             id: Id::from_u64(2),
@@ -3693,7 +3939,9 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order2);
+        price_level
+            .add_order(order2)
+            .expect("add_order should succeed");
 
         // Convert to PriceLevelData
         let data: PriceLevelData = (&price_level).into();
@@ -3751,8 +3999,12 @@ mod tests {
         let trade_ids = UuidGenerator::new(namespace);
 
         // A (id=1) arrives before B (id=2), both 100 @ 10000.
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
 
         // First aggressor partially fills A (60 of 100). A's residual = 40.
         let first = price_level.match_order(
@@ -3811,8 +4063,12 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_ids = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
         let total_before = match price_level.total_quantity() {
             Ok(q) => q,
             Err(e) => panic!("total_quantity failed: {e}"),
@@ -3844,9 +4100,13 @@ mod tests {
         let trade_ids = UuidGenerator::new(namespace);
 
         // Iceberg I (id=1) arrives first: visible 50, hidden 100.
-        price_level.add_order(create_iceberg_order(1, 10000, 50, 100));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 50, 100))
+            .expect("add_order should succeed");
         // O (id=2) arrives later: a plain 50 (iceberg with no hidden).
-        price_level.add_order(create_iceberg_order(2, 10000, 50, 0));
+        price_level
+            .add_order(create_iceberg_order(2, 10000, 50, 0))
+            .expect("add_order should succeed");
 
         // Aggressor consumes I's visible tip (50) → I refreshes from hidden and
         // moves to the tail. remaining hits 0, so this call stops there.
@@ -3886,8 +4146,12 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_ids = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
-        price_level.add_order(create_standard_order(2, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 100))
+            .expect("add_order should succeed");
         let _ = price_level.match_order(
             60,
             Id::from_u64(901),
@@ -3990,14 +4254,18 @@ mod tests {
                     let base = (t * ORDERS_PER_THREAD + i) as u64;
                     let id = base * 2 + 1_000;
                     if i % 2 == 0 {
-                        level.add_order(create_standard_order(id, PRICE, 1 + (base % 7)));
+                        level
+                            .add_order(create_standard_order(id, PRICE, 1 + (base % 7)))
+                            .expect("add_order should succeed");
                     } else {
-                        level.add_order(create_iceberg_order(
-                            id,
-                            PRICE,
-                            1 + (base % 5),
-                            1 + (base % 11),
-                        ));
+                        level
+                            .add_order(create_iceberg_order(
+                                id,
+                                PRICE,
+                                1 + (base % 5),
+                                1 + (base % 11),
+                            ))
+                            .expect("add_order should succeed");
                     }
                 }
             }));
@@ -4182,7 +4450,9 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 100));
+        price_level
+            .add_order(create_standard_order(1, 10000, 100))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             40,
@@ -4211,8 +4481,12 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 60));
-        price_level.add_order(create_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_standard_order(1, 10000, 60))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -4238,8 +4512,12 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 30));
-        price_level.add_order(create_standard_order(2, 10000, 30));
+        price_level
+            .add_order(create_standard_order(1, 10000, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 30))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             100,
@@ -4266,9 +4544,15 @@ mod tests {
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let trade_id_generator = UuidGenerator::new(namespace);
 
-        price_level.add_order(create_standard_order(1, 10000, 40));
-        price_level.add_order(create_standard_order(2, 10000, 30));
-        price_level.add_order(create_standard_order(3, 10000, 50));
+        price_level
+            .add_order(create_standard_order(1, 10000, 40))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(2, 10000, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_standard_order(3, 10000, 50))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             90,
@@ -4320,7 +4604,9 @@ mod tests {
         let trade_id_generator = UuidGenerator::new(namespace);
 
         // visible 50, hidden 200.
-        price_level.add_order(create_iceberg_order(1, 10000, 50, 200));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 50, 200))
+            .expect("add_order should succeed");
 
         // Consume the full visible tranche; the maker replenishes and keeps
         // resting, so it is not in filled_order_ids.
@@ -4350,7 +4636,9 @@ mod tests {
         let trade_id_generator = UuidGenerator::new(namespace);
 
         // visible 50, hidden 200, replenish threshold 10, auto-replenish on.
-        price_level.add_order(create_reserve_order(1, 10000, 50, 200, 10, true, Some(50)));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 50, 200, 10, true, Some(50)))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             50,
@@ -4392,7 +4680,9 @@ mod tests {
 
         let run = || {
             let price_level = PriceLevel::new(10000);
-            price_level.add_order(mk());
+            price_level
+                .add_order(mk())
+                .expect("add_order should succeed");
             let trade_id_generator = UuidGenerator::new(namespace);
             // Cross more than the visible tranche to force replenishment and a
             // multi-trade stream.
@@ -4457,8 +4747,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         // Counters reflect both orders: visible 0+40, hidden 30+0.
         assert_eq!(price_level.visible_quantity(), 40);
@@ -4498,8 +4792,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             70,
@@ -4531,8 +4829,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             71,
@@ -4559,8 +4861,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             200,
@@ -4593,8 +4899,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             10,
@@ -4624,7 +4934,9 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_iceberg_order(1, 10000, 0, 25));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 0, 25))
+            .expect("add_order should succeed");
 
         let rejected = price_level.match_order(
             5,
@@ -4667,8 +4979,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.hidden_quantity(), 50);
@@ -4706,8 +5022,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         let result = price_level.match_order(
             90,
@@ -4734,8 +5054,12 @@ mod tests {
         // And FOK of 91 (one over) must be killed with the queue intact.
         let price_level2 = PriceLevel::new(10000);
         let trade_gen2 = new_trade_id_generator();
-        price_level2.add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)));
-        price_level2.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level2
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, true, Some(20)))
+            .expect("add_order should succeed");
+        price_level2
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
         let killed = price_level2.match_order(
             91,
             Id::from_u64(999),
@@ -4759,8 +5083,12 @@ mod tests {
         let price_level = PriceLevel::new(10000);
         let trade_gen = new_trade_id_generator();
 
-        price_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 40);
         assert_eq!(price_level.hidden_quantity(), 50);
@@ -4804,7 +5132,9 @@ mod tests {
         // FOK pre-check: 0 matchable depth -> killed, queue untouched.
         let fok_level = PriceLevel::new(10000);
         let fok_gen = new_trade_id_generator();
-        fok_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
+        fok_level
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)))
+            .expect("add_order should succeed");
 
         let fok = fok_level.match_order(
             5,
@@ -4826,7 +5156,9 @@ mod tests {
         // counters consistent with the queue.
         let po_level = PriceLevel::new(10000);
         let po_gen = new_trade_id_generator();
-        po_level.add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)));
+        po_level
+            .add_order(create_reserve_order(1, 10000, 0, 50, 10, false, Some(20)))
+            .expect("add_order should succeed");
 
         let post_only = po_level.match_order(
             5,
@@ -4861,8 +5193,12 @@ mod tests {
         let trade_gen = new_trade_id_generator();
 
         // Iceberg with 20 visible / 30 hidden, then a standard maker behind it.
-        price_level.add_order(create_iceberg_order(1, 10000, 20, 30));
-        price_level.add_order(create_sell_standard_order(2, 10000, 40));
+        price_level
+            .add_order(create_iceberg_order(1, 10000, 20, 30))
+            .expect("add_order should succeed");
+        price_level
+            .add_order(create_sell_standard_order(2, 10000, 40))
+            .expect("add_order should succeed");
 
         // Reduce the iceberg's quantity to 0 (degenerate zero-visible state).
         price_level
@@ -4965,16 +5301,18 @@ mod tests {
             let maker_id_u64 = (iter as u64) * 4 + 1;
             let maker_id = Id::from_u64(maker_id_u64);
             // A sell maker so a buy taker crosses it.
-            level.add_order(OrderType::Standard {
-                id: maker_id,
-                price: Price::new(PRICE),
-                quantity: Quantity::new(MAKER_QTY),
-                side: Side::Sell,
-                user_id: Hash32::zero(),
-                timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64),
-                time_in_force: TimeInForce::Gtc,
-                extra_fields: (),
-            });
+            level
+                .add_order(OrderType::Standard {
+                    id: maker_id,
+                    price: Price::new(PRICE),
+                    quantity: Quantity::new(MAKER_QTY),
+                    side: Side::Sell,
+                    user_id: Hash32::zero(),
+                    timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64),
+                    time_in_force: TimeInForce::Gtc,
+                    extra_fields: (),
+                })
+                .expect("add_order should succeed");
 
             let barrier = Arc::new(Barrier::new(2));
             // Deterministic, per-iteration trade-id stream.
@@ -5094,16 +5432,18 @@ mod tests {
             // Add MAKERS sell makers with deterministic ids.
             let base = (iter as u64) * 1_000 + 1;
             for k in 0..MAKERS {
-                level.add_order(OrderType::Standard {
-                    id: Id::from_u64(base + k),
-                    price: Price::new(PRICE),
-                    quantity: Quantity::new(MAKER_QTY),
-                    side: Side::Sell,
-                    user_id: Hash32::zero(),
-                    timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64 * 16 + k),
-                    time_in_force: TimeInForce::Gtc,
-                    extra_fields: (),
-                });
+                level
+                    .add_order(OrderType::Standard {
+                        id: Id::from_u64(base + k),
+                        price: Price::new(PRICE),
+                        quantity: Quantity::new(MAKER_QTY),
+                        side: Side::Sell,
+                        user_id: Hash32::zero(),
+                        timestamp: TimestampMs::new(1_600_000_000_000 + iter as u64 * 16 + k),
+                        time_in_force: TimeInForce::Gtc,
+                        extra_fields: (),
+                    })
+                    .expect("add_order should succeed");
             }
 
             // The matcher will consume the first ~2.5 makers; the canceller
@@ -5207,8 +5547,12 @@ mod tests {
 
         let level = PriceLevel::new(10_000);
         // Insert id 1 FIRST but with a LATER timestamp than id 2 (added second).
-        level.add_order(mk_buy(1, 2_000, 50));
-        level.add_order(mk_buy(2, 1_000, 50));
+        level
+            .add_order(mk_buy(1, 2_000, 50))
+            .expect("add_order should succeed");
+        level
+            .add_order(mk_buy(2, 1_000, 50))
+            .expect("add_order should succeed");
 
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
@@ -5259,9 +5603,15 @@ mod tests {
         let level = PriceLevel::new(10_000);
         // Three standard makers with monotonic timestamps (TIMESTAMP_COUNTER),
         // so insertion sequence and timestamp order initially agree.
-        level.add_order(create_standard_order(1, 10_000, 100));
-        level.add_order(create_standard_order(2, 10_000, 100));
-        level.add_order(create_standard_order(3, 10_000, 100));
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_standard_order(2, 10_000, 100))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_standard_order(3, 10_000, 100))
+            .expect("add_order should succeed");
 
         // Upsize maker 1 (Standard orders resize): total increases 100 -> 150,
         // so update_order takes the quantity-increase branch and demotes it to
@@ -5350,9 +5700,13 @@ mod tests {
         // front priority.
         let level = PriceLevel::new(10_000);
         // Iceberg maker (id 1, Sell) added first: visible 50 over hidden 100.
-        level.add_order(create_iceberg_order(1, 10_000, 50, 100));
+        level
+            .add_order(create_iceberg_order(1, 10_000, 50, 100))
+            .expect("add_order should succeed");
         // A plain Sell maker (id 2) rests behind it.
-        level.add_order(create_sell_standard_order(2, 10_000, 100));
+        level
+            .add_order(create_sell_standard_order(2, 10_000, 100))
+            .expect("add_order should succeed");
 
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let generator = UuidGenerator::new(namespace);
@@ -5453,7 +5807,9 @@ mod tests {
         // N resting standard makers with known ids 1..=N and initial quantity
         // 100 (monotonic timestamps via the shared counter).
         for id in 1..=N as u64 {
-            level.add_order(create_standard_order(id, 10_000, 100));
+            level
+                .add_order(create_standard_order(id, 10_000, 100))
+                .expect("add_order should succeed");
         }
 
         // Barrier aligns the single writer with the readers so the resequencing
@@ -5559,8 +5915,12 @@ mod tests {
     #[test]
     fn test_snapshot_by_insertion_seq_partial_fill_keeps_front() {
         let level = PriceLevel::new(10_000);
-        level.add_order(create_standard_order(1, 10_000, 100));
-        level.add_order(create_standard_order(2, 10_000, 50));
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_standard_order(2, 10_000, 50))
+            .expect("add_order should succeed");
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let generator = UuidGenerator::new(namespace);
         // Small taker partially fills the front maker (id 1): KeepInPlace, same seq.
@@ -5588,9 +5948,13 @@ mod tests {
     fn test_snapshot_by_insertion_seq_replenished_maker_moves_to_tail() {
         let level = PriceLevel::new(10_000);
         // Iceberg (id 1, Sell) added first: visible 10 over hidden 40.
-        level.add_order(create_iceberg_order(1, 10_000, 10, 40));
+        level
+            .add_order(create_iceberg_order(1, 10_000, 10, 40))
+            .expect("add_order should succeed");
         // A plain Sell maker (id 2) rests behind it.
-        level.add_order(create_sell_standard_order(2, 10_000, 100));
+        level
+            .add_order(create_sell_standard_order(2, 10_000, 100))
+            .expect("add_order should succeed");
         let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         let generator = UuidGenerator::new(namespace);
         // Fully consume the iceberg's visible tranche (10): it replenishes from
@@ -5623,9 +5987,15 @@ mod tests {
     #[test]
     fn test_snapshot_by_seq_into_matches_snapshot_by_insertion_seq() {
         let level = PriceLevel::new(10_000);
-        level.add_order(create_standard_order(1, 10_000, 100));
-        level.add_order(create_standard_order(2, 10_000, 50));
-        level.add_order(create_iceberg_order(3, 10_000, 20, 30));
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_standard_order(2, 10_000, 50))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_iceberg_order(3, 10_000, 20, 30))
+            .expect("add_order should succeed");
 
         let owned: Vec<Id> = level
             .snapshot_by_insertion_seq()
@@ -5655,16 +6025,21 @@ mod tests {
         // starts non-empty (proving `clear()` discards the prior contents
         // rather than appending to them).
         let big = PriceLevel::new(10_000);
-        big.add_order(create_standard_order(1, 10_000, 100));
-        big.add_order(create_standard_order(2, 10_000, 100));
-        big.add_order(create_standard_order(3, 10_000, 100));
+        big.add_order(create_standard_order(1, 10_000, 100))
+            .expect("add_order should succeed");
+        big.add_order(create_standard_order(2, 10_000, 100))
+            .expect("add_order should succeed");
+        big.add_order(create_standard_order(3, 10_000, 100))
+            .expect("add_order should succeed");
         let mut buf = big.snapshot_by_insertion_seq();
         assert_eq!(buf.len(), 3);
 
         // Reuse the same buffer on a SMALLER level: it must shrink to one entry
         // with no stale tail left over from the previous three.
         let small = PriceLevel::new(10_000);
-        small.add_order(create_standard_order(10, 10_000, 100));
+        small
+            .add_order(create_standard_order(10, 10_000, 100))
+            .expect("add_order should succeed");
         small.snapshot_by_seq_into(&mut buf);
         let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
         assert_eq!(
@@ -5677,7 +6052,9 @@ mod tests {
         // exactly the new contents in insertion order.
         let bigger = PriceLevel::new(10_000);
         for id in [20_u64, 21, 22, 23] {
-            bigger.add_order(create_standard_order(id, 10_000, 100));
+            bigger
+                .add_order(create_standard_order(id, 10_000, 100))
+                .expect("add_order should succeed");
         }
         bigger.snapshot_by_seq_into(&mut buf);
         let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
@@ -5699,8 +6076,12 @@ mod tests {
 
         // Plain makers: 100 + 50 = 150 of depth.
         let level = PriceLevel::new(10_000);
-        level.add_order(create_standard_order(1, 10_000, 100));
-        level.add_order(create_standard_order(2, 10_000, 50));
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("add_order should succeed");
+        level
+            .add_order(create_standard_order(2, 10_000, 50))
+            .expect("add_order should succeed");
 
         assert_eq!(level.matchable_quantity(0), 0, "zero taker fills nothing");
         assert_eq!(level.matchable_quantity(120), 120, "taker below depth");
@@ -5728,7 +6109,8 @@ mod tests {
         // Iceberg replenish: visible 10 over hidden 40 = 50 of total depth, all
         // reachable across replenishment.
         let ice = PriceLevel::new(10_000);
-        ice.add_order(create_iceberg_order(1, 10_000, 10, 40));
+        ice.add_order(create_iceberg_order(1, 10_000, 10, 40))
+            .expect("add_order should succeed");
         let predicted_ice = ice.matchable_quantity(100);
         assert_eq!(
             predicted_ice, 50,
@@ -5760,7 +6142,9 @@ mod tests {
         // A deep level: 200 resting makers.
         let level = PriceLevel::new(10_000);
         for id in 1..=200_u64 {
-            level.add_order(create_standard_order(id, 10_000, 100));
+            level
+                .add_order(create_standard_order(id, 10_000, 100))
+                .expect("add_order should succeed");
         }
         assert_eq!(level.order_count(), 200, "level is deep");
 
@@ -5793,7 +6177,9 @@ mod tests {
         // A shallow level: 3 makers, 300 units of depth.
         let level = PriceLevel::new(10_000);
         for id in 1..=3_u64 {
-            level.add_order(create_standard_order(id, 10_000, 100));
+            level
+                .add_order(create_standard_order(id, 10_000, 100))
+                .expect("add_order should succeed");
         }
         assert_eq!(level.order_count(), 3, "level is shallow");
 
@@ -5816,6 +6202,229 @@ mod tests {
             "trade buffer must be bounded by order count (3), not the incoming \
              quantity (10000); was {}",
             result.trades().as_vec().capacity()
+        );
+    }
+    // ------------------------------------------------------------------
+    // Issue #111 — reject quantity overflow BEFORE mutating level state
+    // ------------------------------------------------------------------
+    //
+    // `order_count` overflow (usize::MAX resting orders) is not directly
+    // testable — it would require ~1.8e19 live orders. It is covered by the
+    // same checked `fetch_update` mechanism as the visible / hidden counters
+    // below; a unit test cannot reach it, so it is exercised structurally
+    // (identical code path) rather than by admitting that many orders.
+
+    #[test]
+    fn test_add_order_visible_quantity_overflow_rejected() {
+        let level = PriceLevel::new(10_000);
+        // Take the visible counter all the way to u64::MAX.
+        level
+            .add_order(create_standard_order(1, 10_000, u64::MAX))
+            .expect("first admission at u64::MAX visible must succeed");
+
+        // Capture the full level state before the failing admission.
+        let before_json = level
+            .snapshot_to_json()
+            .expect("snapshot before must serialize");
+        let before_visible = level.visible_quantity();
+        let before_hidden = level.hidden_quantity();
+        let before_count = level.order_count();
+
+        // Admitting even one more unit would overflow the visible counter.
+        match level.add_order(create_standard_order(2, 10_000, 1)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("visible quantity overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected visible-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // Nothing mutated: counters, count, and a byte-identical snapshot.
+        assert_eq!(level.visible_quantity(), before_visible);
+        assert_eq!(level.hidden_quantity(), before_hidden);
+        assert_eq!(level.order_count(), before_count);
+        assert_eq!(before_count, 1);
+        let after_json = level
+            .snapshot_to_json()
+            .expect("snapshot after must serialize");
+        assert_eq!(
+            before_json, after_json,
+            "a rejected admission must leave the snapshot byte-identical"
+        );
+
+        // The snapshot still round-trips, and the rejected order is absent.
+        let restored =
+            PriceLevel::from_snapshot_json(&after_json).expect("snapshot must round-trip");
+        assert_eq!(restored.visible_quantity(), u64::MAX);
+        assert_eq!(restored.order_count(), 1);
+        let ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(ids, vec![Id::from_u64(1)]);
+    }
+
+    #[test]
+    fn test_add_order_hidden_quantity_overflow_rejected() {
+        let level = PriceLevel::new(10_000);
+        // Take the hidden counter to u64::MAX with a hidden-only iceberg.
+        level
+            .add_order(create_iceberg_order(1, 10_000, 0, u64::MAX))
+            .expect("first admission at u64::MAX hidden must succeed");
+
+        let before_visible = level.visible_quantity();
+        let before_hidden = level.hidden_quantity();
+        let before_count = level.order_count();
+
+        match level.add_order(create_iceberg_order(2, 10_000, 0, 1)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("hidden quantity overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected hidden-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // The visible reservation the failing call briefly took is rolled back,
+        // so no counter drifts.
+        assert_eq!(level.visible_quantity(), before_visible);
+        assert_eq!(level.hidden_quantity(), before_hidden);
+        assert_eq!(level.order_count(), before_count);
+        assert_eq!(before_count, 1);
+        assert_eq!(level.hidden_quantity(), u64::MAX);
+    }
+
+    #[test]
+    fn test_add_order_boundary_sum_reaches_u64_max_succeeds() {
+        let level = PriceLevel::new(10_000);
+        // Two admissions whose visible quantities sum to EXACTLY u64::MAX must
+        // both succeed — the boundary is inclusive.
+        level
+            .add_order(create_standard_order(1, 10_000, u64::MAX - 10))
+            .expect("first admission must succeed");
+        level
+            .add_order(create_standard_order(2, 10_000, 10))
+            .expect("admission reaching exactly u64::MAX must succeed");
+
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.order_count(), 2);
+
+        // Counter == snapshot aggregate == sum over the queue contents.
+        let snapshot = level.snapshot();
+        assert_eq!(snapshot.visible_quantity().as_u64(), u64::MAX);
+        let queue_sum = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .try_fold(0u64, |acc, o| {
+                acc.checked_add(o.visible_quantity().as_u64())
+            })
+            .expect("boundary sum is exactly u64::MAX, no overflow");
+        assert_eq!(queue_sum, u64::MAX);
+    }
+
+    #[test]
+    fn test_reserve_replenish_overflow_no_trade_maker_preserved() {
+        // A reserve whose visible + hidden exceed u64::MAX is admissible (the
+        // two are separate u64 counters). A partial match that would replenish
+        // it computes `new_visible + replenish_qty`, which overflows u64. The
+        // match step must fail atomically: no trade, maker unchanged, no panic
+        // (this test runs under debug assertions, where an unchecked `+` would
+        // panic).
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_reserve_order(
+                1,
+                10_000,
+                u64::MAX,       // visible
+                u64::MAX,       // hidden
+                u64::MAX,       // threshold: any partial fill falls below -> replenish
+                true,           // auto_replenish
+                Some(u64::MAX), // replenish amount: draws the full hidden
+            ))
+            .expect("reserve with separately-valid u64 components must admit");
+
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        // A tiny taker triggers a partial fill and the overflowing replenish.
+        let result = level.match_order(
+            1,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+
+        // No trade emitted and the taker is left fully unconsumed.
+        assert_eq!(
+            result.trades().len(),
+            0,
+            "an overflowing replenish must emit no trade"
+        );
+        assert_eq!(
+            result.remaining_quantity().as_u64(),
+            1,
+            "the taker must be left fully unconsumed"
+        );
+
+        // The maker is still resting, unchanged.
+        let resting = level.snapshot_by_insertion_seq();
+        assert_eq!(resting.len(), 1, "the maker must still rest");
+        assert_eq!(resting[0].id(), Id::from_u64(1));
+        assert_eq!(
+            resting[0].visible_quantity().as_u64(),
+            u64::MAX,
+            "maker visible quantity must be unchanged"
+        );
+        assert_eq!(
+            resting[0].hidden_quantity().as_u64(),
+            u64::MAX,
+            "maker hidden quantity must be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_add_order_normal_flow_fifo_unchanged() {
+        // Sanity: the now-fallible add_order preserves normal admission and
+        // strict FIFO consumption for in-range quantities.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, 30))
+            .expect("admission ok");
+        level
+            .add_order(create_standard_order(2, 10_000, 20))
+            .expect("admission ok");
+        level
+            .add_order(create_standard_order(3, 10_000, 50))
+            .expect("admission ok");
+
+        assert_eq!(level.visible_quantity(), 100);
+        assert_eq!(level.order_count(), 3);
+
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let result = level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        let makers: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(
+            makers,
+            vec![Id::from_u64(1), Id::from_u64(2), Id::from_u64(3)],
+            "FIFO consumption order must be unchanged"
         );
     }
 }

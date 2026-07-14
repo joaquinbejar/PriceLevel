@@ -189,7 +189,9 @@ fn setup_standard_orders(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level
@@ -211,7 +213,9 @@ fn setup_iceberg_orders(order_count: u64) -> PriceLevel {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level
@@ -236,7 +240,9 @@ fn setup_reserve_orders(order_count: u64) -> PriceLevel {
             auto_replenish: true,
             extra_fields: (),
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level
@@ -284,7 +290,9 @@ fn setup_mixed_orders(order_count: u64) -> PriceLevel {
                 extra_fields: (),
             },
         };
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     price_level

@@ -134,7 +134,7 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             extra_fields: (),
         };
-        level.add_order(order);
+        level.add_order(order).expect("add_order should succeed");
 
         // Serialize the entry
         let json = serde_json::to_string(&entry).unwrap();
@@ -227,7 +227,9 @@ mod tests_order_book_entry {
             extra_fields: (),
         };
 
-        level1.add_order(order_type);
+        level1
+            .add_order(order_type)
+            .expect("add_order should succeed");
         assert_eq!(entry1.order_count(), 1);
 
         // Add another order
@@ -242,7 +244,9 @@ mod tests_order_book_entry {
             extra_fields: (),
         };
 
-        level1.add_order(order_type2);
+        level1
+            .add_order(order_type2)
+            .expect("add_order should succeed");
         assert_eq!(entry1.order_count(), 2);
     }
 
@@ -373,7 +377,9 @@ mod tests_order_book_entry {
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };
-        level.add_order(standard_order);
+        level
+            .add_order(standard_order)
+            .expect("add_order should succeed");
 
         // Check quantities after adding order
         assert_eq!(entry.visible_quantity(), 10);
@@ -391,7 +397,9 @@ mod tests_order_book_entry {
             time_in_force: crate::orders::TimeInForce::Gtc,
             extra_fields: (),
         };
-        level.add_order(iceberg_order);
+        level
+            .add_order(iceberg_order)
+            .expect("add_order should succeed");
 
         // Check quantities after adding iceberg order
         assert_eq!(entry.visible_quantity(), 15); // 10 + 5

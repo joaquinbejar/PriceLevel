@@ -64,7 +64,9 @@ fn measure_read_write_contention(
     // Pre-populate with orders to read/match against
     for i in 0..500 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     let mut handles = Vec::with_capacity(thread_count);
@@ -102,7 +104,9 @@ fn measure_read_write_contention(
                             // Add a new order
                             let base_id = thread_id as u64 * 1_000_000 + i;
                             let order = create_standard_order(base_id, 10000, 10);
-                            thread_price_level.add_order(order);
+                            thread_price_level
+                                .add_order(order)
+                                .expect("add_order should succeed");
                         }
                         1 => {
                             // Match against existing orders
@@ -164,13 +168,17 @@ fn measure_hot_spot_contention(
     // First 20 orders are the "hot spot" that may be contended
     for i in 0..20 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     // Additional 980 orders for the non-hot spot operations
     for i in 20..1000 {
         let order = create_standard_order(i, 10000, 10);
-        price_level.add_order(order);
+        price_level
+            .add_order(order)
+            .expect("add_order should succeed");
     }
 
     let mut handles = Vec::with_capacity(thread_count);
@@ -212,7 +220,9 @@ fn measure_hot_spot_contention(
                         // Add a new order to replace canceled ones
                         let base_id = order_idx;
                         let order = create_standard_order(base_id, 10000, 10);
-                        thread_price_level.add_order(order);
+                        thread_price_level
+                            .add_order(order)
+                            .expect("add_order should succeed");
                     }
                     2 => {
                         // Update quantity
