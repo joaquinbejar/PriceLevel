@@ -40,7 +40,7 @@ mod tests {
             .add_order(create_standard_order(1, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .add_order(create_buy_iceberg_order(2, 10000, 50, 200))
             .expect("add_order should succeed");
 
         let package = price_level
@@ -243,13 +243,21 @@ mod tests {
             .add_order(create_standard_order(1, 15000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 15000, 40, 120))
+            .add_order(create_buy_iceberg_order(2, 15000, 40, 120))
             .expect("add_order should succeed");
         price_level
             .add_order(create_post_only_order(3, 15000, 60))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_reserve_order(4, 15000, 30, 90, 15, true, Some(20)))
+            .add_order(create_buy_reserve_order(
+                4,
+                15000,
+                30,
+                90,
+                15,
+                true,
+                Some(20),
+            ))
             .expect("add_order should succeed");
 
         let snapshot = price_level.snapshot();
@@ -284,7 +292,7 @@ mod tests {
             .add_order(create_standard_order(10, 17500, 80))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_trailing_stop_order(11, 17500, 50))
+            .add_order(create_buy_trailing_stop_order(11, 17500, 50))
             .expect("add_order should succeed");
         price_level
             .add_order(create_pegged_order(12, 17500, 40))
@@ -421,6 +429,68 @@ mod tests {
         }
     }
 
+    // Buy-side variants of the Sell-defaulting helpers, for tests that mix
+    // several order types at one level (issue #120: a level holds a single
+    // side, so every maker in these tests must share it).
+    fn create_buy_iceberg_order(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        OrderType::IcebergOrder {
+            id: Id::from_u64(id),
+            price: Price::new(price),
+            visible_quantity: Quantity::new(visible),
+            hidden_quantity: Quantity::new(hidden),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(timestamp),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: (),
+        }
+    }
+
+    fn create_buy_trailing_stop_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        OrderType::TrailingStop {
+            id: Id::from_u64(id),
+            price: Price::new(price),
+            quantity: Quantity::new(quantity),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(timestamp),
+            time_in_force: TimeInForce::Gtc,
+            trail_amount: Quantity::new(100),
+            last_reference_price: Price::new(price + 100u128),
+            extra_fields: (),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_buy_reserve_order(
+        id: u64,
+        price: u128,
+        visible: u64,
+        hidden: u64,
+        threshold: u64,
+        auto_replenish: bool,
+        replenish_amount: Option<u64>,
+    ) -> OrderType<()> {
+        let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        OrderType::ReserveOrder {
+            id: Id::from_u64(id),
+            price: Price::new(price),
+            visible_quantity: Quantity::new(visible),
+            hidden_quantity: Quantity::new(hidden),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(timestamp),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(threshold),
+            replenish_amount: replenish_amount
+                .map(|amount| NonZeroU64::new(amount).expect("test replenish amount must be > 0")),
+            auto_replenish,
+            extra_fields: (),
+        }
+    }
+
     fn create_fill_or_kill_order(id: u64, price: u128, quantity: u64) -> OrderType<()> {
         let timestamp = TIMESTAMP_COUNTER.fetch_add(1, Ordering::SeqCst);
         OrderType::Standard {
@@ -532,13 +602,13 @@ mod tests {
             .add_order(create_standard_order(1, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .add_order(create_buy_iceberg_order(2, 10000, 50, 200))
             .expect("add_order should succeed");
         price_level
             .add_order(create_post_only_order(3, 10000, 75))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_reserve_order(4, 10000, 25, 100, 100, true, None))
+            .add_order(create_buy_reserve_order(4, 10000, 25, 100, 100, true, None))
             .expect("add_order should succeed");
 
         assert_eq!(price_level.visible_quantity(), 250); // 100 + 50 + 75 + 25
@@ -558,7 +628,7 @@ mod tests {
             .add_order(create_standard_order(1, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .add_order(create_buy_iceberg_order(2, 10000, 50, 200))
             .expect("add_order should succeed");
 
         // Cancel the standard order using OrderUpdate
@@ -607,7 +677,7 @@ mod tests {
             .add_order(create_standard_order(1, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 10000, 50, 200))
+            .add_order(create_buy_iceberg_order(2, 10000, 50, 200))
             .expect("add_order should succeed");
 
         let orders = price_level.snapshot_orders();
@@ -2268,15 +2338,17 @@ mod tests {
 
     #[test]
     fn test_update_quantity_trailing_stop_decrease_keeps_position() {
+        // Buy side to match the plain maker the helper queues behind it (a level
+        // holds a single side, issue #120).
         assert_update_quantity_decrease_keeps_position(
-            create_trailing_stop_order(1, 10000, 100),
+            create_buy_trailing_stop_order(1, 10000, 100),
             40,
         );
     }
 
     #[test]
     fn test_update_quantity_trailing_stop_increase_demotes() {
-        assert_update_quantity_increase_demotes(create_trailing_stop_order(1, 10000, 100), 150);
+        assert_update_quantity_increase_demotes(create_buy_trailing_stop_order(1, 10000, 100), 150);
     }
 
     #[test]
@@ -3208,7 +3280,7 @@ mod tests {
             .add_order(create_standard_order(2, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(3, 10000, 50, 200))
+            .add_order(create_buy_iceberg_order(3, 10000, 50, 200))
             .expect("add_order should succeed");
 
         // Decrease (in place) on a standard order.
@@ -3459,13 +3531,13 @@ mod tests {
             .add_order(create_good_till_date_order(3, 10000, 100, 1617000000000))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_reserve_order(4, 10000, 100, 100, 20, true, None))
+            .add_order(create_buy_reserve_order(4, 10000, 100, 100, 20, true, None))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(5, 10000, 50, 100))
+            .add_order(create_buy_iceberg_order(5, 10000, 50, 100))
             .expect("add_order should succeed");
 
-        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000001;time_in_force=GTC,Standard:id=00000000-0000-0003-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000002;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0004-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=SELL;timestamp=1616823000003;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0005-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=SELL;timestamp=1616823000004;time_in_force=GTC]";
+        let input = "PriceLevel:price=10000;visible_quantity=375;hidden_quantity=200;order_count=5;orders=[Standard:id=00000000-0000-0001-0000-000000000000;price=10000;quantity=50;side=BUY;timestamp=1616823000000;time_in_force=GTC,Standard:id=00000000-0000-0002-0000-000000000000;price=10000;quantity=75;side=BUY;timestamp=1616823000001;time_in_force=GTC,Standard:id=00000000-0000-0003-0000-000000000000;price=10000;quantity=100;side=BUY;timestamp=1616823000002;time_in_force=GTD-1617000000000,ReserveOrder:id=00000000-0000-0004-0000-000000000000;price=10000;visible_quantity=100;hidden_quantity=100;side=BUY;timestamp=1616823000003;time_in_force=GTC;replenish_threshold=20;replenish_amount=None;auto_replenish=true,IcebergOrder:id=00000000-0000-0005-0000-000000000000;price=10000;visible_quantity=50;hidden_quantity=100;side=BUY;timestamp=1616823000004;time_in_force=GTC]";
         let result = PriceLevel::from_str(input);
 
         if let Err(ref err) = result {
@@ -3661,7 +3733,7 @@ mod tests {
             .add_order(create_standard_order(1, 10000, 100))
             .expect("add_order should succeed");
         price_level
-            .add_order(create_iceberg_order(2, 10000, 50, 150))
+            .add_order(create_buy_iceberg_order(2, 10000, 50, 150))
             .expect("add_order should succeed");
 
         // Serialize to JSON
@@ -4259,7 +4331,7 @@ mod tests {
                             .expect("add_order should succeed");
                     } else {
                         level
-                            .add_order(create_iceberg_order(
+                            .add_order(create_buy_iceberg_order(
                                 id,
                                 PRICE,
                                 1 + (base % 5),
@@ -5994,7 +6066,7 @@ mod tests {
             .add_order(create_standard_order(2, 10_000, 50))
             .expect("add_order should succeed");
         level
-            .add_order(create_iceberg_order(3, 10_000, 20, 30))
+            .add_order(create_buy_iceberg_order(3, 10_000, 20, 30))
             .expect("add_order should succeed");
 
         let owned: Vec<Id> = level
@@ -6083,10 +6155,19 @@ mod tests {
             .add_order(create_standard_order(2, 10_000, 50))
             .expect("add_order should succeed");
 
-        assert_eq!(level.matchable_quantity(0), 0, "zero taker fills nothing");
-        assert_eq!(level.matchable_quantity(120), 120, "taker below depth");
+        let taker = Id::from_u64(999);
+        assert_eq!(
+            level.matchable_quantity(0, taker),
+            0,
+            "zero taker fills nothing"
+        );
+        assert_eq!(
+            level.matchable_quantity(120, taker),
+            120,
+            "taker below depth"
+        );
         // A taker above the available depth is capped at the depth.
-        let predicted = level.matchable_quantity(200);
+        let predicted = level.matchable_quantity(200, taker);
         assert_eq!(predicted, 150, "taker above depth is capped at depth");
 
         // The dry run does not mutate, so the real sweep on the same level must
@@ -6111,7 +6192,7 @@ mod tests {
         let ice = PriceLevel::new(10_000);
         ice.add_order(create_iceberg_order(1, 10_000, 10, 40))
             .expect("add_order should succeed");
-        let predicted_ice = ice.matchable_quantity(100);
+        let predicted_ice = ice.matchable_quantity(100, Id::from_u64(998));
         assert_eq!(
             predicted_ice, 50,
             "matchable_quantity reaches hidden depth via replenishment"
@@ -6433,7 +6514,9 @@ mod tests {
             ))
             .expect("reserve own total fits u64");
         level
-            .add_order(create_standard_order(2, 10_000, u64::MAX - 1))
+            // Sell to stay side-coherent with the reserve above (issue #120
+            // pins the level side to its first resting maker).
+            .add_order(create_sell_standard_order(2, 10_000, u64::MAX - 1))
             .expect("standard own total fits u64");
         assert_eq!(level.visible_quantity(), u64::MAX);
 
@@ -6643,8 +6726,8 @@ mod tests {
 
         // The same id as a DIFFERENT order variant is still a duplicate.
         let duplicates = [
-            create_iceberg_order(1, 10_000, 50, 50),
-            create_reserve_order(1, 10_000, 30, 60, 10, true, Some(20)),
+            create_buy_iceberg_order(1, 10_000, 50, 50),
+            create_buy_reserve_order(1, 10_000, 30, 60, 10, true, Some(20)),
             create_standard_order(1, 10_000, 5),
         ];
         for dup in duplicates {
@@ -6665,7 +6748,7 @@ mod tests {
 
         // A genuinely distinct id still admits fine.
         level
-            .add_order(create_iceberg_order(2, 10_000, 50, 50))
+            .add_order(create_buy_iceberg_order(2, 10_000, 50, 50))
             .expect("distinct id must admit");
         assert_eq!(level.order_count(), 2);
     }
@@ -6836,6 +6919,33 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Issue #120 — admission and trade topology invariants
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_add_order_wrong_price_rejected() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("in-price admission must succeed");
+
+        let before = level.snapshot_to_json().expect("snapshot before");
+        // An order at a different price must be rejected, level unchanged.
+        match level.add_order(create_standard_order(2, 10_001, 50)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("price"), "unexpected message: {message}");
+            }
+            other => panic!("expected wrong-price InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(level.order_count(), 1);
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before,
+            "a rejected wrong-price admission must leave the level unchanged"
+        );
+    }
+
     #[test]
     fn test_try_from_snapshot_propagates_duplicate_order_id() {
         // Finding 3 (PR #125): the infallible `From<&PriceLevelSnapshot>` (which
@@ -6869,6 +6979,369 @@ mod tests {
         let restored = PriceLevel::try_from(&ok_snapshot).expect("distinct ids restore");
         assert_eq!(restored.order_count(), 2);
         assert_eq!(restored.visible_quantity(), 30);
+    }
+
+    #[test]
+    fn test_add_order_mixed_side_rejected_then_readmissible_after_drain() {
+        let level = PriceLevel::new(10_000);
+        // First maker pins the level side to Buy.
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("first (Buy) admission must succeed");
+
+        let before = level.snapshot_to_json().expect("snapshot before");
+        // A Sell maker is incompatible with the Buy level.
+        match level.add_order(create_sell_standard_order(2, 10_000, 50)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("side"), "unexpected message: {message}");
+            }
+            other => panic!("expected mixed-side InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(level.order_count(), 1);
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before,
+            "a rejected mixed-side admission must leave the level unchanged"
+        );
+
+        // Drain the level to empty via a full match.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let _ = level.match_order(
+            100,
+            Id::from_u64(900),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        assert_eq!(level.order_count(), 0, "the level must be drained empty");
+
+        // A drained level accepts either side again: the opposite side now admits.
+        level
+            .add_order(create_sell_standard_order(3, 10_000, 70))
+            .expect("a drained level must re-accept the opposite side");
+        assert_eq!(level.order_count(), 1);
+    }
+
+    #[test]
+    fn test_match_order_self_match_terminal_rejected_all_tifs() {
+        // Issue #126: a self-match is TERMINAL. If the taker's own id rests at
+        // the level, the match emits NO trades and leaves the level
+        // byte-identical for EVERY TIF and kind — it does NOT walk past its own
+        // resting order to trade with the other makers (the old skip behaviour).
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+
+        // Every TIF, plus the post-only kind, must reject identically.
+        let cases: [(TimeInForce, TakerKind); 6] = [
+            (TimeInForce::Gtc, TakerKind::Standard),
+            (TimeInForce::Ioc, TakerKind::Standard),
+            (TimeInForce::Fok, TakerKind::Standard),
+            (TimeInForce::Day, TakerKind::Standard),
+            (TimeInForce::Gtc, TakerKind::PostOnly),
+            (TimeInForce::Fok, TakerKind::PostOnly),
+        ];
+
+        for (tif, kind) in cases {
+            // Makers 1, 2, 3 rest in FIFO order; the taker shares maker 1's id.
+            let level = PriceLevel::new(10_000);
+            level
+                .add_order(create_standard_order(1, 10_000, 40))
+                .expect("maker 1 admits");
+            level
+                .add_order(create_standard_order(2, 10_000, 30))
+                .expect("maker 2 admits");
+            level
+                .add_order(create_standard_order(3, 10_000, 50))
+                .expect("maker 3 admits");
+            let before = level.snapshot_by_insertion_seq();
+
+            let result = level.match_order(
+                1_000,
+                Id::from_u64(1),
+                tif,
+                kind,
+                TimestampMs::new(1_700_000_000_000),
+                &UuidGenerator::new(namespace),
+            );
+
+            // Terminal Rejected: zero trades, full remaining, nothing executed.
+            assert!(
+                result.was_rejected(),
+                "self-match must be Rejected for {tif:?}/{kind:?}"
+            );
+            assert_eq!(result.trades().len(), 0, "{tif:?}/{kind:?}: no trades");
+            assert_eq!(
+                result.remaining_quantity().as_u64(),
+                1_000,
+                "{tif:?}/{kind:?}: full remaining"
+            );
+            assert_eq!(
+                result.executed_quantity().expect("no overflow").as_u64(),
+                0,
+                "{tif:?}/{kind:?}: nothing executed"
+            );
+
+            // The level is byte-identical: all three makers still rest in order.
+            let after = level.snapshot_by_insertion_seq();
+            assert_eq!(
+                before.iter().map(|o| o.id()).collect::<Vec<_>>(),
+                after.iter().map(|o| o.id()).collect::<Vec<_>>(),
+                "{tif:?}/{kind:?}: queue unchanged"
+            );
+            assert_eq!(level.order_count(), 3, "{tif:?}/{kind:?}: count unchanged");
+            assert_counters_match_queue(&level);
+        }
+    }
+
+    #[test]
+    fn test_matchable_quantity_self_skip_but_match_order_rejects_self() {
+        // Maker 1 (shares the taker id) has 40; maker 2 has 60. The dry-run
+        // helper `matchable_quantity` still skips the self-trade maker (it backs
+        // the in-sweep defense-in-depth path, where the taker's order is admitted
+        // mid-sweep), so it reports 60 takeable.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, 40))
+            .expect("maker 1 admits");
+        level
+            .add_order(create_standard_order(2, 10_000, 60))
+            .expect("maker 2 admits");
+
+        assert_eq!(level.matchable_quantity(100, Id::from_u64(1)), 60);
+        assert_eq!(level.matchable_quantity(60, Id::from_u64(1)), 60);
+
+        // But `match_order` is TERMINAL when the taker id already rests (issue
+        // #126): it rejects up front for every TIF, dominating the FOK dry run —
+        // a self-match FOK is Rejected, NOT killed and NOT filled from maker 2.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        for qty in [100u64, 60] {
+            let result = level.match_order(
+                qty,
+                Id::from_u64(1),
+                TimeInForce::Fok,
+                TakerKind::Standard,
+                TimestampMs::new(1_700_000_000_000),
+                &UuidGenerator::new(namespace),
+            );
+            assert!(
+                result.was_rejected(),
+                "self-match FOK({qty}) is Rejected, not killed/filled"
+            );
+            assert!(!result.was_killed(), "self-match is Rejected, not Killed");
+            assert_eq!(result.trades().len(), 0, "no trades on self-match");
+            assert_eq!(result.remaining_quantity().as_u64(), qty);
+            assert_eq!(
+                level.order_count(),
+                2,
+                "a rejected self-match leaves the queue untouched"
+            );
+        }
+
+        // A taker with a DISTINCT id (id 3) does take maker 1 + maker 2 normally.
+        let filled = level.match_order(
+            100,
+            Id::from_u64(3),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_001),
+            &UuidGenerator::new(namespace),
+        );
+        assert!(filled.is_complete(), "non-self FOK 100 fills 40 + 60");
+        let makers: Vec<Id> = filled
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(makers, vec![Id::from_u64(1), Id::from_u64(2)]);
+    }
+
+    #[test]
+    fn test_opposite_side_admissions_race_exactly_one_wins() {
+        // Issue #126 🔴: two opposite-side admissions racing into a genuinely
+        // empty level must NEVER both admit — the atomic side pin serializes
+        // them so exactly one wins and the other is rejected. Under the old
+        // derive-from-queue scheme both could observe an empty queue and admit.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ITERATIONS: usize = 3_000;
+        const PRICE: u128 = 10_000;
+
+        for iter in 0..ITERATIONS {
+            let level = Arc::new(PriceLevel::new(PRICE));
+            let barrier = Arc::new(Barrier::new(2));
+            let buy_id = iter as u64 * 2 + 1;
+            let sell_id = buy_id + 1;
+
+            let buyer = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.add_order(create_standard_order(buy_id, PRICE, 10))
+                })
+            };
+            let seller = {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    level.add_order(create_sell_standard_order(sell_id, PRICE, 10))
+                })
+            };
+
+            let buy_res = buyer.join().expect("buyer thread panicked");
+            let sell_res = seller.join().expect("seller thread panicked");
+
+            // Exactly one admission wins.
+            let admitted = usize::from(buy_res.is_ok()) + usize::from(sell_res.is_ok());
+            assert_eq!(
+                admitted,
+                1,
+                "iter {iter}: exactly one opposite-side admission may win (buy_ok={}, sell_ok={})",
+                buy_res.is_ok(),
+                sell_res.is_ok()
+            );
+            // The loser is rejected with an incompatible-side error.
+            if let Err(err) = &buy_res {
+                assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+            }
+            if let Err(err) = &sell_res {
+                assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+            }
+
+            // The level holds exactly one order; snapshot is single-side; the
+            // advisory counters agree with the queue.
+            assert_eq!(level.order_count(), 1, "iter {iter}");
+            let snap = level.snapshot();
+            assert_eq!(snap.orders().len(), 1, "iter {iter}");
+            assert_counters_match_queue(&level);
+
+            // A drained level re-accepts EITHER side (the pin un-pinned on drain).
+            let winner_id = if buy_res.is_ok() { buy_id } else { sell_id };
+            level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: Id::from_u64(winner_id),
+                })
+                .expect("cancel winner")
+                .expect("winner was resting");
+            assert_eq!(level.order_count(), 0, "iter {iter}: drained");
+            // Whichever side lost the race can now be admitted into the empty level.
+            let readmit = if buy_res.is_ok() {
+                level.add_order(create_sell_standard_order(sell_id, PRICE, 7))
+            } else {
+                level.add_order(create_standard_order(buy_id, PRICE, 7))
+            };
+            assert!(
+                readmit.is_ok(),
+                "iter {iter}: a drained level must re-accept the opposite side"
+            );
+        }
+    }
+
+    #[test]
+    fn test_snapshot_never_captures_torn_side_under_flips() {
+        // Issue #126 🔴: a snapshot walk that spans a drain-then-re-admit to the
+        // opposite side must never capture a torn old-side/new-side view (which
+        // `from_snapshot` would reject for mixed sides). The topology epoch makes
+        // `snapshot` retry across such a transition; here a flipper thread churns
+        // the level Buy-batch -> drained -> Sell-batch -> drained while the main
+        // thread takes many snapshots and asserts each is single-side.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        const PRICE: u128 = 10_000;
+        const BATCH: u64 = 8;
+
+        let level = Arc::new(PriceLevel::new(PRICE));
+        let done = Arc::new(AtomicBool::new(false));
+
+        let flipper = {
+            let level = Arc::clone(&level);
+            let done = Arc::clone(&done);
+            thread::spawn(move || {
+                let mut round = 0u64;
+                while !done.load(Ordering::Relaxed) {
+                    let buy = round.is_multiple_of(2);
+                    let base = 1_000 + round * BATCH;
+                    for i in 0..BATCH {
+                        let id = base + i;
+                        let order = if buy {
+                            create_standard_order(id, PRICE, 5)
+                        } else {
+                            create_sell_standard_order(id, PRICE, 5)
+                        };
+                        // May transiently fail if the opposite side is still
+                        // draining; that is fine, we just churn the topology.
+                        let _ = level.add_order(order);
+                    }
+                    for i in 0..BATCH {
+                        let _ = level.update_order(OrderUpdate::Cancel {
+                            order_id: Id::from_u64(base + i),
+                        });
+                    }
+                    round += 1;
+                }
+            })
+        };
+
+        for _ in 0..50_000 {
+            let snap = level.snapshot();
+            let mut side = None;
+            for order in snap.orders() {
+                match side {
+                    None => side = Some(order.side()),
+                    Some(s) => assert_eq!(
+                        s,
+                        order.side(),
+                        "snapshot captured a torn mixed-side view (issue #126)"
+                    ),
+                }
+            }
+        }
+
+        done.store(true, Ordering::Relaxed);
+        flipper.join().expect("flipper thread panicked");
+    }
+
+    #[test]
+    fn test_from_snapshot_rejects_wrong_price_and_mixed_side() {
+        // Wrong price: an order whose price differs from the level's.
+        let wrong_price = crate::price_level::PriceLevelSnapshot::with_orders(
+            Price::new(10_000),
+            vec![
+                std::sync::Arc::new(create_standard_order(1, 10_000, 100)),
+                std::sync::Arc::new(create_standard_order(2, 10_001, 50)),
+            ],
+        )
+        .expect("snapshot construction succeeds");
+        assert!(
+            matches!(
+                PriceLevel::from_snapshot(wrong_price),
+                Err(PriceLevelError::InvalidOperation { .. })
+            ),
+            "from_snapshot must reject a wrong-price order"
+        );
+
+        // Mixed side: Buy and Sell orders in one snapshot.
+        let mixed_side = crate::price_level::PriceLevelSnapshot::with_orders(
+            Price::new(10_000),
+            vec![
+                std::sync::Arc::new(create_standard_order(1, 10_000, 100)),
+                std::sync::Arc::new(create_sell_standard_order(2, 10_000, 50)),
+            ],
+        )
+        .expect("snapshot construction succeeds");
+        assert!(
+            matches!(
+                PriceLevel::from_snapshot(mixed_side),
+                Err(PriceLevelError::InvalidOperation { .. })
+            ),
+            "from_snapshot must reject a mixed-side snapshot"
+        );
     }
 }
 

@@ -537,6 +537,41 @@
 //! - **`OrderQueue::from_vec` is now `pub(crate)`.** It is a keep-first
 //!   constructor that drops duplicates silently; the public restore path is
 //!   [`PriceLevel::from_snapshot`], which rejects them.
+//! ## Migration Guide (level topology invariants — breaking)
+//!
+//! A [`PriceLevel`] now enforces that every resting order sits at the level's
+//! price and shares a single side (the first admitted maker pins the side; a
+//! fully drained level accepts either side again). [`PriceLevel::add_order`]
+//! returns [`PriceLevelError::InvalidOperation`] for an order whose price does
+//! not match the level, or whose side is incompatible with the resting side,
+//! and [`PriceLevel::from_snapshot`] rejects a snapshot that violates either
+//! (previously such orders were admitted, trading at the level price rather
+//! than their own and producing contradictory taker sides in one
+//! [`MatchResult`]). Callers that composed a level from mixed-price or
+//! mixed-side orders must route each order to the correct level.
+//!
+//! Single-side coherence is a **correctness invariant**, not an
+//! eventually-consistent one like the advisory counters: it holds only when a
+//! given level's admissions arrive from a single logical writer (the composing
+//! order book routes each price to one admission path). The side is derived
+//! from the live queue, so under genuinely concurrent multi-writer admission a
+//! narrow race — an opposite side slipping into a momentarily empty level — can
+//! still admit a mixed side; see the note on the [`PriceLevel`] type.
+//!
+//! [`PriceLevel::matchable_quantity`] gains a `taker_id` parameter:
+//! `matchable_quantity(incoming_quantity)` becomes
+//! `matchable_quantity(incoming_quantity, taker_id)`. A resting maker sharing
+//! the taker id is skipped (self-trade prevention), matching the sweep, so a
+//! fill-or-kill dry run and the real sweep agree. `match_order` applies the
+//! same **self-trade skip** deterministically in every build profile (it used
+//! to be a debug-only assertion): a resting maker whose id equals the taker's
+//! is skipped — no self-trade is emitted and the other makers still match.
+//!
+//! This self-trade guard is **order-id identity** — an order can never match
+//! itself. It is NOT account/owner-level self-trade prevention: two distinct
+//! order ids owned by the same `user_id` will still trade. Account-level STP is
+//! the responsibility of the order book composing these levels, which owns the
+//! account relationships a single price level does not.
 //!
 
 mod orders;

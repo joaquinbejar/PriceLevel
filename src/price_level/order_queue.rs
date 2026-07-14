@@ -333,6 +333,18 @@ impl OrderQueue {
                     // escapes into a `FrontAction`).
                     let (action, result) = decide(seq, occupied.get().1.as_ref());
 
+                    // A `SetAside` records a sequence into the caller's scratch
+                    // `HashSet`, whose first insert allocates. Defer that insert
+                    // until AFTER the entry lock is released (issue #126) so no
+                    // allocation ever runs under the shard lock — the set is
+                    // per-sweep scratch owned by the caller, never shared, so it
+                    // needs no lock protection. The other actions commit their
+                    // queue mutations here, under the lock, as before.
+                    let mut park_seq: Option<u64> = None;
+                    // Every arm releases the entry lock by the time it finishes
+                    // (either `occupied.remove()` consumes it, or an explicit
+                    // `drop`), so the deferred `set_aside` insert below never runs
+                    // under the shard lock.
                     match &action {
                         FrontAction::Remove => {
                             // Full consume: remove the entry under the lock, then
@@ -345,8 +357,8 @@ impl OrderQueue {
                             // Partial fill keeping priority: swap the stored value
                             // to the residual in place, keeping the same
                             // sequence/index entry. Still under the entry lock.
-                            let slot = occupied.get_mut();
-                            slot.1 = residual.clone();
+                            occupied.get_mut().1 = residual.clone();
+                            drop(occupied);
                         }
                         FrontAction::ReplaceAtTail(refreshed) => {
                             // Replenished tranche loses time priority, but the
@@ -362,13 +374,12 @@ impl OrderQueue {
                                 slot.0 = new_seq;
                                 slot.1 = refreshed.clone();
                             }
-                            // `occupied` still holds the per-entry lock here (it
-                            // is dropped at the end of this arm), so re-keying the
-                            // index — a different structure (`SkipMap`), no
-                            // deadlock — happens while a concurrent cancel is
-                            // still excluded from the entry. Once the lock is
-                            // released the value already carries `new_seq`, so a
-                            // cancel removes `orders[id]` and `index[new_seq]`
+                            // `occupied` still holds the per-entry lock here, so
+                            // re-keying the index — a different structure
+                            // (`SkipMap`), no deadlock — happens while a concurrent
+                            // cancel is still excluded from the entry. Once the
+                            // lock is released the value already carries `new_seq`,
+                            // so a cancel removes `orders[id]` and `index[new_seq]`
                             // consistently. The only residue a race can leave is a
                             // stale `index[seq|new_seq] -> id` entry pointing at an
                             // already-removed id, which the next `match_front`
@@ -376,12 +387,20 @@ impl OrderQueue {
                             // counter update is ever lost.
                             self.index.remove(&seq);
                             self.index.insert(new_seq, order_id);
+                            drop(occupied);
                         }
                         FrontAction::SetAside => {
-                            // No progress: leave the entry untouched and park its
-                            // sequence so the sweep advances past it.
-                            set_aside.insert(seq);
+                            // No progress: leave the entry untouched. Release the
+                            // lock and park its sequence below.
+                            drop(occupied);
+                            park_seq = Some(seq);
                         }
+                    }
+
+                    // The entry lock is released on every arm above; a
+                    // possibly-allocating scratch-set insert now runs unlocked.
+                    if let Some(seq) = park_seq {
+                        set_aside.insert(seq);
                     }
 
                     return FrontOutcome::Matched { result };
