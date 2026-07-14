@@ -110,10 +110,7 @@ pub struct MatchResult {
 /// names, so every previously-valid payload still decodes) but performs no
 /// validation itself: `#[serde(try_from = "MatchResultWire")]` on
 /// `MatchResult` deserializes this permissive struct and then runs
-/// [`MatchResult::validated`] via the [`TryFrom`] impl below. The `outcome`
-/// field keeps `#[serde(default)]` so a payload written before that field
-/// existed decodes as [`MatchOutcome::NotFilled`] (the legacy default), as
-/// before.
+/// [`MatchResult::validated`] via the [`TryFrom`] impl below.
 #[derive(Deserialize)]
 struct MatchResultWire {
     order_id: Id,
@@ -121,21 +118,40 @@ struct MatchResultWire {
     remaining_quantity: u64,
     is_complete: bool,
     filled_order_ids: Vec<Id>,
+    /// Decoded as an `Option` so a legacy payload written before the field
+    /// existed (key absent → `None`) is told apart from an explicit outcome.
+    /// An absent outcome is *derived* from the other fields — the legacy
+    /// behavior — while an explicit one is validated against them, so a
+    /// payload can no longer claim `Filled` with a positive remainder or
+    /// `PartiallyFilled` without trades.
     #[serde(default)]
-    outcome: MatchOutcome,
+    outcome: Option<MatchOutcome>,
 }
 
 impl TryFrom<MatchResultWire> for MatchResult {
     type Error = PriceLevelError;
 
     fn try_from(wire: MatchResultWire) -> Result<Self, Self::Error> {
+        let outcome = wire.outcome.unwrap_or({
+            // Legacy payload (no outcome key): re-derive the benign
+            // classification exactly as the pre-outcome accessors did. A
+            // killed / rejected outcome cannot be recovered — it is
+            // indistinguishable from NotFilled once the trades are gone.
+            if wire.remaining_quantity == 0 {
+                MatchOutcome::Filled
+            } else if wire.trades.is_empty() {
+                MatchOutcome::NotFilled
+            } else {
+                MatchOutcome::PartiallyFilled
+            }
+        });
         MatchResult {
             order_id: wire.order_id,
             trades: wire.trades,
             remaining_quantity: wire.remaining_quantity,
             is_complete: wire.is_complete,
             filled_order_ids: wire.filled_order_ids,
-            outcome: wire.outcome,
+            outcome,
         }
         .validated()
     }
@@ -198,8 +214,19 @@ impl MatchResult {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the trade's quantity
     /// exceeds the remaining quantity of the incoming order (the subtraction
-    /// would underflow), which indicates an over-fill bug in the caller.
+    /// would underflow), which indicates an over-fill bug in the caller, or if
+    /// the trade's taker order id differs from this result's incoming order id
+    /// (a trade can only belong to the taker that initiated the match).
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
+        if trade.taker_order_id() != self.order_id {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade taker order id {} does not match the result's incoming order id {}",
+                    trade.taker_order_id(),
+                    self.order_id
+                ),
+            });
+        }
         self.remaining_quantity = self
             .remaining_quantity
             .checked_sub(trade.quantity().as_u64())
@@ -453,35 +480,82 @@ impl MatchResult {
             });
         }
 
-        // 3. A killed / rejected result carries no trades and no filled ids.
-        if matches!(self.outcome, MatchOutcome::Killed | MatchOutcome::Rejected)
-            && (!self.trades.is_empty() || !self.filled_order_ids.is_empty())
-        {
+        // 3. The explicit outcome agrees with the fields it classifies. Every
+        //    public constructor / mutator keeps them in lockstep, so a decoded
+        //    value must too (a legacy payload without an outcome key has it
+        //    DERIVED from these same fields before this check, so it always
+        //    passes here).
+        let outcome_consistent = match self.outcome {
+            // Vacuously-complete results (zero-quantity taker) are Filled with
+            // no trades, so Filled constrains only the remainder.
+            MatchOutcome::Filled => self.remaining_quantity == 0,
+            MatchOutcome::PartiallyFilled => self.remaining_quantity > 0 && !self.trades.is_empty(),
+            MatchOutcome::NotFilled => self.remaining_quantity > 0 && self.trades.is_empty(),
+            // Killed / rejected takers were turned away whole: quantity
+            // remains, and no trade or filled id was ever recorded.
+            MatchOutcome::Killed | MatchOutcome::Rejected => {
+                self.remaining_quantity > 0
+                    && self.trades.is_empty()
+                    && self.filled_order_ids.is_empty()
+            }
+        };
+        if !outcome_consistent {
             return Err(PriceLevelError::InvalidOperation {
                 message: format!(
-                    "{:?} outcome must carry no trades and no filled_order_ids \
-                     (found {} trade(s), {} filled id(s))",
+                    "{:?} outcome contradicts the decoded fields \
+                     (remaining_quantity {}, {} trade(s), {} filled id(s))",
                     self.outcome,
+                    self.remaining_quantity,
                     self.trades.len(),
                     self.filled_order_ids.len()
                 ),
             });
         }
 
-        // 4. Every filled id is backed by a trade whose maker it is.
+        // 4. Every trade belongs to this result's incoming (taker) order —
+        //    mirrored by the same guard in `add_trade`, so decoded and
+        //    API-built values stay aligned.
+        if let Some(alien) = self
+            .trades
+            .as_vec()
+            .iter()
+            .find(|trade| trade.taker_order_id() != self.order_id)
+        {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "trade taker order id {} does not match the result's incoming order id {}",
+                    alien.taker_order_id(),
+                    self.order_id
+                ),
+            });
+        }
+
+        // 5. The filled ids are a duplicate-free, order-preserving subsequence
+        //    of the trade maker ids: `match_order` records each fully-consumed
+        //    maker exactly once, immediately after its final trade, so trade
+        //    order and filled-id order agree. The `any` on the shared iterator
+        //    advances it past each match, which is exactly subsequence
+        //    semantics (and implies plain membership).
         if !self.filled_order_ids.is_empty() {
-            let makers: std::collections::HashSet<Id> = self
+            let mut seen = std::collections::HashSet::with_capacity(self.filled_order_ids.len());
+            let mut makers = self
                 .trades
                 .as_vec()
                 .iter()
-                .map(|trade| trade.maker_order_id())
-                .collect();
-            if let Some(missing) = self.filled_order_ids.iter().find(|id| !makers.contains(id)) {
-                return Err(PriceLevelError::InvalidOperation {
-                    message: format!(
-                        "filled order id {missing} does not appear as a maker in any trade"
-                    ),
-                });
+                .map(|trade| trade.maker_order_id());
+            for filled in &self.filled_order_ids {
+                if !seen.insert(*filled) {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!("filled order id {filled} appears more than once"),
+                    });
+                }
+                if !makers.by_ref().any(|maker| maker == *filled) {
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!(
+                            "filled order id {filled} is not an in-order maker of the trades"
+                        ),
+                    });
+                }
             }
         }
 

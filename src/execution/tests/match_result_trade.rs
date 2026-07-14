@@ -638,6 +638,106 @@ mod tests {
         }
     }
 
+    /// An explicit outcome that contradicts the decoded fields is rejected:
+    /// `Filled` with a positive remainder, `PartiallyFilled` with a zero
+    /// remainder or without trades, `NotFilled` with trades, and a complete
+    /// (zero-remainder) `Killed` / `Rejected`.
+    #[test]
+    fn deserialize_rejects_contradictory_explicit_outcome() {
+        let mut partial = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(partial.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        let empty = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        let complete = MatchResult::new(Id::from_u64(10), Quantity::new(0));
+
+        // Filled with a positive remainder.
+        let json = mutated_json(&partial, |v| {
+            v["outcome"] = serde_json::json!("filled");
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+        // PartiallyFilled with zero remainder / no trades.
+        let json = mutated_json(&complete, |v| {
+            v["outcome"] = serde_json::json!("partially_filled");
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+        let json = mutated_json(&empty, |v| {
+            v["outcome"] = serde_json::json!("partially_filled");
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+        // NotFilled with trades present.
+        let json = mutated_json(&partial, |v| {
+            v["outcome"] = serde_json::json!("not_filled");
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+        // A complete, empty Killed / Rejected (turned-away takers keep their
+        // full quantity).
+        for outcome in ["killed", "rejected"] {
+            let json = mutated_json(&complete, |v| {
+                v["outcome"] = serde_json::json!(outcome);
+            });
+            assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+        }
+    }
+
+    /// A legacy payload without an outcome key derives the benign
+    /// classification from the other fields instead of being rejected.
+    #[test]
+    fn deserialize_legacy_payload_without_outcome_derives() {
+        let mut partial = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(partial.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        let json = mutated_json(&partial, |v| {
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("outcome");
+            }
+        });
+        let decoded = match serde_json::from_str::<MatchResult>(&json) {
+            Ok(decoded) => decoded,
+            Err(err) => panic!("legacy payload must decode: {err}"),
+        };
+        assert_eq!(decoded.outcome(), MatchOutcome::PartiallyFilled);
+    }
+
+    /// A trade whose taker order id differs from the result's incoming order id
+    /// is rejected at decode time and by `add_trade`.
+    #[test]
+    fn taker_identity_enforced_on_decode_and_add_trade() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+
+        let json = mutated_json(&base, |v| {
+            v["order_id"] = serde_json::json!(Id::from_u64(999));
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+
+        // add_trade mirrors the guard: sample trades carry taker id 10.
+        let mut mismatched = MatchResult::new(Id::from_u64(999), Quantity::new(100));
+        assert!(
+            mismatched
+                .add_trade(sample_trade_with_maker(20, 40))
+                .is_err()
+        );
+    }
+
+    /// Duplicate or out-of-order filled ids are rejected: the engine records
+    /// each fully-consumed maker exactly once, in trade order.
+    #[test]
+    fn deserialize_rejects_duplicate_or_out_of_order_filled_ids() {
+        let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
+        assert!(base.add_trade(sample_trade_with_maker(21, 60)).is_ok());
+        base.add_filled_order_id(Id::from_u64(20));
+        base.add_filled_order_id(Id::from_u64(21));
+
+        let json = mutated_json(&base, |v| {
+            v["filled_order_ids"] = serde_json::json!([Id::from_u64(20), Id::from_u64(20)]);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+
+        let json = mutated_json(&base, |v| {
+            v["filled_order_ids"] = serde_json::json!([Id::from_u64(21), Id::from_u64(20)]);
+        });
+        assert!(serde_json::from_str::<MatchResult>(&json).is_err());
+    }
+
     /// Build a valid `MatchResult` purely through the public API from a seed, so
     /// every invariant `validated` checks holds by construction: `add_trade`
     /// keeps `is_complete` / `remaining` / `outcome` in lockstep, and each
@@ -645,6 +745,10 @@ mod tests {
     fn build_valid_result(initial: u64, specs: &[(u64, u64, bool)]) -> MatchResult {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(initial));
         let mut remaining = initial;
+        // A fully-consumed maker is recorded in filled_order_ids exactly once
+        // (the engine removes it from the queue), so the generator must not
+        // fill the same maker twice — the validator rejects duplicates.
+        let mut filled = std::collections::HashSet::new();
         for &(maker, raw_qty, fill) in specs {
             if remaining == 0 {
                 break;
@@ -656,7 +760,7 @@ mod tests {
                 .is_ok()
             {
                 remaining -= qty;
-                if fill {
+                if fill && filled.insert(maker) {
                     result.add_filled_order_id(Id::from_u64(maker));
                 }
             }
