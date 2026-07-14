@@ -394,15 +394,22 @@ impl OrderQueue {
                     // needs no lock protection. The other actions commit their
                     // queue mutations here, under the lock, as before.
                     let mut park_seq: Option<u64> = None;
+                    // The order swapped OUT of the slot by a partial fill /
+                    // replenish, captured with `mem::replace` and dropped only
+                    // AFTER the entry lock is released (issue #128), so a
+                    // last-reference deallocation never runs under the shard lock.
+                    let mut evicted: Option<Arc<OrderType<()>>> = None;
                     // Every arm releases the entry lock by the time it finishes
                     // (either `occupied.remove()` consumes it, or an explicit
-                    // `drop`), so the deferred `set_aside` insert below never runs
-                    // under the shard lock.
+                    // `drop`), so the deferred `set_aside` insert and the evicted
+                    // order's drop below never run under the shard lock.
                     match &action {
                         FrontAction::Remove => {
                             // Full consume: remove the entry under the lock, then
                             // drop its index entry. A cancel cannot also remove it
                             // (the entry is gone), so no double counter decrement.
+                            // `remove` consumes the guard, releasing the lock
+                            // before the removed value is dropped.
                             let _ = occupied.remove();
                             self.index.remove(&seq);
                         }
@@ -410,7 +417,10 @@ impl OrderQueue {
                             // Partial fill keeping priority: swap the stored value
                             // to the residual in place, keeping the same
                             // sequence/index entry. Still under the entry lock.
-                            occupied.get_mut().1 = residual.clone();
+                            evicted = Some(std::mem::replace(
+                                &mut occupied.get_mut().1,
+                                residual.clone(),
+                            ));
                             drop(occupied);
                         }
                         FrontAction::ReplaceAtTail(refreshed) => {
@@ -425,7 +435,7 @@ impl OrderQueue {
                             {
                                 let slot = occupied.get_mut();
                                 slot.0 = new_seq;
-                                slot.1 = refreshed.clone();
+                                evicted = Some(std::mem::replace(&mut slot.1, refreshed.clone()));
                             }
                             // `occupied` still holds the per-entry lock here, so
                             // re-keying the index — a different structure
@@ -454,10 +464,12 @@ impl OrderQueue {
                     }
 
                     // The entry lock is released on every arm above; a
-                    // possibly-allocating scratch-set insert now runs unlocked.
+                    // possibly-allocating scratch-set insert and the evicted
+                    // order's drop now run unlocked.
                     if let Some(seq) = park_seq {
                         set_aside.insert(seq);
                     }
+                    drop(evicted);
 
                     return FrontOutcome::Matched { result };
                 }
@@ -515,19 +527,25 @@ impl OrderQueue {
                     order_id,
                     "update_entry: the decided order must keep the id it is stored under"
                 );
-                let committed = match decision {
+                // Each arm swaps the new order into the slot with `mem::replace`,
+                // capturing the OLD `Arc` in `evicted` (issue #128). The old Arc
+                // is dropped only AFTER the entry lock is released below, so if
+                // the queue held the last reference, its deallocation never runs
+                // inside the shard's critical section.
+                let (committed, evicted) = match decision {
                     UpdateDecision::KeepInPlace(new_order) => {
-                        occupied.get_mut().1 = new_order.clone();
-                        new_order
+                        let evicted =
+                            std::mem::replace(&mut occupied.get_mut().1, new_order.clone());
+                        (new_order, evicted)
                     }
                     UpdateDecision::ReplaceAtTail(new_order) => {
                         let new_seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-                        let old_seq = {
+                        let (old_seq, evicted) = {
                             let slot = occupied.get_mut();
                             let old_seq = slot.0;
                             slot.0 = new_seq;
-                            slot.1 = new_order.clone();
-                            old_seq
+                            let evicted = std::mem::replace(&mut slot.1, new_order.clone());
+                            (old_seq, evicted)
                         };
                         // Re-key NEW-KEY-FIRST (issue #127): insert the new
                         // sequence before removing the old one, so the id is
@@ -538,9 +556,12 @@ impl OrderQueue {
                         // (the stored sequence is already `new_seq`).
                         self.index.insert(new_seq, order_id);
                         self.index.remove(&old_seq);
-                        new_order
+                        (new_order, evicted)
                     }
                 };
+                // Release the shard lock, THEN drop the evicted order.
+                drop(occupied);
+                drop(evicted);
                 Some(Ok(committed))
             }
         }

@@ -7840,21 +7840,30 @@ mod tests {
     #[test]
     fn test_update_vs_match_iceberg_stays_consistent() {
         // An iceberg maker races a matcher (drawing visible, replenishing from
-        // hidden) against an updater (resizing visible). Invariants: never
-        // panics; hidden never exceeds its pre-race value (an update preserves
-        // live hidden, a match only draws it down — it is never resurrected);
-        // and the level stays consistent (counters == queue == snapshot).
+        // hidden) against an updater (resizing visible). #115 derives the resized
+        // order from the LIVE maker under the entry lock, so hidden is NEVER
+        // resurrected: while the maker rests, its hidden depth is MONOTONICALLY
+        // NON-INCREASING (a match only draws it down; an update preserves it,
+        // never restores a stale higher value). The pre-#115 stale-pre-read code
+        // wrote back a stale hidden after a concurrent match drew it down,
+        // producing an INCREASE this test's strict monotonic assertion catches.
+        //
+        // The matcher runs a FIXED number of matches (so it can never run zero
+        // times) and signals `done` at the end, while the updater resizes for the
+        // whole race; we also assert the matcher committed real fills, so the
+        // race is genuinely exercised rather than trivially satisfied.
         use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
         use std::sync::{Arc as StdArc, Barrier};
         use std::thread;
 
-        const INITIAL_HIDDEN: u64 = 400;
-        const UPDATE_ROUNDS: usize = 200;
+        const INITIAL_HIDDEN: u64 = 4_000;
+        const VISIBLE: u64 = 20;
+        const MATCH_ITERS: usize = 500;
 
         for iter in 0..25 {
             let level = StdArc::new(PriceLevel::new(10_000));
             level
-                .add_order(create_buy_iceberg_order(1, 10_000, 20, INITIAL_HIDDEN))
+                .add_order(create_buy_iceberg_order(1, 10_000, VISIBLE, INITIAL_HIDDEN))
                 .expect("seed iceberg");
             let id = Id::from_u64(1);
             let barrier = StdArc::new(Barrier::new(2));
@@ -7866,14 +7875,17 @@ mod tests {
                 let done = StdArc::clone(&done);
                 thread::spawn(move || {
                     barrier.wait();
-                    for r in 0..UPDATE_ROUNDS {
-                        let new_visible = 5 + (r as u64 % 30);
+                    // Resize continuously until the matcher is done, so an update
+                    // races every stage of the drain (not a fixed short burst).
+                    let mut r = 0u64;
+                    while !done.load(AtomicOrdering::Acquire) {
+                        let new_visible = 5 + (r % 30);
                         let _ = level.update_order(OrderUpdate::UpdateQuantity {
                             order_id: id,
                             new_quantity: Quantity::new(new_visible),
                         });
+                        r += 1;
                     }
-                    done.store(true, AtomicOrdering::Release);
                 })
             };
             let matcher = {
@@ -7883,9 +7895,10 @@ mod tests {
                 thread::spawn(move || {
                     barrier.wait();
                     let generator = UuidGenerator::new(Uuid::from_u128(0xF00D_0000 + iter as u128));
-                    let mut max_hidden = 0u64;
-                    while !done.load(AtomicOrdering::Acquire) {
-                        let _ = level.match_order(
+                    let mut committed = 0usize;
+                    let mut prev_hidden = u64::MAX;
+                    for _ in 0..MATCH_ITERS {
+                        let result = level.match_order(
                             3,
                             Id::from_u64(999),
                             TimeInForce::Gtc,
@@ -7893,25 +7906,36 @@ mod tests {
                             TimestampMs::new(1_700_000_000_000),
                             &generator,
                         );
-                        // Sample the resting maker's hidden depth (if any).
+                        if result.executed_quantity().map(|q| q.as_u64()).unwrap_or(0) > 0 {
+                            committed += 1;
+                        }
+                        // Sample the resting maker's hidden depth; it must never
+                        // rise across the race (strict, tight enough that a
+                        // pre-#115 resurrection would fail here).
                         if let Some(o) = level
                             .snapshot_by_insertion_seq()
                             .into_iter()
                             .find(|o| o.id() == id)
                         {
-                            max_hidden = max_hidden.max(o.hidden_quantity().as_u64());
+                            let h = o.hidden_quantity().as_u64();
+                            assert!(
+                                h <= prev_hidden,
+                                "iter {iter}: hidden rose {prev_hidden} -> {h} (resurrection; #115 regression)"
+                            );
+                            prev_hidden = h;
                         }
                     }
-                    max_hidden
+                    done.store(true, AtomicOrdering::Release);
+                    committed
                 })
             };
 
+            let committed = matcher.join().expect("matcher panicked");
             updater.join().expect("updater panicked");
-            let max_hidden = matcher.join().expect("matcher panicked");
 
             assert!(
-                max_hidden <= INITIAL_HIDDEN,
-                "iter {iter}: hidden {max_hidden} exceeded its pre-race value {INITIAL_HIDDEN} (resurrection)"
+                committed >= 1,
+                "iter {iter}: matcher committed no fills — the race was not exercised"
             );
             assert_counters_match_queue(&level);
         }
