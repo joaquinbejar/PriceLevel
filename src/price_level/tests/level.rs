@@ -5688,6 +5688,51 @@ mod tests {
     }
 
     #[test]
+    fn test_price_level_data_roundtrip_preserves_demotion_order() {
+        // Issue #131: the plain serde path (PriceLevelData) previously built
+        // its orders from the UNORDERED DashMap iterator, so a round-trip
+        // scrambled price-time priority — the exact property the snapshot
+        // package has preserved since #109. It now materializes in
+        // consumption order and TryFrom re-admits in vector order.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("admission");
+        level
+            .add_order(create_standard_order(2, 10_000, 100))
+            .expect("admission");
+        level
+            .add_order(create_standard_order(3, 10_000, 100))
+            .expect("admission");
+        // Upsize maker 1: demoted to the tail with its original timestamp,
+        // so only consumption order (not timestamp order) captures it.
+        let updated = level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(1),
+                new_quantity: Quantity::new(150),
+            })
+            .expect("upsize update should succeed");
+        assert!(updated.is_some(), "maker 1 must still be present");
+
+        let data = PriceLevelData::from(&level);
+        let json = serde_json::to_string(&data).expect("serialize PriceLevelData");
+        let decoded: PriceLevelData =
+            serde_json::from_str(&json).expect("deserialize PriceLevelData");
+        let restored = PriceLevel::try_from(decoded).expect("re-admission must succeed");
+
+        let restored_ids: Vec<Id> = restored
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            restored_ids,
+            vec![Id::from_u64(2), Id::from_u64(3), Id::from_u64(1)],
+            "PriceLevelData round-trip must preserve the demoted consumption order"
+        );
+    }
+
+    #[test]
     fn test_snapshot_restore_preserves_upsize_demotion() {
         // Issue #109: sizing an order up demotes it to the back of the queue
         // (remove+push mints a fresh insertion sequence) while keeping its
