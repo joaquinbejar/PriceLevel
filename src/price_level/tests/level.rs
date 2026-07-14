@@ -253,7 +253,7 @@ mod tests {
             .expect("add_order should succeed");
 
         let snapshot = price_level.snapshot();
-        let restored = PriceLevel::from(&snapshot);
+        let restored = PriceLevel::try_from(&snapshot).expect("valid snapshot restores");
 
         let original_orders = price_level.snapshot_orders();
         let restored_orders = restored.snapshot_orders();
@@ -6796,6 +6796,79 @@ mod tests {
             ),
             "from_snapshot_json must reject a duplicate-id snapshot"
         );
+    }
+
+    #[test]
+    fn test_add_order_duplicate_id_at_counter_capacity_returns_duplicate() {
+        // Finding 2 (PR #125): admission decides id IDENTITY before reserving
+        // any counter, so a duplicate id submitted when the level's visible
+        // counter is already at u64::MAX reports DuplicateOrderId — NOT a
+        // spurious visible-overflow InvalidOperation — and leaves every counter
+        // byte-identical (no transient inflation an overflow-first order would
+        // cause).
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, u64::MAX))
+            .expect("first admission fills the visible counter to u64::MAX");
+        assert_eq!(level.visible_quantity(), u64::MAX);
+
+        let before_json = level.snapshot_to_json().expect("snapshot before");
+
+        // Re-submit id 1 with a positive quantity: reserving it WOULD overflow
+        // the visible counter, but the duplicate id takes precedence.
+        match level.add_order(create_standard_order(1, 10_000, 100)) {
+            Err(PriceLevelError::DuplicateOrderId(id)) => {
+                assert_eq!(id, Id::from_u64(1).to_string());
+            }
+            other => {
+                panic!("expected DuplicateOrderId (identity before counters), got {other:?}")
+            }
+        }
+
+        // Byte-identical: counters, count, and snapshot unchanged.
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.hidden_quantity(), 0);
+        assert_eq!(level.order_count(), 1);
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before_json,
+            "a duplicate at counter capacity must leave the level byte-identical"
+        );
+    }
+
+    #[test]
+    fn test_try_from_snapshot_propagates_duplicate_order_id() {
+        // Finding 3 (PR #125): the infallible `From<&PriceLevelSnapshot>` (which
+        // silently kept-first on a duplicate id while restoring counters over
+        // every copy) is replaced by `TryFrom`, which delegates to
+        // `from_snapshot` and propagates DuplicateOrderId.
+        let dup_a = std::sync::Arc::new(create_standard_order(7, 10_000, 100));
+        let dup_b = std::sync::Arc::new(create_standard_order(7, 10_000, 50));
+        let snapshot = crate::price_level::PriceLevelSnapshot::with_orders(
+            Price::new(10_000),
+            vec![dup_a, dup_b],
+        )
+        .expect("snapshot construction must succeed");
+
+        match PriceLevel::try_from(&snapshot) {
+            Err(PriceLevelError::DuplicateOrderId(id)) => {
+                assert_eq!(id, Id::from_u64(7).to_string());
+            }
+            other => panic!("expected DuplicateOrderId from TryFrom<&Snapshot>, got {other:?}"),
+        }
+
+        // A duplicate-free snapshot restores successfully through TryFrom.
+        let ok_snapshot = crate::price_level::PriceLevelSnapshot::with_orders(
+            Price::new(10_000),
+            vec![
+                std::sync::Arc::new(create_standard_order(1, 10_000, 10)),
+                std::sync::Arc::new(create_standard_order(2, 10_000, 20)),
+            ],
+        )
+        .expect("snapshot construction must succeed");
+        let restored = PriceLevel::try_from(&ok_snapshot).expect("distinct ids restore");
+        assert_eq!(restored.order_count(), 2);
+        assert_eq!(restored.visible_quantity(), 30);
     }
 }
 

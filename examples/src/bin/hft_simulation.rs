@@ -138,8 +138,18 @@ fn main() {
 
             let mut local_counter = 0;
             while thread_running.load(Ordering::Relaxed) {
-                // Generate a unique taker order ID
-                let taker_id = Id::from_u64((thread_id as u64) * 1_000_000 + local_counter);
+                // Generate a unique taker order ID in a DISJOINT high range so a
+                // taker id can never collide with a resting maker id. Makers use
+                // `(thread_id + 1) * 1_000_000 + counter`, so taker thread 10's
+                // base (`10 * 1_000_000`) would otherwise land exactly on maker
+                // thread 9's base (`(9 + 1) * 1_000_000`). A taker sharing a
+                // resting maker's id is a self-fill — impossible for a real
+                // order and caught by match_order's debug-only self-fill
+                // assertion. Offsetting by `1 << 40` (~1.1e12, far above any
+                // reachable maker id) keeps the two id spaces apart, matching
+                // contention_test.
+                let taker_id =
+                    Id::from_u64((1u64 << 40) + (thread_id as u64) * 1_000_000 + local_counter);
 
                 // Match varying quantities
                 let quantity = (local_counter % 5) + 1; // Match 1-5 units

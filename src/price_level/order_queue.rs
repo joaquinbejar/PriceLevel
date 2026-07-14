@@ -97,7 +97,13 @@ impl OrderQueue {
     /// id may collide with a live order, use [`OrderQueue::try_push`], which
     /// rejects the duplicate instead of overwriting it (leaving the id-keyed map
     /// and the ordered index disagreeing).
-    pub fn push(&self, order: Arc<OrderType<()>>) {
+    ///
+    /// `pub(crate)`: overwriting publication is never safe to expose — a caller
+    /// that reused a live id would silently replace the resting order and strand
+    /// its old index entry. Admission goes through [`OrderQueue::try_push`] /
+    /// [`OrderQueue::try_push_with`]; this stays available only to the in-crate
+    /// upsize re-insert, whose id is provably absent at the call site.
+    pub(crate) fn push(&self, order: Arc<OrderType<()>>) {
         // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
         // counter matter. The happens-before ordering between concurrent
         // producers/consumers is provided by the lock-free `index`/`orders`
@@ -111,20 +117,12 @@ impl OrderQueue {
     /// Insert an order only if its id is not already present — the admission
     /// primitive.
     ///
-    /// Uses the `DashMap` entry API so the insert-if-absent decision is atomic
-    /// under the per-shard lock: given several concurrent submissions of the
-    /// same id, exactly one observes `Vacant` and inserts; every other observes
-    /// `Occupied` and is rejected with
-    /// [`PriceLevelError::DuplicateOrderId`], leaving the map value, the index,
-    /// and the sequence counter untouched. A duplicate admitted through this
-    /// method therefore can never produce the two-sequences-for-one-id state
-    /// that a blind [`OrderQueue::push`] would. (The quantity-increase update
-    /// path still vacates the id across its remove-then-push re-insert; that
-    /// residual window is closed by the atomic re-sequencing work in #119.)
-    ///
-    /// The insertion sequence is minted **inside** the `Vacant` arm, so a
-    /// rejected duplicate does not consume a sequence (no gaps) and the index
-    /// entry is added only for the order that actually landed in the map.
+    /// Thin wrapper over the crate-internal `try_push_with` with a no-op
+    /// reservation: the id-uniqueness, held-lock publication, and
+    /// no-sequence-gap guarantees documented there all apply. Use this when
+    /// publication has no side effects to commit atomically with it; the
+    /// reservation-hook form commits a caller-side reservation (e.g. the level's
+    /// atomic counters) under the same shard lock that decides the id is free.
     ///
     /// # Errors
     ///
@@ -132,15 +130,82 @@ impl OrderQueue {
     /// id already rests in the queue.
     #[must_use = "a rejected duplicate must be handled, not ignored"]
     pub fn try_push(&self, order: Arc<OrderType<()>>) -> Result<(), PriceLevelError> {
+        self.try_push_with(order, || Ok(()))
+    }
+
+    /// Insert an order only if its id is absent, committing a caller-supplied
+    /// `reserve` step **atomically with the publication** — the admission
+    /// primitive with a reservation hook.
+    ///
+    /// The `DashMap` entry API makes the whole operation atomic under the
+    /// per-shard lock:
+    ///
+    /// 1. **Identity is decided first.** An `Occupied` entry means the id
+    ///    already rests here: return [`PriceLevelError::DuplicateOrderId`]
+    ///    with **nothing touched** — `reserve` is never run, no sequence is
+    ///    minted, no counter moves. This is why a duplicate can never leave a
+    ///    transient side effect (e.g. an inflated level counter) for another
+    ///    thread to observe, and why a duplicate at counter capacity reports
+    ///    `DuplicateOrderId` rather than a spurious overflow.
+    /// 2. **Then `reserve` runs**, still under the shard lock, now that the id
+    ///    is known free. If it returns `Err`, propagate it with nothing
+    ///    inserted — the caller is responsible for leaving its own state
+    ///    unchanged on `Err` (e.g. rolling back a partial multi-counter
+    ///    reservation before returning).
+    /// 3. **Then publish, holding the shard lock across the index insert.** The
+    ///    map value is inserted (its returned guard keeps the shard write lock),
+    ///    the `seq -> id` index entry is added while that guard is still held,
+    ///    and only then is the guard dropped. Holding the lock across both
+    ///    publications closes the window where the lock released after the map
+    ///    insert but before the index insert: a concurrent cancel + same-id
+    ///    readmission could otherwise land its own entries and let this call's
+    ///    stale index insert produce two index entries for one id. This is the
+    ///    same held-lock shape [`OrderQueue::match_front`]'s `ReplaceAtTail`
+    ///    uses. `self.index` is a separate structure (`SkipMap`), so inserting
+    ///    into it under the `DashMap` shard lock cannot deadlock.
+    ///
+    /// The insertion sequence is minted **inside** the `Vacant` arm, after
+    /// `reserve` succeeds, so neither a rejected duplicate nor a failed
+    /// reservation consumes a sequence (no gaps) and the index entry is added
+    /// only for the order that actually landed in the map.
+    ///
+    /// `reserve` runs while the shard lock is held, so it MUST NOT call back
+    /// into this queue (that would deadlock on the same shard) and MUST NOT
+    /// block; the level's counter reservations (plain atomic RMWs) satisfy both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::DuplicateOrderId`] if an order with the same
+    /// id already rests in the queue, or whatever error `reserve` returns.
+    #[must_use = "a rejected admission must be handled, not ignored"]
+    pub(crate) fn try_push_with<F>(
+        &self,
+        order: Arc<OrderType<()>>,
+        reserve: F,
+    ) -> Result<(), PriceLevelError>
+    where
+        F: FnOnce() -> Result<(), PriceLevelError>,
+    {
         let order_id = order.id();
         match self.orders.entry(order_id) {
             Entry::Occupied(_) => Err(PriceLevelError::DuplicateOrderId(order_id.to_string())),
             Entry::Vacant(slot) => {
-                // Mint the sequence only now that we know the id is free, so a
-                // rejected duplicate leaves the counter (and the index) alone.
+                // Identity is already decided (this arm means the id is free).
+                // Run the caller's reservation before publishing; on failure
+                // nothing has been inserted and no sequence minted, so the
+                // level stays byte-identical once the caller unwinds its own
+                // partial reservation.
+                reserve()?;
+                // Mint the sequence only now that the id is free and the
+                // reservation committed, so neither a rejected duplicate nor a
+                // failed reservation leaves a gap in the sequence.
                 let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-                slot.insert((seq, order));
+                // Hold the shard lock across BOTH publications: the map insert
+                // returns a guard that keeps the lock, the index entry is added
+                // while it is held, and only then is the guard dropped.
+                let guard = slot.insert((seq, order));
                 self.index.insert(seq, order_id);
+                drop(guard);
                 Ok(())
             }
         }
@@ -387,6 +452,31 @@ impl OrderQueue {
         Some(order)
     }
 
+    /// Test-only invariant check: the id-keyed map and the ordered index are
+    /// **1:1**. Must be called only at quiescence (no concurrent mutation), when
+    /// every in-flight operation has completed.
+    ///
+    /// Verifies there are exactly as many index entries as map entries and that
+    /// every index entry `seq -> id` points to a map entry whose stored sequence
+    /// is exactly `seq`. A split index entry (two sequences for one id — the
+    /// publication-race bug closed by [`OrderQueue::try_push_with`] holding the
+    /// shard lock across both publications) makes the index longer than the map,
+    /// so this returns `false`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn debug_map_index_consistent(&self) -> bool {
+        if self.index.len() != self.orders.len() {
+            return false;
+        }
+        self.index.iter().all(|entry| {
+            let seq = *entry.key();
+            let id = *entry.value();
+            self.orders
+                .get(&id)
+                .is_some_and(|slot| slot.value().0 == seq)
+        })
+    }
+
     /// Iterate through current orders without materializing an intermediate vector.
     pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
         self.orders.iter().map(|entry| entry.value().1.clone())
@@ -495,9 +585,16 @@ impl OrderQueue {
     /// ordered index always stay 1:1. Callers that must *reject* a
     /// duplicate-bearing vector (e.g. snapshot restore) validate uniqueness
     /// upstream where a `Result` can be returned.
+    ///
+    /// `pub(crate)`: a keep-first constructor that silently drops duplicates is
+    /// not a safe public entry point (a caller could restore counters computed
+    /// over a copy the queue then discards). The public path is
+    /// [`PriceLevel::from_snapshot`](crate::price_level::PriceLevel), which
+    /// rejects duplicates; this stays crate-internal for tests and the
+    /// upstream-validated restore.
     #[allow(dead_code)]
     #[must_use]
-    pub fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
+    pub(crate) fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
         let queue = OrderQueue::new();
         for order in orders {
             // Keep-first on a duplicate id: the index must stay 1:1.
