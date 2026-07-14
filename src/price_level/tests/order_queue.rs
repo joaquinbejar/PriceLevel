@@ -610,4 +610,153 @@ mod tests {
             assert!(queue.is_empty(), "iter {iter}: queue must fully drain");
         }
     }
+
+    #[test]
+    fn test_resequence_vs_front_scan_never_empty() {
+        // Issue #127 🔴: the index re-key inserts the new key BEFORE removing the
+        // old, so a resident maker is never transiently absent from the index. A
+        // front scan (`match_front`) racing continuous demotions of that maker
+        // must therefore NEVER return `Empty` — the liquidity is always resting.
+        // Under the old remove-then-insert order the maker vanished from the
+        // index between the two ops and a scan could miss it.
+        use crate::price_level::order_queue::{FrontAction, FrontOutcome};
+        use std::collections::HashSet;
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        let queue = StdArc::new(OrderQueue::new());
+        // The single resident maker (id 1) never leaves the queue.
+        queue.push(StdArc::new(create_test_order(1, 1_000, 100)));
+        let done = StdArc::new(AtomicBool::new(false));
+
+        let demoter = {
+            let queue = StdArc::clone(&queue);
+            let done = StdArc::clone(&done);
+            thread::spawn(move || {
+                while !done.load(Ordering::Relaxed) {
+                    // Demote the resident maker to a fresh tail sequence, over and
+                    // over. It stays resident the whole time.
+                    let _ = queue.resequence_to_tail(
+                        Id::from_u64(1),
+                        StdArc::new(create_test_order(1, 1_000, 100)),
+                    );
+                }
+            })
+        };
+
+        for _ in 0..200_000 {
+            let mut set_aside = HashSet::new();
+            // A no-op probe: whatever the front is, park it (leaves it resting)
+            // and report we found one. The maker always rests, so this must be
+            // `Matched`, never `Empty`.
+            let outcome =
+                queue.match_front(&mut set_aside, |_seq, _order| (FrontAction::SetAside, ()));
+            assert!(
+                matches!(outcome, FrontOutcome::Matched { .. }),
+                "front scan returned Empty while the resident maker rests (issue #127)"
+            );
+        }
+
+        done.store(true, Ordering::Relaxed);
+        demoter.join().expect("demoter thread panicked");
+        assert_eq!(queue.len(), 1, "the resident maker still rests");
+        assert!(
+            queue.debug_map_index_consistent(),
+            "map and index must be 1:1 after the demotions"
+        );
+    }
+
+    #[test]
+    fn test_pop_entry_after_resequence_orders_last_and_drains_clean() {
+        // Issue #127 🔴: after a maker is demoted, `pop_entry` must return it
+        // LAST (at its new tail sequence), never early via a stale old key, and a
+        // full drain must leave BOTH the map and the ordered index empty.
+        let queue = OrderQueue::new();
+        queue.push(Arc::new(create_test_order(1, 1_000, 10))); // seq 0
+        queue.push(Arc::new(create_test_order(2, 1_000, 20))); // seq 1 (to demote)
+        queue.push(Arc::new(create_test_order(3, 1_000, 30))); // seq 2
+
+        let replaced =
+            queue.resequence_to_tail(Id::from_u64(2), Arc::new(create_test_order(2, 1_000, 25)));
+        assert!(replaced.is_some(), "the demoted maker was resident");
+        // New-before-old re-key leaves no stale old key: map and index are 1:1.
+        assert!(queue.debug_map_index_consistent());
+
+        let mut ids = Vec::new();
+        while let Some((_, order)) = queue.pop_entry() {
+            ids.push(order.id());
+        }
+        // FIFO by CURRENT sequence: 1, 3, then the demoted 2 LAST.
+        assert_eq!(
+            ids,
+            vec![Id::from_u64(1), Id::from_u64(3), Id::from_u64(2)],
+            "the demoted maker must pop last, never via its stale old key"
+        );
+        // Fully drained: map and index both empty (and consistent).
+        assert!(queue.is_empty());
+        assert!(
+            queue.debug_map_index_consistent(),
+            "no stale index entry may survive a full drain"
+        );
+    }
+
+    #[test]
+    fn test_pop_entry_vs_resequence_race_drains_each_once() {
+        // Issue #127 🔴: `pop_entry` validates the stored sequence against the
+        // popped key, so under continuous demotions racing a drain, every id
+        // comes out EXACTLY once (never twice via a stale old key, never lost),
+        // and the queue drains clean.
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        const N: u64 = 50;
+
+        for iter in 0..400 {
+            let queue = StdArc::new(OrderQueue::new());
+            for id in 1..=N {
+                queue.push(StdArc::new(create_test_order(id, 1_000, 10)));
+            }
+            let done = StdArc::new(AtomicBool::new(false));
+            let demoter = {
+                let queue = StdArc::clone(&queue);
+                let done = StdArc::clone(&done);
+                thread::spawn(move || {
+                    while !done.load(Ordering::Relaxed) {
+                        // Continuously demote a mid maker; once it is popped this
+                        // returns `None` (id gone) and simply spins.
+                        let _ = queue.resequence_to_tail(
+                            Id::from_u64(N / 2),
+                            StdArc::new(create_test_order(N / 2, 1_000, 10)),
+                        );
+                    }
+                })
+            };
+
+            let mut popped: Vec<Id> = Vec::new();
+            while let Some((_, order)) = queue.pop_entry() {
+                popped.push(order.id());
+            }
+
+            done.store(true, Ordering::Relaxed);
+            demoter.join().expect("demoter thread panicked");
+
+            let unique: std::collections::HashSet<Id> = popped.iter().copied().collect();
+            assert_eq!(
+                unique.len(),
+                popped.len(),
+                "iter {iter}: every id popped at most once (no stale-key double pop)"
+            );
+            assert_eq!(
+                popped.len() as u64,
+                N,
+                "iter {iter}: all ids drained exactly once (none lost)"
+            );
+            assert!(
+                queue.is_empty() && queue.debug_map_index_consistent(),
+                "iter {iter}: clean drain, map and index both empty"
+            );
+        }
+    }
 }
