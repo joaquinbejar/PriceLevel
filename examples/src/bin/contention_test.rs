@@ -100,12 +100,15 @@ fn test_read_write_ratio() {
                         // Write operation
                         match local_counter % 3 {
                             0 => {
-                                // Add a new order
+                                // Add a new order. Ids overlap across threads
+                                // once a counter exceeds 10000 (see the taker
+                                // comment below) and across ratio phases, so
+                                // since issue #113 a rejected duplicate is an
+                                // expected outcome here — deliberately ignored
+                                // to keep the write pressure going.
                                 let order_id = thread_id as u64 * 10000 + local_counter;
                                 let order = create_standard_order(order_id, 10000, 10);
-                                thread_price_level
-                                    .add_order(order)
-                                    .expect("add_order should succeed");
+                                let _ = thread_price_level.add_order(order);
                             }
                             1 => {
                                 // Match order. Takers live in a disjoint high id
@@ -304,11 +307,12 @@ fn test_hot_spot_contention() {
                     // Perform an operation based on iteration
                     match local_counter % 3 {
                         0 => {
-                            // Add a new order with same ID (this will likely fail, but creates contention)
+                            // Add a new order with same ID. Since issue #113 a
+                            // duplicate id is rejected with DuplicateOrderId —
+                            // an expected outcome in this contention pattern,
+                            // so the result is deliberately ignored.
                             let order = create_standard_order(order_idx, 10000, 10);
-                            thread_price_level
-                                .add_order(order)
-                                .expect("add_order should succeed");
+                            let _ = thread_price_level.add_order(order);
                         }
                         1 => {
                             // Cancel an order

@@ -50,9 +50,26 @@ impl PriceLevel {
     /// Returns [`PriceLevelError::InvalidOperation`] if any restored order's own
     /// visible + hidden total overflows `u64`, or if recomputing the snapshot's
     /// level aggregates overflows `u64` — the same per-order and per-level
-    /// invariants [`Self::add_order`] enforces at admission.
+    /// invariants [`Self::add_order`] enforces at admission — or
+    /// [`PriceLevelError::DuplicateOrderId`] if the snapshot's orders vector
+    /// repeats an order id.
     pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
+
+        // Reject a snapshot whose orders vector repeats an id. Building the
+        // queue would drop the duplicate (keep-first), but the reconstructed
+        // counters are taken from the snapshot's own aggregates / order count,
+        // so a silently-dropped duplicate would leave the restored level's
+        // counters disagreeing with its queue. Fail deterministically instead.
+        {
+            let orders = snapshot.orders();
+            let mut seen = std::collections::HashSet::with_capacity(orders.len());
+            for order in orders {
+                if !seen.insert(order.id()) {
+                    return Err(PriceLevelError::DuplicateOrderId(order.id().to_string()));
+                }
+            }
+        }
 
         let order_count = snapshot.orders().len();
         let visible_quantity = snapshot.visible_quantity().as_u64();
@@ -99,8 +116,10 @@ impl PriceLevel {
     /// valid snapshot-package JSON document, [`PriceLevelError::ChecksumMismatch`]
     /// if the decoded package's SHA-256 checksum does not match its payload,
     /// [`PriceLevelError::SerializationError`] if re-encoding the payload to
-    /// recompute that checksum fails, and [`PriceLevelError::InvalidOperation`]
-    /// on an unsupported snapshot format version.
+    /// recompute that checksum fails, [`PriceLevelError::InvalidOperation`]
+    /// on an unsupported snapshot format version, and
+    /// [`PriceLevelError::DuplicateOrderId`] if the decoded snapshot's orders
+    /// vector repeats an order id.
     pub fn from_snapshot_json(data: &str) -> Result<Self, PriceLevelError> {
         let package = PriceLevelSnapshotPackage::from_json(data)?;
         Self::from_snapshot_package(package)
@@ -199,33 +218,50 @@ impl PriceLevel {
 
     /// Add an order to this price level.
     ///
-    /// Reserves the order's visible / hidden quantity and one count slot on the
-    /// atomic counters **before** publishing it to the queue, so an admission
-    /// that would overflow any counter is rejected with nothing mutated: the
-    /// queue, the counters, the statistics, and therefore any snapshot are left
-    /// exactly as they were. On success the returned `Arc` is the admitted
-    /// order.
+    /// Decides the order's id IDENTITY first, then reserves its visible /
+    /// hidden quantity and one count slot on the atomic counters **atomically
+    /// with publishing** it to the queue, so an admission that reuses the id of
+    /// an order already resting here — or that would overflow any counter — is
+    /// rejected with nothing mutated: the queue, the counters, the statistics,
+    /// and therefore any snapshot are left exactly as they were. On success the
+    /// returned `Arc` is the admitted order.
     ///
-    /// # Overflow safety
+    /// # Duplicate ids
     ///
-    /// Each counter is bumped with a checked [`AtomicU64::fetch_update`] /
-    /// [`AtomicUsize::fetch_update`] (`checked_add`), which is an atomic
-    /// compare-exchange loop and therefore free of the check-then-`fetch_add`
-    /// TOCTOU race two concurrent admissions near `u64::MAX` would otherwise
-    /// hit. Capacity is reserved in the order visible → hidden → count; if a
-    /// later reservation overflows, the earlier ones are rolled back (by the
-    /// exact delta this call added — a commutative, concurrency-safe undo on
-    /// these advisory counters) before returning, so no counter is ever left
-    /// drifted. Only once all three are reserved is the order published to the
-    /// queue, so the queue can never hold an order whose admission overflowed a
-    /// counter — the invariant this method now upholds.
+    /// Publication goes through
+    /// [`OrderQueue::try_push_with`](crate::price_level::OrderQueue) under the
+    /// id-keyed map's per-shard lock, which decides the id is free **before**
+    /// the counter reservation runs. Several concurrent submissions of the same
+    /// id therefore resolve to exactly one admission; the rest return
+    /// [`PriceLevelError::DuplicateOrderId`] **without touching any counter** —
+    /// a rejected duplicate never overwrites the live order (which would leave
+    /// the map and the ordered index disagreeing) and never transiently inflates
+    /// a level counter.
+    ///
+    /// # Error precedence
+    ///
+    /// The order's own `visible + hidden` overflow is checked first (a pure
+    /// property of the order). Then, under the shard lock, a **duplicate id is
+    /// decided before any counter is touched**: an admission that both reuses a
+    /// live id and would overflow a counter reports
+    /// [`PriceLevelError::DuplicateOrderId`], never the overflow. Only for a
+    /// free id is capacity reserved, visible → hidden → count, each with a
+    /// checked [`AtomicU64::fetch_update`] / [`AtomicUsize::fetch_update`]
+    /// (`checked_add`) — an atomic compare-exchange loop, free of the
+    /// check-then-`fetch_add` TOCTOU race two admissions near `u64::MAX` would
+    /// hit. If a later reservation overflows, the earlier ones are rolled back
+    /// (by the exact delta this call added — a commutative, concurrency-safe
+    /// undo on these advisory counters), so `try_push_with` publishes nothing
+    /// and no counter is left drifted.
     ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the order's own
     /// visible + hidden total overflows `u64`, or if admitting it would
     /// overflow the level's visible-quantity, hidden-quantity, or order-count
-    /// counter. In every case the level is unchanged.
+    /// counter, or [`PriceLevelError::DuplicateOrderId`] if an order with the
+    /// same id already rests at this level. A duplicate id takes precedence over
+    /// a counter overflow. In every case the level is unchanged.
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
         // Calculate quantities.
         let visible_qty = order.visible_quantity().as_u64();
@@ -248,59 +284,75 @@ impl PriceLevel {
             });
         }
 
-        // Reserve capacity on each counter BEFORE publishing, using a checked
-        // `fetch_update` (an atomic CAS loop). `Relaxed` on both the success and
-        // failure orderings: these are the advisory counters (issue #68); the
-        // queue publication below carries the real happens-before for a
-        // concurrent reader, so the counters are not a synchronization channel.
-        if self
-            .visible_quantity
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                c.checked_add(visible_qty)
-            })
-            .is_err()
-        {
-            return Err(PriceLevelError::InvalidOperation {
-                message: "price level visible quantity overflow on admission".to_string(),
-            });
-        }
-
-        if self
-            .hidden_quantity
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                c.checked_add(hidden_qty)
-            })
-            .is_err()
-        {
-            // Roll back the visible reservation this call made.
-            self.visible_quantity
-                .fetch_sub(visible_qty, Ordering::Relaxed);
-            return Err(PriceLevelError::InvalidOperation {
-                message: "price level hidden quantity overflow on admission".to_string(),
-            });
-        }
-
-        if self
-            .order_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
-            .is_err()
-        {
-            // Roll back the visible + hidden reservations this call made.
-            self.visible_quantity
-                .fetch_sub(visible_qty, Ordering::Relaxed);
-            self.hidden_quantity
-                .fetch_sub(hidden_qty, Ordering::Relaxed);
-            return Err(PriceLevelError::InvalidOperation {
-                message: "price level order count overflow on admission".to_string(),
-            });
-        }
-
-        // All capacity reserved; publish the order to the queue. A concurrent
-        // reader can briefly see the reserved count before the order rests
-        // (the advisory-counter window), but never the reverse overflow the
-        // reservation just ruled out.
+        // Publish through `try_push_with`, which decides id IDENTITY FIRST under
+        // the DashMap shard lock and only then runs the counter reservation
+        // below — atomically with the publication. Consequences:
+        //
+        // * A duplicate id is rejected with `DuplicateOrderId` and NOTHING
+        //   touched: the reservation closure never runs, so a rejected duplicate
+        //   cannot transiently inflate a counter, and a duplicate submitted at
+        //   counter capacity reports `DuplicateOrderId` (identity) rather than a
+        //   spurious overflow (the error precedence documented above).
+        // * The reservation runs only once the id is known free; the queue then
+        //   publishes the order into the map + index while holding the shard
+        //   lock, so a concurrent cancel + readmission can never split this id
+        //   across two index entries.
+        //
+        // Inside the closure, capacity is reserved visible → hidden → count with
+        // checked `fetch_update` (an atomic CAS loop, free of the
+        // check-then-`fetch_add` TOCTOU race two admissions near `u64::MAX`
+        // would hit). `Relaxed` throughout: these are the advisory counters
+        // (issue #68); the queue publication carries the real happens-before,
+        // not these RMWs. If a later reservation overflows, the earlier ones are
+        // rolled back by the exact delta this call added — a commutative,
+        // concurrency-safe undo — before returning `Err`, so `try_push_with`
+        // publishes nothing and no counter is left drifted.
         let order_arc = Arc::new(order);
-        self.orders.push(order_arc.clone());
+        self.orders.try_push_with(order_arc.clone(), || {
+            if self
+                .visible_quantity
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                    c.checked_add(visible_qty)
+                })
+                .is_err()
+            {
+                return Err(PriceLevelError::InvalidOperation {
+                    message: "price level visible quantity overflow on admission".to_string(),
+                });
+            }
+
+            if self
+                .hidden_quantity
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                    c.checked_add(hidden_qty)
+                })
+                .is_err()
+            {
+                // Roll back the visible reservation this call made.
+                self.visible_quantity
+                    .fetch_sub(visible_qty, Ordering::Relaxed);
+                return Err(PriceLevelError::InvalidOperation {
+                    message: "price level hidden quantity overflow on admission".to_string(),
+                });
+            }
+
+            if self
+                .order_count
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+                .is_err()
+            {
+                // Roll back the visible + hidden reservations this call made.
+                self.visible_quantity
+                    .fetch_sub(visible_qty, Ordering::Relaxed);
+                self.hidden_quantity
+                    .fetch_sub(hidden_qty, Ordering::Relaxed);
+                return Err(PriceLevelError::InvalidOperation {
+                    message: "price level order count overflow on admission".to_string(),
+                });
+            }
+
+            Ok(())
+        })?;
 
         // Update statistics only after a committed admission.
         self.stats.record_order_added();
@@ -1336,27 +1388,28 @@ impl From<&PriceLevel> for PriceLevelData {
     }
 }
 
-impl From<&PriceLevelSnapshot> for PriceLevel {
-    fn from(value: &PriceLevelSnapshot) -> Self {
-        let mut snapshot = value.clone();
-        let _ = snapshot.refresh_aggregates();
+impl TryFrom<&PriceLevelSnapshot> for PriceLevel {
+    type Error = PriceLevelError;
 
-        let order_count = snapshot.orders().len();
-        let visible_quantity = snapshot.visible_quantity().as_u64();
-        let hidden_quantity = snapshot.hidden_quantity().as_u64();
-        let price = snapshot.price().as_u128();
-        // Preserve the persisted statistics instead of resetting them.
-        let stats = (*snapshot.statistics()).clone();
-        let queue = OrderQueue::from(snapshot.into_orders());
-
-        Self {
-            price,
-            visible_quantity: AtomicU64::new(visible_quantity),
-            hidden_quantity: AtomicU64::new(hidden_quantity),
-            order_count: AtomicUsize::new(order_count),
-            orders: queue,
-            stats: Arc::new(stats),
-        }
+    /// Rebuilds a price level from a borrowed snapshot.
+    ///
+    /// Fallible on purpose (this replaced an infallible `From` in v0.9): the old
+    /// `From` swallowed [`PriceLevelSnapshot::refresh_aggregates`] errors and
+    /// built the queue with keep-first duplicate handling, so a snapshot whose
+    /// orders repeated an id would restore counters computed over every copy
+    /// while the queue kept only one — a level whose counters silently disagreed
+    /// with its contents. This clones the snapshot and delegates to
+    /// [`PriceLevel::from_snapshot`], which rejects a repeated id and propagates
+    /// the aggregate-overflow / per-order-total errors instead of hiding them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::DuplicateOrderId`] if the snapshot's orders
+    /// vector repeats an id, or [`PriceLevelError::InvalidOperation`] if a
+    /// per-order or level aggregate overflows `u64` — see
+    /// [`PriceLevel::from_snapshot`].
+    fn try_from(value: &PriceLevelSnapshot) -> Result<Self, Self::Error> {
+        PriceLevel::from_snapshot(value.clone())
     }
 }
 

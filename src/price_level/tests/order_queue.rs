@@ -543,4 +543,71 @@ mod tests {
         }
         assert!(queue.pop().is_none());
     }
+
+    #[test]
+    fn test_concurrent_try_push_cancel_readmit_keeps_map_index_one_to_one() {
+        // Finding 1 (PR #125): `try_push` published the map entry, released the
+        // shard lock, then inserted the index entry. A concurrent cancel +
+        // same-id readmission landing in that window could leave two index
+        // entries for one id (a FIFO jump). `try_push_with` now holds the shard
+        // lock across BOTH publications, so the map and the index stay strictly
+        // 1:1 under an admit / cancel / readmit storm on a tiny, heavily-reused
+        // id set. Assert that invariant at quiescence over many iterations.
+        use std::sync::{Arc as StdArc, Barrier};
+        use std::thread;
+
+        const THREADS: usize = 6;
+        const OPS: usize = 300;
+        const IDS: u64 = 4;
+
+        for iter in 0..40 {
+            let queue = StdArc::new(OrderQueue::new());
+            let barrier = StdArc::new(Barrier::new(THREADS));
+
+            let handles: Vec<_> = (0..THREADS)
+                .map(|t| {
+                    let queue = StdArc::clone(&queue);
+                    let barrier = StdArc::clone(&barrier);
+                    thread::spawn(move || {
+                        barrier.wait();
+                        for op in 0..OPS {
+                            // A tiny id set shared across threads maximizes the
+                            // chance an admission of `id` races a cancel of the
+                            // same `id`.
+                            let id = ((op as u64).wrapping_add(t as u64) % IDS) + 1;
+                            let order = StdArc::new(create_test_order(id, 1_000, 10));
+                            let _ = queue.try_push(order);
+                            let _ = queue.remove(Id::from_u64(id));
+                            let _ = queue.try_push(StdArc::new(create_test_order(id, 1_000, 10)));
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().expect("thread panicked");
+            }
+
+            // Quiescent: every started operation has completed, so the map and
+            // the ordered index must be exactly 1:1. A split index entry from
+            // the old publication race would make the index longer than the map.
+            assert!(
+                queue.debug_map_index_consistent(),
+                "iter {iter}: id-keyed map and ordered index must be 1:1"
+            );
+
+            // Draining pops each resting id exactly once: a phantom second index
+            // entry would resurface an id or desync the count.
+            let mut popped: Vec<Id> = Vec::new();
+            while let Some(order) = queue.pop() {
+                popped.push(order.id());
+            }
+            let unique: std::collections::HashSet<Id> = popped.iter().copied().collect();
+            assert_eq!(
+                popped.len(),
+                unique.len(),
+                "iter {iter}: every id must be popped at most once"
+            );
+            assert!(queue.is_empty(), "iter {iter}: queue must fully drain");
+        }
+    }
 }

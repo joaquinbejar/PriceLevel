@@ -513,6 +513,39 @@ binaries may prefer `.expect(...)`); the returned `Arc` is unchanged on
 success. Admissions that stay within `u64` (all normal use) behave exactly
 as before.
 
+`add_order` also now **rejects a duplicate id**: publishing is an
+insert-if-absent, so reusing the id of an order already resting at the level
+returns the new [`PriceLevelError::DuplicateOrderId`] variant (again leaving
+the level unchanged) instead of overwriting the live order and leaving the
+id-keyed map and the ordered index disagreeing. Snapshot restore
+([`PriceLevel::from_snapshot`] and the JSON / package forms) likewise
+rejects an orders vector that repeats an id rather than silently
+overwriting. Submitting genuinely distinct ids (all normal use) is
+unaffected.
+
+### Migration Guide (v0.9 — duplicate-id safety on restore + queue surface)
+
+Three intentional breaking changes remove infallible / overwriting paths
+that could desync a level's counters from its queue:
+
+- **`impl From<&PriceLevelSnapshot> for PriceLevel` is removed; use
+  [`TryFrom`].** The old `From` swallowed aggregate-overflow errors and built
+  the queue keep-first, so a snapshot repeating an id restored counters
+  computed over every copy while the queue kept one. Replace
+  `PriceLevel::from(&snapshot)` / `let lvl: PriceLevel = (&snapshot).into();`
+  with `PriceLevel::try_from(&snapshot)?` (or `.expect(...)` in tests). It
+  delegates to [`PriceLevel::from_snapshot`], returning
+  [`PriceLevelError::DuplicateOrderId`] on a repeated id and the
+  per-order / level aggregate-overflow errors instead of hiding them.
+- **`OrderQueue::push` is now `pub(crate)`.** Unconditional overwriting
+  publication is never safe for an external caller (reusing a live id would
+  silently replace the resting order and strand its old index entry).
+  Admission goes through `add_order` (or, at the queue layer, the
+  insert-if-absent `try_push`); there is no public overwriting insert.
+- **`OrderQueue::from_vec` is now `pub(crate)`.** It is a keep-first
+  constructor that drops duplicates silently; the public restore path is
+  [`PriceLevel::from_snapshot`], which rejects them.
+
 
  ## Setup Instructions
 

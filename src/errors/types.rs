@@ -45,6 +45,14 @@ pub enum PriceLevelError {
     /// The string parameter specifies which field is missing.
     MissingField(String),
 
+    /// Error indicating an order id already rests at the price level.
+    ///
+    /// Admission (or a duplicate-bearing restore) is rejected atomically rather
+    /// than overwriting the live order, which would leave the level's id-keyed
+    /// map and its ordered index disagreeing (two sequences for one id) and its
+    /// counters double-counted. The string parameter is the offending id.
+    DuplicateOrderId(String),
+
     /// Error indicating a field has an invalid value.
     ///
     /// This error occurs when a field's value is present but doesn't meet validation criteria.
@@ -96,6 +104,7 @@ impl Display for PriceLevelError {
                 write!(f, "Unknown order type: {order_type}")
             }
             PriceLevelError::MissingField(field) => write!(f, "Missing field: {field}"),
+            PriceLevelError::DuplicateOrderId(id) => write!(f, "Duplicate order id: {id}"),
             PriceLevelError::InvalidFieldValue { field, value } => {
                 write!(f, "Invalid value for field {field}: {value}")
             }
@@ -128,6 +137,7 @@ impl Debug for PriceLevelError {
                 write!(f, "Unknown order type: {order_type}")
             }
             PriceLevelError::MissingField(field) => write!(f, "Missing field: {field}"),
+            PriceLevelError::DuplicateOrderId(id) => write!(f, "Duplicate order id: {id}"),
             PriceLevelError::InvalidFieldValue { field, value } => {
                 write!(f, "Invalid value for field {field}: {value}")
             }
