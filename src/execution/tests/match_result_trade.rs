@@ -278,4 +278,159 @@ mod tests {
             }
         }
     }
+
+    // ----- issue #114: malformed UTF-8 must parse to Err, never panic -----
+    //
+    // `MatchResult::from_str` accepts untrusted text and must return a
+    // `Result`, so a multibyte Unicode scalar sitting before the next ASCII
+    // delimiter must not make an internal byte offset land inside the scalar
+    // and panic on a non-char-boundary slice. Each case below simply calls
+    // `from_str` and asserts `Err`: a plain call is enough to prove no panic,
+    // because a panic would unwind the test rather than reach the assertion.
+
+    /// Every field position that the byte scanners walk — a plain field value,
+    /// a value that runs to the end of the string with no trailing `;`, a
+    /// field name, the `trades` bracket body, and the `filled_order_ids`
+    /// bracket body — must reject 2-, 3-, and 4-byte scalars deterministically.
+    #[test]
+    fn from_str_rejects_multibyte_without_panicking() {
+        // 'é' = 2 bytes, '→' = 3 bytes, '😀' = 4 bytes: cover every UTF-8 width
+        // and a scalar straddling each delimiter position.
+        let malformed = [
+            // Multibyte in a field value immediately before the ';' delimiter.
+            "MatchResult:order_id=é;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[]",
+            "MatchResult:order_id=→;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[]",
+            // Multibyte in the LAST-scanned value that runs to end-of-string
+            // (no trailing ';'): exercises the find-to-end branch.
+            "MatchResult:order_id=10😀",
+            // Multibyte in a field NAME (before the '=').
+            "MatchResult:é=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[]",
+            // Multibyte inside the trades bracket body.
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[é];filled_order_ids=[]",
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[😀];filled_order_ids=[]",
+            // Multibyte inside the filled_order_ids bracket list.
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[é]",
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[1,→,2]",
+            // Multibyte right where the '=' after a field name is expected.
+            "MatchResult:order_idé=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[]",
+        ];
+
+        for input in malformed {
+            let parsed = MatchResult::from_str(input);
+            assert!(
+                parsed.is_err(),
+                "malformed multibyte input must parse to Err, got Ok for {input:?}"
+            );
+        }
+    }
+
+    /// A multibyte scalar that lands exactly on the byte offset where the
+    /// scanner probes for the closing `]` of each bracket must not panic — the
+    /// bracket depth stays unbalanced and the parse fails cleanly.
+    #[test]
+    fn from_str_rejects_unterminated_multibyte_bracket() {
+        let inputs = [
+            // trades bracket opened, then a multibyte scalar, then end.
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[é",
+            // filled_order_ids bracket opened, then a multibyte scalar, then end.
+            "MatchResult:order_id=10;remaining_quantity=60;is_complete=false;\
+             trades=Trades:[];filled_order_ids=[😀",
+        ];
+        for input in inputs {
+            assert!(
+                MatchResult::from_str(input).is_err(),
+                "unterminated multibyte bracket must parse to Err for {input:?}"
+            );
+        }
+    }
+
+    /// Canonical ASCII output from `Display` — including a populated
+    /// `filled_order_ids` list and multiple trades — must keep round-tripping
+    /// unchanged through `FromStr`.
+    #[test]
+    fn display_round_trips_with_filled_ids_and_trades() {
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
+        assert!(result.add_trade(sample_trade(30)).is_ok());
+        assert!(result.add_trade(sample_trade(20)).is_ok());
+        result.add_filled_order_id(Id::from_u64(20));
+        result.add_filled_order_id(Id::from_u64(21));
+
+        let rendered = result.to_string();
+        let parsed = match MatchResult::from_str(&rendered) {
+            Ok(value) => value,
+            Err(error) => panic!("valid canonical output must round-trip: {error:?}"),
+        };
+
+        assert_eq!(parsed.order_id(), Id::from_u64(10));
+        assert_eq!(parsed.remaining_quantity().as_u64(), 50);
+        assert!(!parsed.is_complete());
+        assert_eq!(parsed.trades().len(), 2);
+        assert_eq!(
+            parsed.filled_order_ids(),
+            &[Id::from_u64(20), Id::from_u64(21)]
+        );
+        // Rendering the parsed result reproduces the exact canonical text.
+        assert_eq!(parsed.to_string(), rendered);
+    }
+
+    // ----- property: from_str never panics on arbitrary UTF-8 -----
+    //
+    // A co-located `proptest` block (the `tests/proptest/` harness is reserved
+    // for the nine matching invariants and drives `PriceLevel`, not the
+    // parser, so a parser-robustness property does not fit there). `proptest`
+    // reports any panic in the closure as a failing, shrinking case, so the
+    // bodies just call `from_str` and drop the result.
+    use proptest::prelude::*;
+
+    /// Concatenate the format's structural delimiters with arbitrary Unicode
+    /// scalars so multibyte characters land adjacent to (and straddling) every
+    /// delimiter the byte scanners probe — the worst case for boundary safety.
+    fn structural_fuzz() -> impl Strategy<Value = String> {
+        let token = prop_oneof![
+            Just("=".to_string()),
+            Just(";".to_string()),
+            Just("[".to_string()),
+            Just("]".to_string()),
+            Just("Trades:".to_string()),
+            Just("order_id".to_string()),
+            Just("remaining_quantity".to_string()),
+            Just("is_complete".to_string()),
+            Just("trades".to_string()),
+            Just("filled_order_ids".to_string()),
+            any::<char>().prop_map(|c| c.to_string()),
+        ];
+        prop::collection::vec(token, 0..24)
+            .prop_map(|parts| format!("MatchResult:{}", parts.concat()))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 1024, ..ProptestConfig::default() })]
+
+        /// Arbitrary UTF-8 strings (with the required prefix and bare) never
+        /// panic; they either parse or return `Err`.
+        #[test]
+        fn from_str_never_panics_on_arbitrary_utf8(suffix in any::<String>()) {
+            let with_prefix = format!("MatchResult:{suffix}");
+            // The result is deliberately ignored — a panic (not an Err) is the
+            // only way this can fail.
+            let _ = MatchResult::from_str(&with_prefix);
+            let _ = MatchResult::from_str(&suffix);
+        }
+
+        /// Delimiter-dense fuzz: multibyte scalars adjacent to every structural
+        /// delimiter still never panic.
+        #[test]
+        fn from_str_never_panics_on_structural_fuzz(input in structural_fuzz()) {
+            let _ = MatchResult::from_str(&input);
+        }
+    }
 }

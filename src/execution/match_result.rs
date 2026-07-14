@@ -379,22 +379,26 @@ impl FromStr for MatchResult {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         fn find_next_field(s: &str, start_pos: usize) -> Result<(&str, usize), PriceLevelError> {
+            // Scan raw bytes for the ASCII ';' delimiter rather than advancing a
+            // `&str` slice one byte at a time. Every byte of a multibyte scalar
+            // is >= 0x80, so it can never equal `b';'` (0x3B): a byte comparison
+            // never mistakes an interior byte for the delimiter, and we only
+            // ever form a `&str` slice at a `;` position or the end of the
+            // string — both guaranteed char boundaries — so slicing cannot panic
+            // on malformed UTF-8. `start_pos` is always the boundary just after
+            // an ASCII `=`.
+            let bytes = s.as_bytes();
             let mut pos = start_pos;
 
-            while pos < s.len() {
-                if s[pos..].starts_with(';') {
-                    let value = &s[start_pos..pos];
-                    return Ok((value, pos + 1));
+            while pos < bytes.len() {
+                if bytes[pos] == b';' {
+                    return Ok((&s[start_pos..pos], pos + 1));
                 }
                 pos += 1;
             }
 
-            if pos == s.len() {
-                let value = &s[start_pos..pos];
-                return Ok((value, pos));
-            }
-
-            Err(PriceLevelError::InvalidFormat)
+            // No ';' before the end: the value runs to the end of the string.
+            Ok((&s[start_pos..], bytes.len()))
         }
         if !s.starts_with("MatchResult:") {
             return Err(PriceLevelError::InvalidFormat);
@@ -406,10 +410,18 @@ impl FromStr for MatchResult {
         let mut trades_str = None;
         let mut filled_order_ids_str = None;
 
+        // Scan over the raw bytes. Every structural delimiter in the format
+        // (`=`, `;`, `[`, `]`) and every literal prefix (`Trades:[`) is ASCII,
+        // so a byte comparison locates them without ever splitting a multibyte
+        // scalar, and every `&str` slice below is taken at an ASCII delimiter
+        // position (or the string end) — all guaranteed char boundaries — so a
+        // field carrying malformed / multibyte text yields a deterministic
+        // `Err`, never a slice-on-non-boundary panic.
+        let bytes = s.as_bytes();
         let mut pos = "MatchResult:".len();
 
-        while pos < s.len() {
-            let field_end = match s[pos..].find('=') {
+        while pos < bytes.len() {
+            let field_end = match bytes[pos..].iter().position(|&b| b == b'=') {
                 Some(idx) => pos + idx,
                 None => return Err(PriceLevelError::InvalidFormat),
             };
@@ -433,25 +445,29 @@ impl FromStr for MatchResult {
                     pos = next_pos;
                 }
                 "trades" => {
-                    if !s[pos..].starts_with("Trades:[") {
+                    if !bytes[pos..].starts_with(b"Trades:[") {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
                     let mut bracket_depth = 1;
                     let mut i = pos + "Trades:[".len();
 
-                    while i < s.len() && bracket_depth > 0 {
-                        if s[i..].starts_with(']') {
-                            bracket_depth -= 1;
-                            if bracket_depth == 0 {
-                                break;
+                    while i < bytes.len() && bracket_depth > 0 {
+                        match bytes[i] {
+                            b']' => {
+                                bracket_depth -= 1;
+                                if bracket_depth == 0 {
+                                    break;
+                                }
+                                i += 1;
                             }
-                            i += 1;
-                        } else if s[i..].starts_with('[') {
-                            bracket_depth += 1;
-                            i += 1;
-                        } else {
-                            i += 1;
+                            b'[' => {
+                                bracket_depth += 1;
+                                i += 1;
+                            }
+                            _ => {
+                                i += 1;
+                            }
                         }
                     }
 
@@ -459,34 +475,40 @@ impl FromStr for MatchResult {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
+                    // `i` is the byte index of the closing ASCII `]`, so the
+                    // inclusive slice ends on a char boundary.
                     trades_str = Some(&s[pos..=i]);
                     pos = i + 1;
-                    if pos < s.len() && s[pos..].starts_with(';') {
+                    if pos < bytes.len() && bytes[pos] == b';' {
                         pos += 1;
-                    } else if pos < s.len() {
+                    } else if pos < bytes.len() {
                         return Err(PriceLevelError::InvalidFormat);
                     }
                 }
                 "filled_order_ids" => {
-                    if !s[pos..].starts_with('[') {
+                    if bytes.get(pos) != Some(&b'[') {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
                     let mut bracket_depth = 1;
                     let mut i = pos + 1;
 
-                    while i < s.len() && bracket_depth > 0 {
-                        if s[i..].starts_with(']') {
-                            bracket_depth -= 1;
-                            if bracket_depth == 0 {
-                                break;
+                    while i < bytes.len() && bracket_depth > 0 {
+                        match bytes[i] {
+                            b']' => {
+                                bracket_depth -= 1;
+                                if bracket_depth == 0 {
+                                    break;
+                                }
+                                i += 1;
                             }
-                            i += 1;
-                        } else if s[i..].starts_with('[') {
-                            bracket_depth += 1;
-                            i += 1;
-                        } else {
-                            i += 1;
+                            b'[' => {
+                                bracket_depth += 1;
+                                i += 1;
+                            }
+                            _ => {
+                                i += 1;
+                            }
                         }
                     }
 
@@ -494,10 +516,12 @@ impl FromStr for MatchResult {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
+                    // `i` is the byte index of the closing ASCII `]`, so the
+                    // inclusive slice ends on a char boundary.
                     filled_order_ids_str = Some(&s[pos..=i]);
 
                     pos = i + 1;
-                    if pos < s.len() && s[pos..].starts_with(';') {
+                    if pos < bytes.len() && bytes[pos] == b';' {
                         pos += 1;
                     }
                 }
