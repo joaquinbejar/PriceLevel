@@ -887,9 +887,11 @@ impl PriceLevel {
     ///   loses time priority, matching standard exchange behaviour.
     ///
     /// Total quantity is `visible + hidden`; the branch is chosen by comparing
-    /// the order's total before and after the update. Order types that cannot
-    /// be resized fall back to an unchanged order and therefore take the
-    /// in-place (position-preserving) branch.
+    /// the order's total before and after the update. Every order variant is
+    /// resized by [`OrderType::with_reduced_quantity`] (single-quantity
+    /// variants rewrite their `quantity`; two-tranche variants rewrite the
+    /// visible tranche and keep hidden), so the branch reflects the real size
+    /// change rather than a silent no-op.
     ///
     /// # Errors
     ///
@@ -962,10 +964,10 @@ impl PriceLevel {
                     })?;
 
                 // Build the updated order. `with_reduced_quantity` sets the
-                // (visible/main) quantity to exactly `new_quantity` for order
-                // types that support resizing; types it cannot resize fall back
-                // to an unchanged clone, so `new_total` equals the old total for
-                // them and they take the position-preserving in-place branch.
+                // (visible/main) quantity to exactly `new_quantity` for every
+                // order variant, so `new_total` reflects the real post-update
+                // size and the increase/decrease branch below is chosen
+                // correctly for all types.
                 let new_order = order.with_reduced_quantity(new_quantity.as_u64());
                 let new_visible = new_order.visible_quantity().as_u64();
                 let new_hidden = new_order.hidden_quantity().as_u64();

@@ -381,7 +381,23 @@ impl<T: Clone> OrderType<T> {
         matches!(self, Self::PostOnly { .. })
     }
 
-    /// Create a new standard order with reduced quantity
+    /// Return a clone of this order with its resting (visible / main) quantity
+    /// reset to `new_quantity`, in quantity units.
+    ///
+    /// Every variant is rewritten explicitly so a partial fill (via
+    /// [`Self::match_against`]) or an `OrderUpdate::UpdateQuantity` leaves the
+    /// residual maker at exactly `new_quantity` rather than its original size.
+    /// For the single-quantity variants (`Standard`, `PostOnly`,
+    /// `TrailingStop`, `PeggedOrder`, `MarketToLimit`) this rewrites the
+    /// `quantity` field; for the two-tranche variants (`IcebergOrder`,
+    /// `ReserveOrder`) it rewrites the *visible* quantity and preserves the
+    /// hidden tranche together with every order-type-specific field (trail /
+    /// peg parameters, replenishment policy).
+    ///
+    /// The match is exhaustive by design: a new variant must supply its own arm
+    /// rather than silently retaining its original quantity, which would let a
+    /// later taker execute the same depth twice and break quantity
+    /// conservation.
     #[must_use]
     pub fn with_reduced_quantity(&self, new_quantity: u64) -> Self {
         let new_quantity = Quantity::new(new_quantity);
@@ -448,8 +464,100 @@ impl<T: Clone> OrderType<T> {
                 time_in_force: *time_in_force,
                 extra_fields: extra_fields.clone(),
             },
-            // For other order types, similar pattern...
-            _ => self.clone(), // Default fallback, though this should be implemented for all types
+            Self::TrailingStop {
+                id,
+                price,
+                side,
+                user_id,
+                timestamp,
+                time_in_force,
+                trail_amount,
+                last_reference_price,
+                extra_fields,
+                ..
+            } => Self::TrailingStop {
+                id: *id,
+                price: *price,
+                quantity: new_quantity,
+                side: *side,
+                user_id: *user_id,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
+                trail_amount: *trail_amount,
+                last_reference_price: *last_reference_price,
+                extra_fields: extra_fields.clone(),
+            },
+            Self::PeggedOrder {
+                id,
+                price,
+                side,
+                user_id,
+                timestamp,
+                time_in_force,
+                reference_price_offset,
+                reference_price_type,
+                extra_fields,
+                ..
+            } => Self::PeggedOrder {
+                id: *id,
+                price: *price,
+                quantity: new_quantity,
+                side: *side,
+                user_id: *user_id,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
+                reference_price_offset: *reference_price_offset,
+                reference_price_type: *reference_price_type,
+                extra_fields: extra_fields.clone(),
+            },
+            Self::MarketToLimit {
+                id,
+                price,
+                side,
+                user_id,
+                timestamp,
+                time_in_force,
+                extra_fields,
+                ..
+            } => Self::MarketToLimit {
+                id: *id,
+                price: *price,
+                quantity: new_quantity,
+                side: *side,
+                user_id: *user_id,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
+                extra_fields: extra_fields.clone(),
+            },
+            // Reserve rewrites the visible tranche (mirroring `IcebergOrder`),
+            // preserving the hidden quantity and the replenishment policy.
+            Self::ReserveOrder {
+                id,
+                price,
+                hidden_quantity,
+                side,
+                user_id,
+                timestamp,
+                time_in_force,
+                replenish_threshold,
+                replenish_amount,
+                auto_replenish,
+                extra_fields,
+                ..
+            } => Self::ReserveOrder {
+                id: *id,
+                price: *price,
+                visible_quantity: new_quantity,
+                hidden_quantity: *hidden_quantity,
+                side: *side,
+                user_id: *user_id,
+                timestamp: *timestamp,
+                time_in_force: *time_in_force,
+                replenish_threshold: *replenish_threshold,
+                replenish_amount: *replenish_amount,
+                auto_replenish: *auto_replenish,
+                extra_fields: extra_fields.clone(),
+            },
         }
     }
 
@@ -531,7 +639,15 @@ impl<T: Clone> OrderType<T> {
                     used_hidden,
                 )
             }
-            _ => (self.clone(), 0), // Non-iceberg orders don't refresh
+            // Single-tranche variants have no hidden reserve to draw from, so a
+            // refresh is a no-op that draws `0`. Listed explicitly (rather than
+            // via a `_` fallback) so a future variant with a hidden tranche is a
+            // compile error here until it defines its own refresh behaviour.
+            Self::Standard { .. }
+            | Self::PostOnly { .. }
+            | Self::TrailingStop { .. }
+            | Self::PeggedOrder { .. }
+            | Self::MarketToLimit { .. } => (self.clone(), 0),
         }
     }
 }
@@ -784,8 +900,18 @@ impl<T: Clone> OrderType<T> {
                 }
             }
 
-            // For all other order types, use standard matching logic
-            _ => {
+            // Single-quantity variants with no hidden tranche: match against
+            // the whole (visible) quantity and, on a partial fill, rewrite the
+            // residual to exactly the untaken remainder via
+            // `with_reduced_quantity`. Listed explicitly rather than via a `_`
+            // fallback so a future variant must decide its own matching path
+            // instead of silently inheriting this single-quantity logic (which
+            // would keep its full size after a partial fill and let a later
+            // taker execute the same depth twice).
+            Self::PostOnly { .. }
+            | Self::TrailingStop { .. }
+            | Self::PeggedOrder { .. }
+            | Self::MarketToLimit { .. } => {
                 let visible_qty = self.visible_quantity().as_u64();
 
                 if visible_qty <= incoming_quantity {

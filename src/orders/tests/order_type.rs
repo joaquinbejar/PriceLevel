@@ -291,40 +291,57 @@ mod tests {
             panic!("Expected PostOnly order");
         }
 
-        // NEW TEST: Test trailing stop order with reduced quantity
+        // TrailingStop is now resized to exactly the new quantity (issue #118).
         let order = create_trailing_stop_order();
         let reduced = order.with_reduced_quantity(3);
 
         match reduced {
-            OrderType::<()>::TrailingStop { quantity, .. } => {
-                assert_eq!(quantity, Quantity::new(5));
+            OrderType::<()>::TrailingStop {
+                quantity,
+                trail_amount,
+                last_reference_price,
+                ..
+            } => {
+                assert_eq!(quantity, Quantity::new(3));
+                // Trail parameters are preserved by the resize.
+                assert_eq!(trail_amount, Quantity::new(100));
+                assert_eq!(last_reference_price, Price::new(10100));
             }
             _ => panic!("Expected TrailingStop order"),
         }
 
-        // NEW TEST: Test pegged order with reduced quantity
+        // PeggedOrder is now resized to exactly the new quantity (issue #118).
         let order = create_pegged_order();
         let reduced = order.with_reduced_quantity(1);
 
         match reduced {
-            OrderType::<()>::PeggedOrder { quantity, .. } => {
-                assert_eq!(quantity, Quantity::new(5));
+            OrderType::<()>::PeggedOrder {
+                quantity,
+                reference_price_offset,
+                reference_price_type,
+                ..
+            } => {
+                assert_eq!(quantity, Quantity::new(1));
+                // Peg parameters are preserved by the resize.
+                assert_eq!(reference_price_offset, -50);
+                assert_eq!(reference_price_type, PegReferenceType::BestAsk);
             }
             _ => panic!("Expected PeggedOrder"),
         }
 
-        // NEW TEST: Test market-to-limit order with reduced quantity
+        // MarketToLimit is now resized to exactly the new quantity (issue #118).
         let order = create_market_to_limit_order();
         let reduced = order.with_reduced_quantity(4);
 
         match reduced {
             OrderType::<()>::MarketToLimit { quantity, .. } => {
-                assert_eq!(quantity, Quantity::new(5));
+                assert_eq!(quantity, Quantity::new(4));
             }
             _ => panic!("Expected MarketToLimit order"),
         }
 
-        // NEW TEST: Test reserve order with reduced quantity
+        // ReserveOrder rewrites the visible tranche to the new quantity and
+        // keeps the hidden tranche (mirrors IcebergOrder; issue #118).
         let order = create_reserve_order();
         let reduced = order.with_reduced_quantity(0);
 
@@ -334,7 +351,7 @@ mod tests {
                 hidden_quantity,
                 ..
             } => {
-                assert_eq!(visible_quantity, Quantity::new(1));
+                assert_eq!(visible_quantity, Quantity::new(0));
                 assert_eq!(hidden_quantity, Quantity::new(4)); // Hidden should remain unchanged
             }
             _ => panic!("Expected ReserveOrder"),
@@ -717,10 +734,10 @@ mod tests {
 
         let reduced = order.with_reduced_quantity(5);
 
-        // Verify the quantity is not changed (market to limit orders don't support
-        // reduced quantity in the current implementation)
+        // The residual must carry exactly the reduced quantity so a later taker
+        // can only execute the remainder (issue #118).
         if let OrderType::MarketToLimit { quantity, .. } = reduced {
-            assert_eq!(quantity, Quantity::new(10)); // Original quantity, not reduced
+            assert_eq!(quantity, Quantity::new(5));
         } else {
             panic!("Expected MarketToLimit order");
         }
@@ -744,10 +761,18 @@ mod tests {
 
         let reduced = order.with_reduced_quantity(5);
 
-        // Verify the quantity is not changed (pegged orders don't support
-        // reduced quantity in the current implementation)
-        if let OrderType::PeggedOrder { quantity, .. } = reduced {
-            assert_eq!(quantity, Quantity::new(10)); // Original quantity, not reduced
+        // The residual must carry exactly the reduced quantity, and the peg
+        // parameters must be preserved (issue #118).
+        if let OrderType::PeggedOrder {
+            quantity,
+            reference_price_offset,
+            reference_price_type,
+            ..
+        } = reduced
+        {
+            assert_eq!(quantity, Quantity::new(5));
+            assert_eq!(reference_price_offset, -50);
+            assert_eq!(reference_price_type, PegReferenceType::BestAsk);
         } else {
             panic!("Expected PeggedOrder order");
         }
@@ -771,10 +796,18 @@ mod tests {
 
         let reduced = order.with_reduced_quantity(5);
 
-        // Verify the quantity is not changed (trailing stop orders don't support
-        // reduced quantity in the current implementation)
-        if let OrderType::TrailingStop { quantity, .. } = reduced {
-            assert_eq!(quantity, Quantity::new(10)); // Original quantity, not reduced
+        // The residual must carry exactly the reduced quantity, and the trail
+        // parameters must be preserved (issue #118).
+        if let OrderType::TrailingStop {
+            quantity,
+            trail_amount,
+            last_reference_price,
+            ..
+        } = reduced
+        {
+            assert_eq!(quantity, Quantity::new(5));
+            assert_eq!(trail_amount, Quantity::new(100));
+            assert_eq!(last_reference_price, Price::new(1100));
         } else {
             panic!("Expected TrailingStop order");
         }

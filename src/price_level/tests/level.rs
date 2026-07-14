@@ -1928,6 +1928,256 @@ mod tests {
         assert_eq!(result.filled_order_ids().len(), 0);
     }
 
+    // --------------------------------- RESIDUAL CONSERVATION (#118) ---------------------------------
+    //
+    // `OrderType::with_reduced_quantity` used to no-op on TrailingStop /
+    // PeggedOrder / MarketToLimit, so a partially-filled maker of one of those
+    // types kept its ORIGINAL quantity: a later taker could execute the same
+    // depth again, and repeated fills could drive the advisory visible counter
+    // below zero. These drivers rest a single maker, partially fill it, then
+    // prove the residual is the ONLY thing left — in the advisory counter, the
+    // live queue, and a snapshot round-trip — and that a second, over-large
+    // taker can take only that residual. The `empty / partial / full` matrix and
+    // FIFO-position checks for these types live in the ORDER-TYPE MATRIX block
+    // above; here we specifically pin quantity conservation across two takers.
+
+    /// Rest `maker` (original size `original_qty`, known resting `side`),
+    /// partially fill it with a taker of `first_take` (`< original_qty`), then
+    /// assert the residual is exposed identically by the advisory
+    /// `visible_quantity()` counter, the live `snapshot_by_insertion_seq()`
+    /// queue, and a `snapshot_to_json` -> `from_snapshot_json` round-trip. A
+    /// second, over-large taker must then execute ONLY the residual, so the
+    /// total executed across both takers equals `original_qty` exactly — never
+    /// more (quantity conservation, issue #118).
+    fn assert_two_takers_conserve_quantity(
+        maker: OrderType<()>,
+        original_qty: u64,
+        first_take: u64,
+        side: Side,
+    ) {
+        let level_price = maker.price().as_u128();
+        let maker_id = maker.id();
+        let price_level = PriceLevel::new(level_price);
+        price_level.add_order(maker);
+
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let trade_id_generator = UuidGenerator::new(namespace);
+
+        // First taker: strictly partial fill of the maker.
+        let first = price_level.match_order(
+            first_take,
+            Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_000),
+            &trade_id_generator,
+        );
+        assert_eq!(
+            first.executed_quantity().unwrap_or_default().as_u64(),
+            first_take
+        );
+        assert_match_result_consistent(&first, level_price, side);
+
+        let residual = original_qty - first_take;
+
+        // Advisory counter, live queue contents, and a snapshot round-trip must
+        // all expose the SAME residual on the stored maker.
+        assert_eq!(price_level.visible_quantity(), residual);
+
+        let resting = price_level.snapshot_by_insertion_seq();
+        assert_eq!(resting.len(), 1);
+        assert_eq!(resting[0].id(), maker_id);
+        assert_eq!(
+            resting[0].visible_quantity().as_u64(),
+            residual,
+            "the resting maker must carry exactly the residual, not its original size"
+        );
+
+        let json = price_level
+            .snapshot_to_json()
+            .expect("snapshot must serialize");
+        let restored = PriceLevel::from_snapshot_json(&json).expect("snapshot must restore");
+        let restored_orders = restored.snapshot_by_insertion_seq();
+        assert_eq!(restored_orders.len(), 1);
+        assert_eq!(
+            restored_orders[0].visible_quantity().as_u64(),
+            residual,
+            "the residual must survive a snapshot round-trip"
+        );
+        assert_eq!(restored.visible_quantity(), residual);
+
+        // Second, over-large taker: it can take only the residual, never the
+        // maker's original size.
+        let second = price_level.match_order(
+            original_qty + 1000,
+            Id::from_u64(902),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_716_000_000_001),
+            &trade_id_generator,
+        );
+        assert_eq!(
+            second.executed_quantity().unwrap_or_default().as_u64(),
+            residual,
+            "the second taker can only execute the residual"
+        );
+        assert_match_result_consistent(&second, level_price, side);
+
+        let total = first.executed_quantity().unwrap_or_default().as_u64()
+            + second.executed_quantity().unwrap_or_default().as_u64();
+        assert_eq!(
+            total, original_qty,
+            "total executed across both takers must equal the maker's original quantity, never more"
+        );
+
+        // Maker fully consumed; level empty.
+        assert_eq!(price_level.order_count(), 0);
+        assert_eq!(price_level.visible_quantity(), 0);
+        assert!(price_level.snapshot_by_insertion_seq().is_empty());
+    }
+
+    #[test]
+    fn test_match_trailing_stop_two_takers_second_only_takes_residual() {
+        // TrailingStop rests on Side::Sell.
+        assert_two_takers_conserve_quantity(
+            create_trailing_stop_order(1, 10000, 100),
+            100,
+            40,
+            Side::Sell,
+        );
+    }
+
+    #[test]
+    fn test_match_pegged_two_takers_second_only_takes_residual() {
+        // PeggedOrder rests on Side::Buy.
+        assert_two_takers_conserve_quantity(create_pegged_order(1, 10000, 100), 100, 55, Side::Buy);
+    }
+
+    #[test]
+    fn test_match_market_to_limit_two_takers_second_only_takes_residual() {
+        // MarketToLimit rests on Side::Buy.
+        assert_two_takers_conserve_quantity(
+            create_market_to_limit_order(1, 10000, 100),
+            100,
+            70,
+            Side::Buy,
+        );
+    }
+
+    /// `UpdateQuantity` DECREASE on a resizable maker: the maker is resized to
+    /// exactly `decrease_to` and keeps its front queue position (issue #118 made
+    /// TrailingStop / PeggedOrder / MarketToLimit resizable; the decrease branch
+    /// preserves time priority).
+    fn assert_update_quantity_decrease_keeps_position(front: OrderType<()>, decrease_to: u64) {
+        let level_price = front.price().as_u128();
+        let front_id = front.id();
+        let level = PriceLevel::new(level_price);
+        level.add_order(front);
+        // A plain maker queued behind the resized one.
+        let behind_id = Id::from_u64(778);
+        level.add_order(create_standard_order(778, level_price, 100));
+
+        let updated = level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: front_id,
+                new_quantity: Quantity::new(decrease_to),
+            })
+            .expect("decrease update should succeed")
+            .expect("order must be present");
+        assert_eq!(
+            updated.visible_quantity().as_u64(),
+            decrease_to,
+            "decrease must resize the maker to exactly the new quantity"
+        );
+
+        // Decrease keeps priority: the resized maker is still first by insertion
+        // sequence, ahead of the maker queued behind it.
+        let by_seq: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|order| order.id())
+            .collect();
+        assert_eq!(
+            by_seq,
+            vec![front_id, behind_id],
+            "a decreased maker keeps its front position"
+        );
+    }
+
+    /// `UpdateQuantity` INCREASE on a resizable maker: the maker is resized to
+    /// exactly `increase_to` (`> its original total`) and demoted to the back of
+    /// the queue, behind a later maker (issue #118; increase forfeits time
+    /// priority, matching the existing policy for Standard orders).
+    fn assert_update_quantity_increase_demotes(front: OrderType<()>, increase_to: u64) {
+        let level_price = front.price().as_u128();
+        let front_id = front.id();
+        let level = PriceLevel::new(level_price);
+        level.add_order(front);
+        let behind_id = Id::from_u64(778);
+        level.add_order(create_standard_order(778, level_price, 100));
+
+        let updated = level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: front_id,
+                new_quantity: Quantity::new(increase_to),
+            })
+            .expect("increase update should succeed")
+            .expect("order must be present");
+        assert_eq!(
+            updated.visible_quantity().as_u64(),
+            increase_to,
+            "increase must resize the maker to exactly the new quantity"
+        );
+
+        // Increase demotes: the resized maker moves behind the later maker.
+        let by_seq: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|order| order.id())
+            .collect();
+        assert_eq!(
+            by_seq,
+            vec![behind_id, front_id],
+            "an increased maker is demoted to the back of the queue"
+        );
+    }
+
+    #[test]
+    fn test_update_quantity_trailing_stop_decrease_keeps_position() {
+        assert_update_quantity_decrease_keeps_position(
+            create_trailing_stop_order(1, 10000, 100),
+            40,
+        );
+    }
+
+    #[test]
+    fn test_update_quantity_trailing_stop_increase_demotes() {
+        assert_update_quantity_increase_demotes(create_trailing_stop_order(1, 10000, 100), 150);
+    }
+
+    #[test]
+    fn test_update_quantity_pegged_decrease_keeps_position() {
+        assert_update_quantity_decrease_keeps_position(create_pegged_order(1, 10000, 100), 40);
+    }
+
+    #[test]
+    fn test_update_quantity_pegged_increase_demotes() {
+        assert_update_quantity_increase_demotes(create_pegged_order(1, 10000, 100), 150);
+    }
+
+    #[test]
+    fn test_update_quantity_market_to_limit_decrease_keeps_position() {
+        assert_update_quantity_decrease_keeps_position(
+            create_market_to_limit_order(1, 10000, 100),
+            40,
+        );
+    }
+
+    #[test]
+    fn test_update_quantity_market_to_limit_increase_demotes() {
+        assert_update_quantity_increase_demotes(create_market_to_limit_order(1, 10000, 100), 150);
+    }
+
     // ----- incoming_quantity == 0 boundary -----
 
     #[test]
