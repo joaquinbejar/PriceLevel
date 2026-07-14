@@ -101,7 +101,25 @@ pub struct MatchResult {
     filled_order_ids: Vec<Id>,
 
     /// Terminal classification of the match (filled / killed / rejected / ...).
+    ///
+    /// Serialized as `Some(outcome)` so the emitted shape is symmetric with
+    /// [`MatchResultWire`]'s `Option<MatchOutcome>`. JSON is unaffected —
+    /// serde flattens `Some` away, so the payload still carries the bare
+    /// value — but a non-self-describing format (bincode) decodes
+    /// positionally and must find the option tag the wire struct reads
+    /// back (#135).
+    #[serde(serialize_with = "serialize_outcome_as_some")]
     outcome: MatchOutcome,
+}
+
+/// Serializes `outcome` wrapped in `Some` — see the field doc on
+/// [`MatchResult::outcome`] (#135). Kept as a free function because serde's
+/// `serialize_with` requires this exact signature.
+fn serialize_outcome_as_some<S>(outcome: &MatchOutcome, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_some(outcome)
 }
 
 /// Wire form of [`MatchResult`] used for validated deserialization.
