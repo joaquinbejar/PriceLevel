@@ -4,7 +4,7 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Tracks performance statistics for a price level.
@@ -60,6 +60,15 @@ pub struct PriceLevelStatistics {
 
     /// Sum of waiting times for orders
     sum_waiting_time: AtomicU64,
+
+    /// Sticky flag: set once and never cleared (except by [`reset`](Self::reset))
+    /// when an execution's statistics contribution was **dropped** — a
+    /// [`record_execution`](Self::record_execution) that failed validation or
+    /// overflowed a counter and so contributed to NONE of the aggregates
+    /// (all-or-nothing, issue #117). The trade itself is unaffected; this flag
+    /// is the observable signal that the recorded aggregates under-count the
+    /// true executions. Serialized so it round-trips through a snapshot.
+    stats_degraded: AtomicBool,
 }
 
 impl PriceLevelStatistics {
@@ -124,6 +133,7 @@ impl PriceLevelStatistics {
             last_execution_time: AtomicU64::new(0),
             first_arrival_time: AtomicU64::new(current_time),
             sum_waiting_time: AtomicU64::new(0),
+            stats_degraded: AtomicBool::new(false),
         }
     }
 
@@ -147,6 +157,26 @@ impl PriceLevelStatistics {
     ///
     /// [`Trade`]: crate::execution::Trade
     ///
+    /// # All-or-nothing (issue #117)
+    ///
+    /// An accepted execution contributes to **every** aggregate, or to **none**.
+    /// If a later counter overflows after earlier ones already advanced, this
+    /// rolls the committed prefix back (a `fetch_sub` of exactly what this call
+    /// added — sound by the same call-backed reservation argument as the #111 /
+    /// #113 rollbacks: the subtracted units are exactly the units this call
+    /// added, so the undo is commutative with concurrent `record_execution`
+    /// deltas). That call-backed argument assumes no concurrent
+    /// [`reset`](Self::reset) `store(0)` races the rollback — see the quiescence
+    /// contract on `reset`. So a caller never observes a partial contribution in
+    /// the final state. On any failure — a validation error or a counter overflow —
+    /// the sticky [`stats_degraded`](Self::stats_degraded) flag is set: the
+    /// dropped execution is then observable, even though the caller
+    /// (`PriceLevel::match_order`) cannot fail the already-committed trade.
+    /// Because these are independent lock-free atomics, a *concurrent* reader may
+    /// still glimpse a prefix transiently before its rollback (the same window
+    /// the #111 reserve-then-rollback admission has); the guarantee is on the
+    /// committed final state, not on the transient.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if any of the counter
@@ -163,44 +193,81 @@ impl PriceLevelStatistics {
         let current_time = execution_timestamp;
 
         // Validate everything that can fail BEFORE mutating any counter, so a
-        // rejected record leaves the statistics untouched. `match_order` ignores
-        // the returned `Result`, so any partial side effect would silently
-        // corrupt the stats.
+        // rejected record leaves the statistics untouched. Any failure marks the
+        // stats degraded: this execution's contribution is being dropped.
         let waiting_time = if order_timestamp > 0 {
-            Some(current_time.checked_sub(order_timestamp).ok_or_else(|| {
-                PriceLevelError::InvalidOperation {
-                    message: format!(
-                        "order timestamp {} is in the future of current time {}",
-                        order_timestamp, current_time
-                    ),
+            match current_time.checked_sub(order_timestamp) {
+                Some(value) => Some(value),
+                None => {
+                    self.stats_degraded.store(true, Ordering::Relaxed);
+                    return Err(PriceLevelError::InvalidOperation {
+                        message: format!(
+                            "order timestamp {order_timestamp} is in the future of current time {current_time}"
+                        ),
+                    });
                 }
-            })?)
+            }
         } else {
             None
         };
 
-        let value_u128 = u128::from(quantity).checked_mul(price).ok_or_else(|| {
-            PriceLevelError::InvalidOperation {
-                message: "value_executed multiplication overflow".to_string(),
+        let value_u64 = match u128::from(quantity)
+            .checked_mul(price)
+            .and_then(|value| u64::try_from(value).ok())
+        {
+            Some(value) => value,
+            None => {
+                self.stats_degraded.store(true, Ordering::Relaxed);
+                return Err(PriceLevelError::InvalidOperation {
+                    message: "value_executed overflow (quantity * price exceeds u64 storage)"
+                        .to_string(),
+                });
             }
-        })?;
+        };
 
-        let value_u64 =
-            u64::try_from(value_u128).map_err(|_| PriceLevelError::InvalidOperation {
-                message: "value_executed exceeds u64 storage".to_string(),
-            })?;
-
-        // All fallible validation passed — now apply the mutations. (The only
-        // residual failure mode is a counter nearing `u64::MAX`, inherent to
-        // independent lock-free atomics.)
+        // Commit the additive aggregates with a rollback of the already-committed
+        // prefix on a later overflow (all-or-nothing). `orders_executed` is a
+        // `usize` counter that cannot overflow in practice, but it is part of the
+        // transaction so it is rolled back too. `last_execution_time` is a
+        // non-additive "latest" store, applied only after every additive commit
+        // succeeds so a rejected record never advances it.
         self.orders_executed.fetch_add(1, Ordering::Relaxed);
-        Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")?;
-        Self::checked_fetch_add_u64(&self.value_executed, value_u64, "value_executed")?;
+
+        if let Err(err) =
+            Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")
+        {
+            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            self.stats_degraded.store(true, Ordering::Relaxed);
+            return Err(err);
+        }
+
+        if let Err(err) =
+            Self::checked_fetch_add_u64(&self.value_executed, value_u64, "value_executed")
+        {
+            self.quantity_executed
+                .fetch_sub(quantity, Ordering::Relaxed);
+            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            self.stats_degraded.store(true, Ordering::Relaxed);
+            return Err(err);
+        }
+
+        if let Some(waiting_time) = waiting_time
+            && let Err(err) = Self::checked_fetch_add_u64(
+                &self.sum_waiting_time,
+                waiting_time,
+                "sum_waiting_time",
+            )
+        {
+            self.value_executed.fetch_sub(value_u64, Ordering::Relaxed);
+            self.quantity_executed
+                .fetch_sub(quantity, Ordering::Relaxed);
+            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            self.stats_degraded.store(true, Ordering::Relaxed);
+            return Err(err);
+        }
+
         self.last_execution_time
             .store(current_time, Ordering::Relaxed);
-        if let Some(waiting_time) = waiting_time {
-            Self::checked_fetch_add_u64(&self.sum_waiting_time, waiting_time, "sum_waiting_time")?;
-        }
 
         Ok(())
     }
@@ -268,7 +335,25 @@ impl PriceLevelStatistics {
         self.sum_waiting_time.load(Ordering::Relaxed)
     }
 
-    /// Get average execution price
+    /// Returns `true` if the recorded statistics are **degraded** — at least one
+    /// execution's contribution was dropped all-or-nothing (a validation error
+    /// or a counter overflow in [`record_execution`](Self::record_execution),
+    /// issue #117).
+    ///
+    /// The flag is sticky: once set it stays set until [`reset`](Self::reset).
+    /// When `true`, the aggregate counters under-count the true executions; the
+    /// emitted trade stream is unaffected. Cleared by `reset`.
+    #[must_use]
+    pub fn stats_degraded(&self) -> bool {
+        self.stats_degraded.load(Ordering::Relaxed)
+    }
+
+    /// Get average execution price.
+    ///
+    /// Reads `value_executed` and `quantity_executed` as two independent
+    /// `Relaxed` loads, so under concurrent recording the ratio can be
+    /// transiently inconsistent (a torn read across the two counters); it
+    /// self-corrects once recording quiesces.
     #[must_use]
     pub fn average_execution_price(&self) -> Option<f64> {
         let qty = self.quantity_executed.load(Ordering::Relaxed);
@@ -281,7 +366,12 @@ impl PriceLevelStatistics {
         }
     }
 
-    /// Get average waiting time for executed orders (in milliseconds)
+    /// Get average waiting time for executed orders (in milliseconds).
+    ///
+    /// Reads `sum_waiting_time` and `orders_executed` as two independent
+    /// `Relaxed` loads, so under concurrent recording the ratio can be
+    /// transiently inconsistent (a torn read across the two counters); it
+    /// self-corrects once recording quiesces.
     #[must_use]
     pub fn average_waiting_time(&self) -> Option<f64> {
         let count = self.orders_executed.load(Ordering::Relaxed);
@@ -306,7 +396,17 @@ impl PriceLevelStatistics {
         }
     }
 
-    /// Reset all statistics
+    /// Reset all statistics to zero (and re-stamp `first_arrival_time`).
+    ///
+    /// # Quiescence contract
+    ///
+    /// This must only be called on a **quiescent** level — with no in-flight
+    /// [`record_execution`](Self::record_execution) (and hence no in-flight
+    /// `PriceLevel::match_order`). `reset` `store(0)`s each counter directly; a
+    /// concurrent `record_execution` overflow rollback (`fetch_sub`) racing that
+    /// `store(0)` would wrap a counter toward `u64::MAX`. No engine path calls
+    /// `reset` during matching, so this does not occur today, but it is a
+    /// caller obligation because `reset` is public.
     pub fn reset(&self) {
         let current_time = Self::current_timestamp_milliseconds_or_zero();
 
@@ -319,6 +419,7 @@ impl PriceLevelStatistics {
         self.first_arrival_time
             .store(current_time, Ordering::Relaxed);
         self.sum_waiting_time.store(0, Ordering::Relaxed);
+        self.stats_degraded.store(false, Ordering::Relaxed);
     }
 }
 
@@ -348,6 +449,7 @@ impl Clone for PriceLevelStatistics {
             last_execution_time: AtomicU64::new(self.last_execution_time.load(Ordering::Relaxed)),
             first_arrival_time: AtomicU64::new(self.first_arrival_time.load(Ordering::Relaxed)),
             sum_waiting_time: AtomicU64::new(self.sum_waiting_time.load(Ordering::Relaxed)),
+            stats_degraded: AtomicBool::new(self.stats_degraded.load(Ordering::Relaxed)),
         }
     }
 }
@@ -356,7 +458,7 @@ impl fmt::Display for PriceLevelStatistics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "PriceLevelStatistics:orders_added={};orders_removed={};orders_executed={};quantity_executed={};value_executed={};last_execution_time={};first_arrival_time={};sum_waiting_time={}",
+            "PriceLevelStatistics:orders_added={};orders_removed={};orders_executed={};quantity_executed={};value_executed={};last_execution_time={};first_arrival_time={};sum_waiting_time={};stats_degraded={}",
             self.orders_added.load(Ordering::Relaxed),
             self.orders_removed.load(Ordering::Relaxed),
             self.orders_executed.load(Ordering::Relaxed),
@@ -364,7 +466,8 @@ impl fmt::Display for PriceLevelStatistics {
             self.value_executed.load(Ordering::Relaxed),
             self.last_execution_time.load(Ordering::Relaxed),
             self.first_arrival_time.load(Ordering::Relaxed),
-            self.sum_waiting_time.load(Ordering::Relaxed)
+            self.sum_waiting_time.load(Ordering::Relaxed),
+            self.stats_degraded.load(Ordering::Relaxed)
         )
     }
 }
@@ -438,6 +541,20 @@ impl FromStr for PriceLevelStatistics {
         let sum_waiting_time_str = get_field("sum_waiting_time")?;
         let sum_waiting_time = parse_u64("sum_waiting_time", sum_waiting_time_str)?;
 
+        // `stats_degraded` is optional for backward compatibility: a string
+        // produced before the field existed decodes with the flag cleared.
+        let stats_degraded = match fields.get("stats_degraded") {
+            Some(value) => {
+                value
+                    .parse::<bool>()
+                    .map_err(|_| PriceLevelError::InvalidFieldValue {
+                        field: "stats_degraded".to_string(),
+                        value: (*value).to_string(),
+                    })?
+            }
+            None => false,
+        };
+
         Ok(PriceLevelStatistics {
             orders_added: AtomicUsize::new(orders_added),
             orders_removed: AtomicUsize::new(orders_removed),
@@ -447,6 +564,7 @@ impl FromStr for PriceLevelStatistics {
             last_execution_time: AtomicU64::new(last_execution_time),
             first_arrival_time: AtomicU64::new(first_arrival_time),
             sum_waiting_time: AtomicU64::new(sum_waiting_time),
+            stats_degraded: AtomicBool::new(stats_degraded),
         })
     }
 }
@@ -456,7 +574,17 @@ impl Serialize for PriceLevelStatistics {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("PriceLevelStatistics", 8)?;
+        // Serialize `stats_degraded` ONLY when it is `true` (dynamic 8/9-field
+        // count). A non-degraded level then serializes in the exact pre-#117
+        // 8-field form — byte-identical to a v2 statistics payload persisted
+        // before this flag existed — so a `PriceLevelSnapshotPackage`'s SHA-256
+        // checksum, recomputed over the re-serialized bytes on
+        // `validate` / `from_snapshot_json`, still matches. A degraded level
+        // adds the field; `Deserialize` / `FromStr` default a missing flag to
+        // `false`, so both directions round-trip.
+        let degraded = self.stats_degraded.load(Ordering::Relaxed);
+        let field_count = if degraded { 9 } else { 8 };
+        let mut state = serializer.serialize_struct("PriceLevelStatistics", field_count)?;
 
         state.serialize_field("orders_added", &self.orders_added.load(Ordering::Relaxed))?;
         state.serialize_field(
@@ -487,6 +615,9 @@ impl Serialize for PriceLevelStatistics {
             "sum_waiting_time",
             &self.sum_waiting_time.load(Ordering::Relaxed),
         )?;
+        if degraded {
+            state.serialize_field("stats_degraded", &true)?;
+        }
 
         state.end()
     }
@@ -506,6 +637,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
             LastExecutionTime,
             FirstArrivalTime,
             SumWaitingTime,
+            StatsDegraded,
         }
 
         impl<'de> Deserialize<'de> for Field {
@@ -535,6 +667,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                             "last_execution_time" => Ok(Field::LastExecutionTime),
                             "first_arrival_time" => Ok(Field::FirstArrivalTime),
                             "sum_waiting_time" => Ok(Field::SumWaitingTime),
+                            "stats_degraded" => Ok(Field::StatsDegraded),
                             _ => Err(de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -565,6 +698,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                 let mut last_execution_time = None;
                 let mut first_arrival_time = None;
                 let mut sum_waiting_time = None;
+                let mut stats_degraded = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -616,6 +750,12 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                             }
                             sum_waiting_time = Some(map.next_value()?);
                         }
+                        Field::StatsDegraded => {
+                            if stats_degraded.is_some() {
+                                return Err(de::Error::duplicate_field("stats_degraded"));
+                            }
+                            stats_degraded = Some(map.next_value()?);
+                        }
                     }
                 }
 
@@ -631,6 +771,9 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                 });
 
                 let sum_waiting_time = sum_waiting_time.unwrap_or(0);
+                // Optional for backward compatibility: a payload written before
+                // the field existed decodes with the flag cleared.
+                let stats_degraded = stats_degraded.unwrap_or(false);
 
                 Ok(PriceLevelStatistics {
                     orders_added: AtomicUsize::new(orders_added),
@@ -641,6 +784,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                     last_execution_time: AtomicU64::new(last_execution_time),
                     first_arrival_time: AtomicU64::new(first_arrival_time),
                     sum_waiting_time: AtomicU64::new(sum_waiting_time),
+                    stats_degraded: AtomicBool::new(stats_degraded),
                 })
             }
         }
@@ -654,6 +798,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
             "last_execution_time",
             "first_arrival_time",
             "sum_waiting_time",
+            "stats_degraded",
         ];
 
         deserializer.deserialize_struct("PriceLevelStatistics", FIELDS, StatisticsVisitor)

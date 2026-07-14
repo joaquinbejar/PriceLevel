@@ -7940,6 +7940,109 @@ mod tests {
             assert_counters_match_queue(&level);
         }
     }
+
+    // ------------------------------------------------------------------
+    // Issue #117 — statistics overflow degrades but never fails the trade
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_match_order_stats_overflow_degrades_but_trade_intact() {
+        // Restore a level whose stats have quantity_executed near u64::MAX (no
+        // direct counter setter — seed through a snapshot).
+        let stats_text = format!(
+            "PriceLevelStatistics:orders_added=0;orders_removed=0;orders_executed=0;\
+             quantity_executed={};value_executed=0;last_execution_time=0;first_arrival_time=0;\
+             sum_waiting_time=0;stats_degraded=false",
+            u64::MAX - 5
+        );
+        let stats = crate::price_level::PriceLevelStatistics::from_str(&stats_text)
+            .expect("seed stats must parse");
+        let order = std::sync::Arc::new(create_standard_order(1, 10_000, 100));
+        let snapshot = crate::price_level::PriceLevelSnapshot::with_orders_and_stats(
+            Price::new(10_000),
+            vec![order],
+            stats,
+        )
+        .expect("snapshot construction");
+        let level = PriceLevel::from_snapshot(snapshot).expect("restore level");
+        assert!(
+            !level.stats().stats_degraded(),
+            "precondition: not degraded yet"
+        );
+
+        // Match consumes maker 1 (quantity 100); recording quantity += 100 over
+        // u64::MAX - 5 overflows, so the execution's stats are dropped.
+        let generator =
+            UuidGenerator::new(Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap());
+        let result = level.match_order(
+            100,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+
+        // The trade is still emitted and the MatchResult is intact.
+        assert_eq!(result.trades().len(), 1, "trade must still be emitted");
+        assert_eq!(
+            result.executed_quantity().expect("no overflow").as_u64(),
+            100
+        );
+        assert_eq!(
+            result.trades().as_vec()[0].maker_order_id(),
+            Id::from_u64(1)
+        );
+
+        // Stats degraded, and the aggregate did NOT advance (all-or-nothing).
+        assert!(
+            level.stats().stats_degraded(),
+            "stats must be marked degraded"
+        );
+        assert_eq!(
+            level.stats().quantity_executed(),
+            u64::MAX - 5,
+            "quantity_executed unchanged (execution dropped)"
+        );
+        assert_eq!(
+            level.stats().orders_executed(),
+            0,
+            "orders_executed rolled back"
+        );
+
+        // The degraded flag round-trips through a snapshot.
+        let json = level.snapshot_to_json().expect("snapshot json");
+        let restored = PriceLevel::from_snapshot_json(&json).expect("restore json");
+        assert!(
+            restored.stats().stats_degraded(),
+            "the degraded flag must round-trip through a snapshot"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_v2_without_degraded_flag_validates_and_roundtrips() {
+        // A non-degraded level serializes its statistics in the pre-#117
+        // 8-field form (the flag is skipped when false), so its checksummed
+        // package is byte-compatible with a v2 package persisted before the
+        // flag existed: the SHA-256 recomputed over those 8-field bytes on
+        // `from_snapshot_json` still validates. This guards against the
+        // "old snapshot fails ChecksumMismatch after upgrade" regression.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_standard_order(1, 10_000, 100))
+            .expect("seed maker");
+        let json = level.snapshot_to_json().expect("snapshot json");
+        assert!(
+            !json.contains("stats_degraded"),
+            "a non-degraded snapshot must omit the flag (old-v2 checksum compat)"
+        );
+        // The package validates (checksum over the 8-field statistics bytes) and
+        // restores — i.e. an old-format fixture passes `validate`.
+        let restored =
+            PriceLevel::from_snapshot_json(&json).expect("old-format package must validate");
+        assert!(!restored.stats().stats_degraded());
+        assert_eq!(restored.order_count(), 1);
+    }
 }
 
 #[cfg(test)]
