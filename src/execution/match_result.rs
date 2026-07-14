@@ -390,15 +390,19 @@ impl FromStr for MatchResult {
             let bytes = s.as_bytes();
             let mut pos = start_pos;
 
-            while pos < bytes.len() {
-                if bytes[pos] == b';' {
-                    return Ok((&s[start_pos..pos], pos + 1));
+            while let Some(&byte) = bytes.get(pos) {
+                if byte == b';' {
+                    let value = s
+                        .get(start_pos..pos)
+                        .ok_or(PriceLevelError::InvalidFormat)?;
+                    return Ok((value, pos + 1));
                 }
                 pos += 1;
             }
 
             // No ';' before the end: the value runs to the end of the string.
-            Ok((&s[start_pos..], bytes.len()))
+            let value = s.get(start_pos..).ok_or(PriceLevelError::InvalidFormat)?;
+            Ok((value, bytes.len()))
         }
         if !s.starts_with("MatchResult:") {
             return Err(PriceLevelError::InvalidFormat);
@@ -421,12 +425,17 @@ impl FromStr for MatchResult {
         let mut pos = "MatchResult:".len();
 
         while pos < bytes.len() {
-            let field_end = match bytes[pos..].iter().position(|&b| b == b'=') {
+            let field_end = match bytes
+                .get(pos..)
+                .and_then(|rest| rest.iter().position(|&b| b == b'='))
+            {
                 Some(idx) => pos + idx,
                 None => return Err(PriceLevelError::InvalidFormat),
             };
 
-            let field_name = &s[pos..field_end];
+            let field_name = s
+                .get(pos..field_end)
+                .ok_or(PriceLevelError::InvalidFormat)?;
             pos = field_end + 1;
             match field_name {
                 "order_id" => {
@@ -445,29 +454,33 @@ impl FromStr for MatchResult {
                     pos = next_pos;
                 }
                 "trades" => {
-                    if !bytes[pos..].starts_with(b"Trades:[") {
+                    if !bytes
+                        .get(pos..)
+                        .is_some_and(|rest| rest.starts_with(b"Trades:["))
+                    {
                         return Err(PriceLevelError::InvalidFormat);
                     }
 
                     let mut bracket_depth = 1;
                     let mut i = pos + "Trades:[".len();
 
-                    while i < bytes.len() && bracket_depth > 0 {
-                        match bytes[i] {
-                            b']' => {
+                    while bracket_depth > 0 {
+                        match bytes.get(i) {
+                            Some(b']') => {
                                 bracket_depth -= 1;
                                 if bracket_depth == 0 {
                                     break;
                                 }
                                 i += 1;
                             }
-                            b'[' => {
+                            Some(b'[') => {
                                 bracket_depth += 1;
                                 i += 1;
                             }
-                            _ => {
+                            Some(_) => {
                                 i += 1;
                             }
+                            None => break,
                         }
                     }
 
@@ -477,9 +490,9 @@ impl FromStr for MatchResult {
 
                     // `i` is the byte index of the closing ASCII `]`, so the
                     // inclusive slice ends on a char boundary.
-                    trades_str = Some(&s[pos..=i]);
+                    trades_str = Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
                     pos = i + 1;
-                    if pos < bytes.len() && bytes[pos] == b';' {
+                    if bytes.get(pos) == Some(&b';') {
                         pos += 1;
                     } else if pos < bytes.len() {
                         return Err(PriceLevelError::InvalidFormat);
@@ -493,22 +506,23 @@ impl FromStr for MatchResult {
                     let mut bracket_depth = 1;
                     let mut i = pos + 1;
 
-                    while i < bytes.len() && bracket_depth > 0 {
-                        match bytes[i] {
-                            b']' => {
+                    while bracket_depth > 0 {
+                        match bytes.get(i) {
+                            Some(b']') => {
                                 bracket_depth -= 1;
                                 if bracket_depth == 0 {
                                     break;
                                 }
                                 i += 1;
                             }
-                            b'[' => {
+                            Some(b'[') => {
                                 bracket_depth += 1;
                                 i += 1;
                             }
-                            _ => {
+                            Some(_) => {
                                 i += 1;
                             }
+                            None => break,
                         }
                     }
 
@@ -518,10 +532,11 @@ impl FromStr for MatchResult {
 
                     // `i` is the byte index of the closing ASCII `]`, so the
                     // inclusive slice ends on a char boundary.
-                    filled_order_ids_str = Some(&s[pos..=i]);
+                    filled_order_ids_str =
+                        Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
 
                     pos = i + 1;
-                    if pos < bytes.len() && bytes[pos] == b';' {
+                    if bytes.get(pos) == Some(&b';') {
                         pos += 1;
                     }
                 }
