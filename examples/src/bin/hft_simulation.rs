@@ -82,7 +82,10 @@ fn main() {
             let mut local_counter = 0;
             while thread_running.load(Ordering::Relaxed) {
                 // Generate a unique order ID
-                let order_id = (thread_id as u64) * 1_000_000 + local_counter;
+                // +1 offset keeps maker ids clear of the 0..initial_order_count
+                // seed range: admission now rejects a duplicate id (issue
+                // #113) instead of silently overwriting.
+                let order_id = (thread_id as u64 + 1) * 1_000_000 + local_counter;
 
                 // Create and add an order
                 let order_type = match local_counter % 5 {

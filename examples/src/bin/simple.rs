@@ -52,7 +52,10 @@ fn main() {
                     thread_barrier.wait(); // Wait for all threads to be ready
 
                     for i in 0..50 {
-                        let order_id = thread_id as u64 * 1000 + i;
+                        // Offset past the ids seeded by setup_initial_orders
+                        // (0..240): admission now rejects a duplicate id
+                        // (issue #113) instead of silently overwriting.
+                        let order_id = 10_000 + thread_id as u64 * 1000 + i;
                         let order = create_order(thread_id, order_id);
                         thread_price_level
                             .add_order(order)
