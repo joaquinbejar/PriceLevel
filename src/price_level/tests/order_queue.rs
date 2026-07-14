@@ -619,7 +619,7 @@ mod tests {
         // must therefore NEVER return `Empty` — the liquidity is always resting.
         // Under the old remove-then-insert order the maker vanished from the
         // index between the two ops and a scan could miss it.
-        use crate::price_level::order_queue::{FrontAction, FrontOutcome};
+        use crate::price_level::order_queue::{FrontAction, FrontOutcome, UpdateDecision};
         use std::collections::HashSet;
         use std::sync::Arc as StdArc;
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -637,10 +637,11 @@ mod tests {
                 while !done.load(Ordering::Relaxed) {
                     // Demote the resident maker to a fresh tail sequence, over and
                     // over. It stays resident the whole time.
-                    let _ = queue.resequence_to_tail(
-                        Id::from_u64(1),
-                        StdArc::new(create_test_order(1, 1_000, 100)),
-                    );
+                    let _ = queue.update_entry(Id::from_u64(1), |_live| {
+                        Ok(UpdateDecision::ReplaceAtTail(StdArc::new(
+                            create_test_order(1, 1_000, 100),
+                        )))
+                    });
                 }
             })
         };
@@ -672,14 +673,22 @@ mod tests {
         // Issue #127 🔴: after a maker is demoted, `pop_entry` must return it
         // LAST (at its new tail sequence), never early via a stale old key, and a
         // full drain must leave BOTH the map and the ordered index empty.
+        use crate::price_level::order_queue::UpdateDecision;
+
         let queue = OrderQueue::new();
         queue.push(Arc::new(create_test_order(1, 1_000, 10))); // seq 0
         queue.push(Arc::new(create_test_order(2, 1_000, 20))); // seq 1 (to demote)
         queue.push(Arc::new(create_test_order(3, 1_000, 30))); // seq 2
 
-        let replaced =
-            queue.resequence_to_tail(Id::from_u64(2), Arc::new(create_test_order(2, 1_000, 25)));
-        assert!(replaced.is_some(), "the demoted maker was resident");
+        let replaced = queue.update_entry(Id::from_u64(2), |_live| {
+            Ok(UpdateDecision::ReplaceAtTail(Arc::new(create_test_order(
+                2, 1_000, 25,
+            ))))
+        });
+        assert!(
+            matches!(replaced, Some(Ok(_))),
+            "the demoted maker was resident"
+        );
         // New-before-old re-key leaves no stale old key: map and index are 1:1.
         assert!(queue.debug_map_index_consistent());
 
@@ -703,6 +712,7 @@ mod tests {
 
     #[test]
     fn test_pop_entry_vs_resequence_race_drains_each_once() {
+        use crate::price_level::order_queue::UpdateDecision;
         // Issue #127 🔴: `pop_entry` validates the stored sequence against the
         // popped key, so under continuous demotions racing a drain, every id
         // comes out EXACTLY once (never twice via a stale old key, never lost),
@@ -726,10 +736,11 @@ mod tests {
                     while !done.load(Ordering::Relaxed) {
                         // Continuously demote a mid maker; once it is popped this
                         // returns `None` (id gone) and simply spins.
-                        let _ = queue.resequence_to_tail(
-                            Id::from_u64(N / 2),
-                            StdArc::new(create_test_order(N / 2, 1_000, 10)),
-                        );
+                        let _ = queue.update_entry(Id::from_u64(N / 2), |_live| {
+                            Ok(UpdateDecision::ReplaceAtTail(StdArc::new(
+                                create_test_order(N / 2, 1_000, 10),
+                            )))
+                        });
                     }
                 })
             };
