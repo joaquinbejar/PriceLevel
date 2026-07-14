@@ -90,8 +90,9 @@ mod topology {
 ///   observes a non-empty opposite-side level and is rejected.
 /// - An **opposite-side admission racing a same-side upsize** cannot slip
 ///   through a transient queue gap: the pin persists across a maker's
-///   remove-then-re-add because the count never reaches zero, so the side stays
-///   pinned even while the queue momentarily looks empty.
+///   demotion because the count never reaches zero (and as of issue #119 the
+///   quantity-increase demotion re-sequences in place without vacating the id
+///   at all).
 ///
 /// A concurrent [`Self::snapshot`] cannot capture a torn old-side/new-side view
 /// across a drain-then-re-admit either: a `topology_epoch` is bumped on every
@@ -1658,15 +1659,24 @@ impl PriceLevel {
                 // removed/replaced, so the counter deltas reflect the real
                 // transition rather than the possibly-stale pre-read above.
                 let old = if new_total > prev_total {
-                    // Quantity INCREASE: demote to the back of the queue (mint a
-                    // new sequence), losing time priority. Retains the
-                    // remove+push shape; its concurrency window is the broader
-                    // #81 work and is intentionally not addressed here.
-                    let Some(removed) = self.orders.remove(order_id) else {
+                    // Quantity INCREASE: demote to the back of the queue (a fresh
+                    // tail sequence), losing time priority. Uses the atomic
+                    // `resequence_to_tail` primitive (issue #119): the id stays
+                    // resident in the MAP throughout — no absent window — so a
+                    // concurrent cancel cannot be lost, a same-id admission is
+                    // always rejected, and match-front can no longer act on a
+                    // stale front position. (The INDEX is still re-keyed in two
+                    // steps, so one match scan may transiently miss the maker —
+                    // a missed fill at worst, strictly narrower than the old
+                    // remove+push absence.) Returns the replaced order (for the
+                    // counter deltas below) or `None` if concurrently removed.
+                    let Some(replaced) = self
+                        .orders
+                        .resequence_to_tail(order_id, new_order_arc.clone())
+                    else {
                         return Ok(None); // Removed by another thread.
                     };
-                    self.orders.push(new_order_arc.clone());
-                    removed
+                    replaced
                 } else {
                     // Quantity DECREASE or unchanged total: keep the maker's
                     // queue position by swapping the stored order in place at its
@@ -1688,7 +1698,7 @@ impl PriceLevel {
                 let old_visible = old.visible_quantity().as_u64();
                 let old_hidden = old.hidden_quantity().as_u64();
                 // `Relaxed` on both branches: advisory counters (issue #68); the
-                // queue mutation above (`update_in_place` / `remove` + `push`)
+                // queue mutation above (`update_in_place` / `resequence_to_tail`)
                 // carries the happens-before, not these counter RMWs.
                 let apply = |counter: &std::sync::atomic::AtomicU64, old: u64, new: u64| {
                     if new >= old {

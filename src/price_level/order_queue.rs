@@ -91,18 +91,14 @@ impl OrderQueue {
     /// Add an order to the tail of the queue (newest time priority),
     /// **unconditionally overwriting** any existing entry for the same id.
     ///
-    /// This is the re-insert primitive for a maker that was just removed and is
-    /// being put back under a fresh sequence (the upsize `remove` + `push`
-    /// demotion), where the id is guaranteed absent. For *admission*, where the
-    /// id may collide with a live order, use [`OrderQueue::try_push`], which
-    /// rejects the duplicate instead of overwriting it (leaving the id-keyed map
-    /// and the ordered index disagreeing).
-    ///
-    /// `pub(crate)`: overwriting publication is never safe to expose — a caller
-    /// that reused a live id would silently replace the resting order and strand
-    /// its old index entry. Admission goes through [`OrderQueue::try_push`] /
-    /// [`OrderQueue::try_push_with`]; this stays available only to the in-crate
-    /// upsize re-insert, whose id is provably absent at the call site.
+    /// Test-only queue-building fixture. It has no production caller: admission
+    /// uses [`OrderQueue::try_push`] / [`OrderQueue::try_push_with`]
+    /// (insert-if-absent, issue #113) and the quantity-increase demotion uses
+    /// [`OrderQueue::resequence_to_tail`] (in-place, issue #119). Its blind
+    /// overwrite would leave the id-keyed map and the ordered index
+    /// disagreeing, so it is deliberately not part of the public API — like
+    /// [`OrderQueue::reinsert`], it is `#[cfg(test)]`.
+    #[cfg(test)]
     pub(crate) fn push(&self, order: Arc<OrderType<()>>) {
         // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
         // counter matter. The happens-before ordering between concurrent
@@ -123,6 +119,9 @@ impl OrderQueue {
     /// publication has no side effects to commit atomically with it; the
     /// reservation-hook form commits a caller-side reservation (e.g. the level's
     /// atomic counters) under the same shard lock that decides the id is free.
+    /// The quantity-increase update path no longer vacates the id either: as of
+    /// issue #119 it demotes in place via `resequence_to_tail`, so there is no
+    /// remove-then-push window for a same-id admission to slip into.
     ///
     /// # Errors
     ///
@@ -223,11 +222,26 @@ impl OrderQueue {
         loop {
             // `pop_front` atomically removes the lowest-sequence index entry.
             let entry = self.index.pop_front()?;
+            let popped_seq = *entry.key();
             let order_id = *entry.value();
-            // The id may have been concurrently cancelled via `remove`; in that
-            // case the map no longer holds it, so skip it and try the next one.
-            if let Some((_, (seq, order))) = self.orders.remove(&order_id) {
-                return Some((seq, order));
+            // Validate the maker's STORED sequence against the key we popped,
+            // under the map entry lock (issue #127). A concurrent
+            // `resequence_to_tail` may have demoted this id to a fresh tail
+            // sequence, making this a STALE old key; removing by id alone would
+            // return the demoted maker ahead of older makers and strand its new
+            // key. Mirror `match_front`'s stale-front guard: only take the maker
+            // when the popped key IS its current key.
+            match self.orders.entry(order_id) {
+                Entry::Occupied(occupied) if occupied.get().0 == popped_seq => {
+                    let (seq, order) = occupied.remove();
+                    return Some((seq, order));
+                }
+                // Stale old key of a demoted maker (stored seq != popped), or the
+                // id was cancelled (`Vacant`). Either way the popped key is
+                // already gone from the index (`pop_front` removed it); the maker,
+                // if it still rests, lives under its newer key and is popped in
+                // order on a later iteration. Retry with the next front.
+                _ => continue,
             }
         }
     }
@@ -324,6 +338,26 @@ impl OrderQueue {
                     continue;
                 }
                 Entry::Occupied(mut occupied) => {
+                    // Stale front-selection guard (issue #119). The `(seq, id)`
+                    // pair was read from the index BEFORE this entry lock was
+                    // taken. A concurrent `resequence_to_tail` (quantity-increase
+                    // demotion) may have moved this maker to a fresh tail
+                    // sequence in that gap, so the entry now stores a DIFFERENT
+                    // sequence and the maker is no longer the front. Acting on it
+                    // via the stale front position would break FIFO. Drop the
+                    // stale index key (the demoted maker already lives under its
+                    // new key) and retry with a fresh front read — the same
+                    // self-heal shape as the `Vacant` arm above. Sequences are
+                    // monotonic and never reused, so `index[seq]` can only ever
+                    // have pointed at this id, making the removal safe. The
+                    // retry is unbounded; liveness relies on re-sequencings of
+                    // the front maker being finite (the single-logical-writer
+                    // update contract), as with the `Vacant` self-heal.
+                    if occupied.get().0 != seq {
+                        self.index.remove(&seq);
+                        continue;
+                    }
+
                     // `occupied.get()` is `(stored_seq, order)`. Decide against
                     // the live order while the entry lock is held. Borrow the
                     // resident order rather than cloning its `Arc` on the hot
@@ -377,7 +411,10 @@ impl OrderQueue {
                             // `occupied` still holds the per-entry lock here, so
                             // re-keying the index — a different structure
                             // (`SkipMap`), no deadlock — happens while a concurrent
-                            // cancel is still excluded from the entry. Once the
+                            // cancel is still excluded from the entry. Insert the
+                            // NEW key BEFORE removing the old (issue #127) so the
+                            // id is never transiently absent from the index and a
+                            // concurrent front scan can never miss it. Once the
                             // lock is released the value already carries `new_seq`,
                             // so a cancel removes `orders[id]` and `index[new_seq]`
                             // consistently. The only residue a race can leave is a
@@ -385,8 +422,8 @@ impl OrderQueue {
                             // already-removed id, which the next `match_front`
                             // self-heals on the `Vacant` branch. No order and no
                             // counter update is ever lost.
-                            self.index.remove(&seq);
                             self.index.insert(new_seq, order_id);
+                            self.index.remove(&seq);
                             drop(occupied);
                         }
                         FrontAction::SetAside => {
@@ -405,6 +442,70 @@ impl OrderQueue {
 
                     return FrontOutcome::Matched { result };
                 }
+            }
+        }
+    }
+
+    /// Atomically re-sequence `order_id` to the tail (a fresh insertion
+    /// sequence), swapping in `new_order`, **without ever removing the id from
+    /// the map**. Returns the replaced order, or `None` if the id was
+    /// concurrently removed (nothing is inserted in that case).
+    ///
+    /// This is the quantity-increase demotion primitive (issue #119). It is the
+    /// standalone form of the [`FrontAction::ReplaceAtTail`] path the match
+    /// sweep already uses: it holds the `DashMap` per-entry (shard) lock across
+    /// the whole operation — mint a tail sequence, swap the stored
+    /// `(sequence, order)` pair in place, then re-key the index
+    /// (`old_seq -> new_seq`) — so the id stays continuously resident in
+    /// `orders`. The prior `remove` + `push` demotion opened an absent window in
+    /// which the id was gone from the map; a concurrent cancel could report no
+    /// removal while the update re-inserted (lost cancel / resurrection), a
+    /// concurrent same-id admission could slip into the gap, and
+    /// [`OrderQueue::match_front`] could act on a stale front. Because the id
+    /// never leaves the map here, a concurrent [`OrderQueue::remove`] either
+    /// fully precedes this call (this returns `None`) or fully follows it (it
+    /// removes the re-sequenced order): all three hazards are closed. The index
+    /// re-key inserts the NEW key before removing the old (issue #127), so the id
+    /// is never absent from the INDEX either: a concurrent front scan always
+    /// finds this maker at one key or the other and can never return `Empty`
+    /// with liquidity resting. The transient two-key window is discarded by the
+    /// stale-front guard in [`OrderQueue::match_front`] / [`OrderQueue::pop_entry`].
+    ///
+    /// Allocation-free beyond the `Arc` the caller hands in and the index node
+    /// [`crossbeam_skiplist::SkipMap::insert`] allocates for the new key.
+    pub(crate) fn resequence_to_tail(
+        &self,
+        order_id: Id,
+        new_order: Arc<OrderType<()>>,
+    ) -> Option<Arc<OrderType<()>>> {
+        match self.orders.entry(order_id) {
+            // Concurrently removed: do not resurrect it.
+            Entry::Vacant(_) => None,
+            Entry::Occupied(mut occupied) => {
+                // Mint the tail sequence and swap the stored (seq, order) pair in
+                // place under the entry lock, then re-key the index while the
+                // lock is still held (a different structure — no deadlock),
+                // exactly as `ReplaceAtTail` does.
+                let new_seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                let (old_seq, replaced) = {
+                    let slot = occupied.get_mut();
+                    let old_seq = slot.0;
+                    let replaced = std::mem::replace(&mut slot.1, new_order);
+                    slot.0 = new_seq;
+                    (old_seq, replaced)
+                };
+                // Re-key the index NEW-KEY-FIRST (issue #127): insert the new
+                // sequence BEFORE removing the old one, so the id is never
+                // transiently absent from the index. A concurrent `match_front`
+                // front scan therefore always finds this maker (at the old key or
+                // the new one) — it can never see a gap and return `Empty` with
+                // liquidity resting. The transient window where BOTH keys point
+                // at the id is harmless: the stale-front guard (`stored != seq`)
+                // in `match_front` / `pop_entry` discards the old key on
+                // selection, since the stored sequence is already `new_seq`.
+                self.index.insert(new_seq, order_id);
+                self.index.remove(&old_seq);
+                Some(replaced)
             }
         }
     }
