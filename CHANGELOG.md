@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-07-14
+
+Patch release: a **bug fix** to the snapshot round-trip's queue-priority
+preservation. The snapshot JSON *shape* is unchanged, but the `orders` array
+order — and therefore the package checksum — changes for levels whose
+consumption order diverges from timestamp order (a demoted or
+non-monotonically-timestamped maker).
+
+### Fixed
+
+- **A snapshot round-trip no longer undoes a queue-priority demotion.**
+  `PriceLevel::snapshot()` sorted its orders by `(timestamp, sequence)` and
+  did not serialize the insertion sequence, while `from_snapshot` re-enqueues
+  in vector order. An order demoted to the back of the queue with its original
+  admission timestamp intact — a quantity *increase* via `update_order`, or an
+  iceberg / reserve replenishment — therefore sorted back to its old timestamp
+  position on restore and wrongly regained front priority. The snapshot now
+  materializes orders in **queue-consumption order** (ascending insertion
+  sequence, exactly as `match_order` sweeps), so a restore reproduces the live
+  queue's price-time priority in all cases, demotions included. Found via the
+  queue-priority contract review in joaquinbejar/OrderBook-rs#204 (#109).
+
+### Notes
+
+- `PriceLevelSnapshot::orders()` / `iter_orders()` / `into_orders()` now
+  yield consumption order, not timestamp order. A consumer that wants
+  admission-time order should sort by `order.timestamp()` itself (or read
+  `PriceLevel::snapshot_orders()` on a live level, which keeps the
+  `(timestamp, sequence)` view).
+- A snapshot serialized by ≤ 0.8.4 that captured a demotion restores with the
+  old (wrong) front priority — the fix cannot repair data already persisted
+  in timestamp order. Re-snapshot with 0.8.5 to pin the correct order.
+
 ## [0.8.4] - 2026-07-10
 
 Patch release: a **documentation fix** to `TimeInForce::Gtd`'s payload unit. No
