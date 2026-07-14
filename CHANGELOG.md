@@ -5,6 +5,73 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-14
+
+Major hardening release: ten engine-correctness issues (#111–#120, PRs
+#121–#130) plus five adversarial review rounds. Every fix ships with
+regression tests; the full suite grew from ~440 to 526 tests.
+
+### Changed (breaking)
+
+- **`PriceLevel::add_order` returns `Result<Arc<OrderType<()>>, PriceLevelError>`.**
+  Admission validates before mutating: the order's own visible + hidden total,
+  the level's counters (checked CAS reservations), price and side topology,
+  and id uniqueness — a rejected admission leaves the level byte-identical
+  (#111, #113, #120). A duplicate id reports the new
+  `PriceLevelError::DuplicateOrderId` and takes precedence over a
+  counter-capacity error.
+- **`PriceLevel::matchable_quantity(quantity, taker_id)`** — the fill-or-kill
+  dry run applies the same self-match skip as the sweep so the two can never
+  diverge (#120).
+- **`OrderQueue::push` and `OrderQueue::from_vec` are no longer public**, and
+  **`impl From<&PriceLevelSnapshot> for PriceLevel` is replaced by `TryFrom`**
+  delegating to the validating `from_snapshot` — no public path can overwrite
+  a live id or restore counters over silently-dropped duplicates (#113 +
+  reviews).
+- **Snapshot format v3.** Statistics carry a sticky `stats_degraded` flag
+  (serialized only when `true`); v3 packages are written, v2 packages are
+  still accepted on read (legacy 8-field statistics), v1 remains rejected
+  (#117 + review). Pre-0.9 snapshots that captured a queue-priority demotion
+  restore with the old (wrong) front priority — re-snapshot to pin the
+  corrected order.
+- **Concurrency contract wording:** the Gtc/Ioc/Day match path is lock-free;
+  `add_order` / `update_order` (cancel included) are shared-lock mutators —
+  normally uncontended, but they can block behind an O(depth) fill-or-kill
+  writer (#112).
+
+### Fixed
+
+- Partial fills resize every matchable order variant (TrailingStop, Pegged,
+  MarketToLimit previously kept their original size and could double-execute)
+  (#118).
+- `MatchResult::from_str` never panics on malformed UTF-8, and both decoders
+  route through one invariant validator (outcome consistency, taker identity,
+  filled-id ordering, checked sums) (#114, #116).
+- Counter overflow is rejected before any state mutates, including reserve
+  replenishment (which can no longer bypass FIFO or wrap the level counter —
+  the sweep aborts in front of a replenishment the level cannot represent)
+  (#111 + review).
+- Duplicate-id admission is atomic (identity decided first, publication under
+  one held entry lock), and the index re-key is new-before-old with a
+  sequence-validated destructive pop — a demoted maker can neither vanish
+  from a front scan nor drain out of FIFO order (#113, #119 + reviews).
+- Level topology is pinned in a single side+count atomic word (opposite-side
+  admissions into an empty level serialize on one CAS), snapshots retry on a
+  topology epoch so they never capture a torn side transition, and a
+  self-match attempt is rejected terminally with zero trades (#120 + review).
+- Quantity updates derive from the live maker under the entry lock (no
+  resurrection of executed quantity, no stale priority policy), with replenish
+  counter transitions published inside the lock (#115, #119 + reviews).
+- Execution statistics record all-or-nothing behind a seqlock (consistent
+  clones/serialization, enforced reset serialization, checked aggregates,
+  monotonic last-execution timestamp), and a dropped recording is observable
+  via `stats_degraded` with a single WARN on transition (#117 + review).
+- PostOnly can never trade (structural early return, linearized depth verdict
+  via a mutation epoch) and FOK is all-or-nothing under every interleaving
+  (level guard across an exact feasibility projection and the sweep; poisoned
+  guards fail fast instead of reopening a half-mutated level) (#112 + review).
+- The plain `PriceLevelData` serde round-trip preserves FIFO order (#131).
+
 ## [0.8.5] - 2026-07-14
 
 Patch release: a **bug fix** to the snapshot round-trip's queue-priority
