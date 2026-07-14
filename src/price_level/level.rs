@@ -267,9 +267,11 @@ impl PriceLevel {
     /// `out` is cleared and then extended in place, yielding the exact same
     /// sequence [`Self::snapshot_by_insertion_seq`] returns — the order
     /// [`Self::match_order`] consumes resting orders. Reusing one scratch
-    /// buffer across calls avoids the per-call allocation the owned-`Vec`
-    /// variant pays, which matters for a downstream consumer that walks every
-    /// level repeatedly (e.g. a self-trade-prevention pre-scan).
+    /// buffer across calls avoids the per-call allocation of the returned
+    /// `Vec`, which matters for a downstream consumer that walks every level
+    /// repeatedly (e.g. a self-trade-prevention pre-scan). Note that an
+    /// internal `(sequence, order)` pairs buffer plus its sort is still paid
+    /// per call, so the reuse saves only the output `Vec` allocation.
     ///
     /// Like `snapshot_by_insertion_seq`, this is a point-in-time view: a
     /// concurrent mutation after the call can change the queue.
@@ -775,11 +777,24 @@ impl PriceLevel {
     /// fold the vector instead of reading the live atomic counters separately,
     /// which would be a torn read (the atomics could advance between the counter
     /// load and the order materialization).
+    ///
+    /// The `orders` vector is materialized in **queue-consumption order**
+    /// (ascending insertion sequence — the exact order [`Self::match_order`]
+    /// consumes resting orders), not the `(timestamp, sequence)` display order
+    /// of [`Self::snapshot_orders`]. Because [`Self::from_snapshot`] re-enqueues
+    /// in vector order, a restore reproduces the live queue's priority exactly —
+    /// including the "sizing an order up loses time priority" demotion, where an
+    /// order that was moved to the back of the queue keeps its original
+    /// admission timestamp. Using the timestamp view here would let such an
+    /// order sort back to its old position and wrongly regain front priority on
+    /// restore.
     #[must_use]
     pub fn snapshot(&self) -> PriceLevelSnapshot {
-        // Materialize the orders exactly once; every aggregate is derived from
-        // this snapshot so they are mutually consistent by construction.
-        let orders = self.snapshot_orders();
+        // Materialize the orders exactly once, in queue-consumption (insertion
+        // sequence) order so a snapshot round-trip re-enqueues them in identical
+        // priority order; every aggregate is derived from this same snapshot so
+        // they are mutually consistent by construction.
+        let orders = self.snapshot_by_insertion_seq();
 
         let order_count = orders.len();
 

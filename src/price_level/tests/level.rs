@@ -5000,6 +5000,307 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_restore_preserves_upsize_demotion() {
+        // Issue #109: sizing an order up demotes it to the back of the queue
+        // (remove+push mints a fresh insertion sequence) while keeping its
+        // original admission timestamp. A snapshot round-trip must reproduce
+        // that demotion, not let the order sort back to its timestamp position
+        // and wrongly regain front priority.
+        let level = PriceLevel::new(10_000);
+        // Three standard makers with monotonic timestamps (TIMESTAMP_COUNTER),
+        // so insertion sequence and timestamp order initially agree.
+        level.add_order(create_standard_order(1, 10_000, 100));
+        level.add_order(create_standard_order(2, 10_000, 100));
+        level.add_order(create_standard_order(3, 10_000, 100));
+
+        // Upsize maker 1 (Standard orders resize): total increases 100 -> 150,
+        // so update_order takes the quantity-increase branch and demotes it to
+        // the back, behind 2 and 3.
+        let updated = level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(1),
+                new_quantity: Quantity::new(150),
+            })
+            .expect("upsize update should succeed")
+            .expect("maker 1 must still be present");
+        assert_eq!(updated.visible_quantity().as_u64(), 150);
+
+        // Pre-snapshot consumption order reflects the demotion: 2, 3, then 1.
+        let pre_ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            pre_ids,
+            vec![Id::from_u64(2), Id::from_u64(3), Id::from_u64(1)],
+            "upsized maker 1 must sit at the back of the live queue"
+        );
+        let original_visible = level.visible_quantity();
+
+        // Full JSON round-trip through the checksum-protected package.
+        let json = level
+            .snapshot_to_json()
+            .expect("snapshot_to_json should succeed");
+        let restored =
+            PriceLevel::from_snapshot_json(&json).expect("from_snapshot_json should succeed");
+
+        // The restored level reproduces the demoted consumption order exactly.
+        let restored_ids: Vec<Id> = restored
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            restored_ids,
+            vec![Id::from_u64(2), Id::from_u64(3), Id::from_u64(1)],
+            "restore must preserve the upsize demotion, not regain front priority"
+        );
+
+        // Counters survive the round-trip: 100 + 100 + 150 = 350 visible.
+        assert_eq!(
+            restored.visible_quantity(),
+            original_visible,
+            "restored visible quantity must equal the original"
+        );
+        assert_eq!(restored.visible_quantity(), 350);
+
+        // Draining the restored level to completion must emit trades in the
+        // demoted maker order: 2, 3, then the upsized 1.
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        let result = restored.match_order(
+            1_000,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(9_000),
+            &generator,
+        );
+        let makers: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(
+            makers,
+            vec![Id::from_u64(2), Id::from_u64(3), Id::from_u64(1)],
+            "restored match_order must consume makers in the demoted order"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_restore_preserves_iceberg_replenish_demotion() {
+        // Issue #109 (same bug class as the upsize): an iceberg/reserve
+        // replenishment re-queues the refreshed tranche at the TAIL
+        // (ReplaceAtTail, fresh sequence) while keeping its ORIGINAL timestamp.
+        // A snapshot round-trip must reproduce that demotion, not let the
+        // refreshed tranche sort back to its timestamp position and regain
+        // front priority.
+        let level = PriceLevel::new(10_000);
+        // Iceberg maker (id 1, Sell) added first: visible 50 over hidden 100.
+        level.add_order(create_iceberg_order(1, 10_000, 50, 100));
+        // A plain Sell maker (id 2) rests behind it.
+        level.add_order(create_sell_standard_order(2, 10_000, 100));
+
+        let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+        let generator = UuidGenerator::new(namespace);
+        // Fully consume the iceberg's visible tranche (50): it replenishes from
+        // hidden and is re-queued at the TAIL, behind maker 2.
+        let _ = level.match_order(
+            50,
+            Id::from_u64(901),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+
+        // Live consumption order reflects the replenish demotion: 2, then 1.
+        let pre_ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            pre_ids,
+            vec![Id::from_u64(2), Id::from_u64(1)],
+            "replenished iceberg must sit at the back of the live queue"
+        );
+        let original_visible = level.visible_quantity();
+
+        // Full JSON round-trip through the checksum-protected package.
+        let json = level
+            .snapshot_to_json()
+            .expect("snapshot_to_json should succeed");
+        let restored =
+            PriceLevel::from_snapshot_json(&json).expect("from_snapshot_json should succeed");
+
+        // The restored level reproduces the demoted consumption order exactly.
+        let restored_ids: Vec<Id> = restored
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            restored_ids,
+            vec![Id::from_u64(2), Id::from_u64(1)],
+            "restore must preserve the replenish demotion, not regain front priority"
+        );
+        assert_eq!(
+            restored.visible_quantity(),
+            original_visible,
+            "restored visible quantity must equal the original"
+        );
+
+        // Draining the restored level to completion must emit trades with
+        // maker 2 before maker 1. The iceberg may emit several trades as it
+        // replenishes, so compare the order-preserving de-duplicated makers.
+        let drain = restored.match_order(
+            1_000,
+            Id::from_u64(902),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_001),
+            &generator,
+        );
+        let mut deduped: Vec<Id> = Vec::new();
+        for trade in drain.trades().as_vec() {
+            let maker = trade.maker_order_id();
+            if deduped.last() != Some(&maker) {
+                deduped.push(maker);
+            }
+        }
+        assert_eq!(
+            deduped,
+            vec![Id::from_u64(2), Id::from_u64(1)],
+            "restored match_order must consume maker 2 fully before the demoted iceberg 1"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_concurrent_resequencing_no_duplicates() {
+        // Issue #110 (PR review): while a maker is re-sequenced (an upsize's
+        // remove+push demotion), a concurrent reader must never observe the
+        // same order twice — or a torn (order_count, orders) pair — in a
+        // snapshot. The old `snapshot_by_seq` walked the SkipMap `index` and
+        // could pin a stale `seq -> id` entry mid-re-sequencing, emit the
+        // refreshed order at BOTH its old and new sequence, and hand
+        // `snapshot()` a vector with a duplicate id whose fold corrupts the
+        // restore. Deriving the view from the id-keyed `orders` map makes a
+        // duplicate impossible by construction; this test guards that.
+        use std::collections::HashSet;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const N: usize = 8;
+        const WRITER_ITERS: usize = 300;
+        const READERS: usize = 2;
+
+        let level = Arc::new(PriceLevel::new(10_000));
+        // N resting standard makers with known ids 1..=N and initial quantity
+        // 100 (monotonic timestamps via the shared counter).
+        for id in 1..=N as u64 {
+            level.add_order(create_standard_order(id, 10_000, 100));
+        }
+
+        // Barrier aligns the single writer with the readers so the resequencing
+        // churn and the snapshots genuinely overlap (global_rules requires a
+        // Barrier start for concurrency tests).
+        let barrier = Arc::new(Barrier::new(READERS + 1));
+        let writer_done = Arc::new(AtomicBool::new(false));
+
+        let writer = {
+            let level = Arc::clone(&level);
+            let barrier = Arc::clone(&barrier);
+            let writer_done = Arc::clone(&writer_done);
+            thread::spawn(move || {
+                barrier.wait();
+                for k in 0..WRITER_ITERS {
+                    // Rotate through the ids; the target quantity strictly
+                    // increases every time (1000 + k > any prior value assigned
+                    // to this id, and > the initial 100), so each update takes
+                    // the quantity-increase branch and demotes via remove+push.
+                    let id = Id::from_u64((k % N) as u64 + 1);
+                    let new_quantity = Quantity::new(1_000 + k as u64);
+                    let _ = level
+                        .update_order(OrderUpdate::UpdateQuantity {
+                            order_id: id,
+                            new_quantity,
+                        })
+                        .expect("upsize update must not error");
+                }
+                writer_done.store(true, Ordering::Release);
+            })
+        };
+
+        let readers: Vec<_> = (0..READERS)
+            .map(|_| {
+                let level = Arc::clone(&level);
+                let barrier = Arc::clone(&barrier);
+                let writer_done = Arc::clone(&writer_done);
+                thread::spawn(move || {
+                    barrier.wait();
+                    loop {
+                        // Observe the flag BEFORE taking the snapshot, then run
+                        // one more check after it flips, so a final post-writer
+                        // snapshot is always validated too.
+                        let finished = writer_done.load(Ordering::Acquire);
+
+                        let snap = level.snapshot();
+                        let ids: HashSet<Id> = snap.orders().iter().map(|o| o.id()).collect();
+                        assert_eq!(
+                            ids.len(),
+                            snap.orders().len(),
+                            "snapshot contains a duplicate order id under concurrent resequencing"
+                        );
+                        assert_eq!(
+                            snap.orders().len(),
+                            snap.order_count(),
+                            "snapshot order_count disagrees with its own orders vector"
+                        );
+
+                        // The snapshot must also round-trip into a level whose
+                        // rebuilt queue length matches its order_count.
+                        let restored =
+                            PriceLevel::from_snapshot(snap).expect("from_snapshot must succeed");
+                        assert_eq!(
+                            restored.order_count(),
+                            restored.snapshot_by_insertion_seq().len(),
+                            "restored order_count disagrees with rebuilt queue length"
+                        );
+
+                        if finished {
+                            break;
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        writer.join().expect("writer thread panicked");
+        for reader in readers {
+            reader.join().expect("reader thread panicked");
+        }
+
+        // After the churn settles the level still holds exactly the N makers,
+        // with no duplicates and counters consistent with the queue.
+        assert_counters_match_queue(&level);
+        let final_ids: HashSet<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(
+            final_ids.len(),
+            N,
+            "the level must still hold exactly N distinct makers"
+        );
+    }
+
+    #[test]
     fn test_snapshot_by_insertion_seq_empty_level() {
         let level = PriceLevel::new(10_000);
         assert!(level.snapshot_by_insertion_seq().is_empty());
