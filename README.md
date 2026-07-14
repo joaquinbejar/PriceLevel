@@ -12,11 +12,11 @@
 
  # PriceLevel
 
- A high-performance price level implementation for limit order books in Rust, lock-free on its common add / match / cancel paths (a fill-or-kill match takes a brief level-exclusive guard — see below). This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns.
+ A high-performance price level implementation for limit order books in Rust. The `Gtc` / `Ioc` / `Day` match path is lock-free (atomics + sharded / skiplist structures); admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (see below). This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns.
 
  ## Features
 
- - Lock-free common paths (add / match / cancel) for high-throughput trading applications; a fill-or-kill match briefly takes a level-exclusive guard and admissions / updates pay one uncontended shared acquisition (issue #112)
+ - Lock-free `Gtc` / `Ioc` / `Day` match path for high-throughput trading; admissions and updates (cancel / resize) are shared-lock mutators — one normally-uncontended shared acquisition that can block behind an `O(depth)` fill-or-kill match holding the exclusive side (issue #112)
  - Support for diverse order types including standard limit orders, iceberg orders, post-only, fill-or-kill, and more
  - Thread-safe operations built on atomic counters and lock-free data structures (with the fill-or-kill guard noted above)
  - Efficient order matching and execution logic
@@ -52,7 +52,7 @@
 
  ## Implementation Details
 
- - **Thread Safety**: Uses atomic operations and lock-free data structures — no locks on the common add / match / cancel paths; a fill-or-kill match briefly takes a level-exclusive guard (issue #112), and admissions / updates pay one uncontended shared acquisition
+ - **Thread Safety**: Uses atomic operations and lock-free data structures. The `Gtc` / `Ioc` / `Day` match path takes no lock; admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (issue #112)
  - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index
  - **Statistics Tracking**: Each price level tracks execution statistics in real-time
  - **Snapshot Capabilities**: Create point-in-time snapshots of price levels for market data distribution
@@ -139,7 +139,7 @@ The simulation demonstrates the library's exceptional performance capabilities:
 - **High-Frequency Trading**: Over **264,000 operations per second** in realistic mixed workloads
 - **Hot Spot Performance**: Up to **7.75 million operations per second** under optimal conditions
 - **Write-Heavy Workloads**: Over **6.3 million operations per second** for pure write operations
-- **Lock-Free Common Paths**: Maintains high throughput with minimal contention overhead on add / match / cancel (a fill-or-kill match takes a brief level-exclusive guard)
+- **Lock-Free Match Path**: The `Gtc` / `Ioc` / `Day` match runs lock-free with minimal contention overhead; admissions / updates take a normally-uncontended shared lock that can block behind an `O(depth)` fill-or-kill match
 
 The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
 

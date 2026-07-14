@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Bit layout of the [`PriceLevel::topology`] word (issue #126): the high two
@@ -64,14 +64,67 @@ mod topology {
     }
 }
 
-/// A price level in a limit order book, lock-free on its common paths.
+// Deterministic race seam for the post-only decision boundary (issue #130).
+//
+// `match_order` fires `fire_post_only_decision_hook` BETWEEN the post-only depth
+// decision and its commit, so a test can install a hook that mutates the level
+// (e.g. `add_order`) in that exact window and assert the outcome
+// deterministically, without relying on scheduler stress. Production builds
+// compile none of this — the hook call site is `#[cfg(test)]`.
+#[cfg(test)]
+thread_local! {
+    static POST_ONLY_DECISION_HOOK: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install a hook fired at the post-only decision boundary (test seam, issue
+/// #130). Returns a guard that clears the hook on drop.
+#[cfg(test)]
+pub(crate) fn set_post_only_decision_hook(hook: Box<dyn FnMut()>) -> PostOnlyHookGuard {
+    POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    PostOnlyHookGuard
+}
+
+/// Clears the post-only decision hook when dropped (test seam, issue #130).
+#[cfg(test)]
+pub(crate) struct PostOnlyHookGuard;
+
+#[cfg(test)]
+impl Drop for PostOnlyHookGuard {
+    fn drop(&mut self) {
+        POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// Fire the post-only decision hook if one is installed (test seam, issue #130).
+#[cfg(test)]
+fn fire_post_only_decision_hook() {
+    // Take the hook OUT of the slot while firing so a re-entrant `match_order`
+    // inside the hook does not double-borrow the `RefCell`.
+    let hook = POST_ONLY_DECISION_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(mut hook) = hook {
+        hook();
+        POST_ONLY_DECISION_HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(hook);
+            }
+        });
+    }
+}
+
+/// A price level in a limit order book, lock-free on the match path.
 ///
-/// Add, match (`Gtc` / `Ioc` / `Day`), and cancel take no lock — they run on
-/// atomic counters and lock-free structures. A fill-or-kill match is the one
-/// exception: it takes a level-exclusive guard across its feasibility check and
-/// sweep so it stays all-or-nothing against concurrent mutation, and admissions
-/// / updates pay one uncontended shared acquisition (see the `fok_guard` field
-/// and [`Self::match_order`] for the full argument — issue #112).
+/// A `Gtc` / `Ioc` / `Day` match runs entirely on atomic counters and lock-free
+/// (sharded / skiplist) structures — no lock. The mutators [`Self::add_order`]
+/// and [`Self::update_order`] (cancel and resize included) are NOT lock-free:
+/// each takes the **shared** side of a per-level reader-writer guard. That
+/// acquisition is normally uncontended (it only coordinates with a fill-or-kill
+/// match), but it can BLOCK behind a concurrent fill-or-kill: a `Fok` match
+/// takes the guard's **exclusive** side across its feasibility check and sweep —
+/// an `O(depth)` critical section — so it stays all-or-nothing against
+/// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
+/// the full argument (issue #112).
 ///
 /// # Topology
 ///
@@ -151,10 +204,30 @@ pub struct PriceLevel {
     /// `O(depth)` exclusive section, not a constant-time one. The non-FOK sweep
     /// takes NO guard — it relies on the
     /// single-matcher-per-level model and the existing per-entry cancel
-    /// atomicity (issue #81). The guarded value is `()`; a poisoned lock (a
-    /// holder panicked) is recovered with `into_inner`, since there is no state
-    /// to corrupt.
+    /// atomicity (issue #81). The guarded value is `()`, so a poisoned lock is
+    /// recovered with `into_inner` — but a poison means a holder PANICKED
+    /// mid-operation, which may have left the level half-mutated, so the recovery
+    /// also trips [`Self::level_poisoned`] and the level then fails fast rather
+    /// than silently reopening (issue #130).
     fok_guard: RwLock<()>,
+
+    /// Sticky fail-fast flag set when a poisoned [`Self::fok_guard`] is recovered
+    /// (issue #130): a guard holder panicked mid-operation, so the level may be
+    /// half-mutated and cannot be trusted. While set, `add_order` / `update_order`
+    /// return [`PriceLevelError::InvalidOperation`] and `match_order` refuses to
+    /// match (returns an empty result); `snapshot` stays allowed for diagnostics
+    /// / reconstruction. The production match sweep has no unwind path (audited),
+    /// so this is defense-in-depth; a poisoned level requires reconstruction from
+    /// a snapshot. Never cleared once set.
+    level_poisoned: AtomicBool,
+
+    /// Monotonic counter bumped by every committing `add_order` / `update_order`
+    /// (cancel / resize) so the non-atomic post-only depth scan can linearize
+    /// (issue #130). [`Self::has_matchable_depth`] reads it, scans the queue,
+    /// re-reads it, and retries on change: a stable epoch across the scan means
+    /// no mutation committed during it, giving the post-only verdict a
+    /// linearization point instead of a torn read.
+    mutation_epoch: AtomicU64,
 }
 
 impl PriceLevel {
@@ -249,6 +322,8 @@ impl PriceLevel {
             orders: queue,
             stats: Arc::new(stats),
             fok_guard: RwLock::new(()),
+            level_poisoned: AtomicBool::new(false),
+            mutation_epoch: AtomicU64::new(0),
         })
     }
 
@@ -303,6 +378,8 @@ impl PriceLevel {
             orders: OrderQueue::new(),
             stats: Arc::new(PriceLevelStatistics::new()),
             fok_guard: RwLock::new(()),
+            level_poisoned: AtomicBool::new(false),
+            mutation_epoch: AtomicU64::new(0),
         }
     }
 
@@ -491,6 +568,14 @@ impl PriceLevel {
         self.topology_epoch.fetch_add(1, Ordering::Release);
     }
 
+    /// Bump the mutation epoch on a committed add / cancel / resize so a racing
+    /// post-only depth scan retries (issue #130). `Release` so the queue mutation
+    /// that precedes it happens-before a scanner's `Acquire` read of the epoch.
+    #[inline]
+    fn bump_mutation_epoch(&self) {
+        self.mutation_epoch.fetch_add(1, Ordering::Release);
+    }
+
     /// Returns `true` if `orders` is empty or every order shares one side — the
     /// single-side coherence [`Self::from_snapshot`] requires. Used as the
     /// termination backstop for `snapshot`'s torn-topology retry (issue #126).
@@ -515,12 +600,15 @@ impl PriceLevel {
     /// Acquire the fill-or-kill guard's **shared (read)** side — the mutator
     /// side. Multiple mutators proceed concurrently; a fill-or-kill match
     /// (holding the exclusive side) excludes them. A poisoned lock is recovered
-    /// with `into_inner` because the guarded value is `()` (see the field doc).
+    /// with `into_inner` (the guarded value is `()`), but the recovery trips the
+    /// sticky [`Self::level_poisoned`] flag so the level then fails fast (issue
+    /// #130): a poison means a holder panicked mid-operation.
     #[inline]
     fn fok_read(&self) -> std::sync::RwLockReadGuard<'_, ()> {
-        self.fok_guard
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.fok_guard.read().unwrap_or_else(|poison| {
+            self.mark_poisoned();
+            poison.into_inner()
+        })
     }
 
     /// Acquire the fill-or-kill guard's **exclusive (write)** side — held across
@@ -528,9 +616,62 @@ impl PriceLevel {
     /// depth mid-decision. A poisoned lock is recovered (see [`Self::fok_read`]).
     #[inline]
     fn fok_write(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
-        self.fok_guard
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.fok_guard.write().unwrap_or_else(|poison| {
+            self.mark_poisoned();
+            poison.into_inner()
+        })
+    }
+
+    /// Trip the sticky poison flag when a [`Self::fok_guard`] poison is recovered
+    /// (issue #130). Logs `ERROR` exactly once — on the `false -> true`
+    /// transition decided by the `compare_exchange` — so a poisoned level is
+    /// reported but not flooded.
+    #[cold]
+    fn mark_poisoned(&self) {
+        if self
+            .level_poisoned
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            tracing::error!(
+                price = self.price,
+                "price level poisoned by a panicked operation; matching and mutation are now refused — reconstruct the level from a snapshot"
+            );
+        }
+    }
+
+    /// Returns `true` if the level has been poisoned by a panicked guard holder
+    /// (issue #130).
+    #[inline]
+    #[must_use]
+    fn is_poisoned(&self) -> bool {
+        self.level_poisoned.load(Ordering::Relaxed)
+    }
+
+    /// Fail-fast guard for the mutating public methods: `Err` once the level is
+    /// poisoned (issue #130).
+    #[inline]
+    fn poison_check(&self) -> Result<(), PriceLevelError> {
+        if self.is_poisoned() {
+            Err(PriceLevelError::InvalidOperation {
+                message: "price level poisoned by a panicked operation".to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Genuinely poison the fill-or-kill guard by panicking while holding its
+    /// write side (issue #130 test seam). The panic is caught so the test
+    /// process survives; the `RwLock` is left poisoned, so the NEXT guard
+    /// acquisition recovers it and trips [`Self::level_poisoned`], exercising the
+    /// real fail-fast path (not a directly-set flag).
+    #[cfg(test)]
+    pub(crate) fn test_poison_guard(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.fok_write();
+            panic!("intentional guard poison for test");
+        }));
     }
 
     /// Add an order to this price level.
@@ -596,6 +737,9 @@ impl PriceLevel {
         // concurrent fill-or-kill match sees a stable depth (issue #112). This
         // is an uncontended shared acquisition in the common case (no FOK).
         let _fok = self.fok_read();
+        // Fail fast if a prior panic poisoned the guard (or this very acquisition
+        // just recovered one): the level may be half-mutated (issue #130).
+        self.poison_check()?;
 
         // -------- Admission topology invariants (cheapest checks, no mutation) --------
         //
@@ -736,6 +880,10 @@ impl PriceLevel {
         // Update statistics only after a committed admission.
         self.stats.record_order_added();
 
+        // Signal the committed mutation so a racing post-only depth scan retries
+        // (issue #130).
+        self.bump_mutation_epoch();
+
         Ok(order_arc)
     }
 
@@ -807,8 +955,25 @@ impl PriceLevel {
     /// self-trade prevention, so it is not liquidity this taker could take, and
     /// the post-only pre-check must agree.
     fn has_matchable_depth(&self, taker_id: Id) -> bool {
-        self.iter_orders()
-            .any(|order| order.id() != taker_id && order.is_matchable())
+        // Linearize the non-atomic scan against concurrent mutation (issue #130):
+        // read the mutation epoch, scan, re-read; retry if it moved. A stable
+        // epoch across the scan means no add / cancel / resize committed during
+        // it, so the verdict corresponds to a single queue state and has a
+        // linearization point (at the scan). Unbounded retry, same liveness
+        // argument as the statistics seqlock: mutators are finite and each commit
+        // is a single `fetch_add`, so a scan converges as soon as mutation
+        // quiesces (the post-only path is cold, so the retry cost is irrelevant).
+        loop {
+            let epoch_before = self.mutation_epoch.load(Ordering::Acquire);
+            let verdict = self
+                .iter_orders()
+                .any(|order| order.id() != taker_id && order.is_matchable());
+            std::sync::atomic::fence(Ordering::Acquire);
+            let epoch_after = self.mutation_epoch.load(Ordering::Relaxed);
+            if epoch_before == epoch_after {
+                return verdict;
+            }
+        }
     }
 
     /// Computes how much of `incoming_quantity` this level could actually fill
@@ -819,9 +984,15 @@ impl PriceLevel {
     /// same price-time order the real sweep uses, including iceberg / reserve
     /// replenishment (a refreshed tranche is re-queued at the tail) and the
     /// removal of a non-replenishing reserve once its visible part is drained.
-    /// The returned value is therefore exactly what [`Self::match_order`] would
-    /// consume — never an over- or under-count — which is what fill-or-kill
-    /// (all-or-nothing) correctly depends on.
+    /// It also models the sweep's **replenish-headroom abort** (issue
+    /// #124/#130): it tracks the level's visible counter as the sweep would
+    /// evolve it and stops at the exact maker where a replenish's net delta would
+    /// overflow `u64`, because the real sweep sets that maker aside and
+    /// terminates. The returned value is therefore exactly what
+    /// [`Self::match_order`] would consume — never an over- or under-count —
+    /// which is what fill-or-kill (all-or-nothing) correctly depends on: without
+    /// modelling the abort, this could approve a fill-or-kill the sweep then
+    /// aborts mid-fill, leaving a partial fill.
     ///
     /// `taker_id` must be the id of the taker this depth is being computed for:
     /// a resting maker sharing that id is skipped, exactly as the real sweep
@@ -854,6 +1025,19 @@ impl PriceLevel {
         let mut remaining = incoming_quantity;
         let mut filled: u64 = 0;
 
+        // Track the level's visible counter as the sweep would evolve it, so the
+        // dry run models the #124 replenish-headroom ABORT (issue #130). A
+        // replenish step commits `visible -= consumed; visible += hidden_reduced`
+        // with checked arithmetic under the entry lock, and if that net delta
+        // would exceed `u64::MAX` the real sweep SETS THE MAKER ASIDE (no trade)
+        // and TERMINATES the sweep. Starting from the live counter, this
+        // simulation reproduces that stop point exactly. When the fill-or-kill
+        // dry run holds the `fok_write` guard, mutators are frozen, so the live
+        // value cannot drift and the projection is exact — a would-abort here
+        // therefore correctly makes the fill-or-kill infeasible (killed) rather
+        // than approving a taker the sweep would abort mid-fill (a partial fill).
+        let mut projected_visible = self.visible_quantity();
+
         while remaining > 0 {
             let Some(order) = pending.pop_front() else {
                 break;
@@ -883,6 +1067,32 @@ impl PriceLevel {
                 && updated_order.is_some()
             {
                 continue;
+            }
+
+            // Evolve the projected visible counter exactly as the sweep will, and
+            // STOP on a would-abort so this maker (and everything behind it)
+            // contributes nothing — the same terminal state the real sweep
+            // reaches (issue #130).
+            if hidden_reduced > 0 {
+                // Replenish: checked net delta `- consumed + hidden_reduced`. A
+                // failure is the #124 abort: the maker is set aside untouched and
+                // the sweep ends, so do NOT count `consumed` and break.
+                match projected_visible
+                    .checked_sub(consumed)
+                    .and_then(|v| v.checked_add(hidden_reduced))
+                {
+                    Some(next) => projected_visible = next,
+                    None => break,
+                }
+            } else {
+                // Pure consume: visible only decreases, so it cannot abort. Track
+                // it (checked, never wraps: `consumed <= projected_visible`) so a
+                // later replenish's headroom test is accurate; a defensive
+                // underflow stops the dry run conservatively.
+                let Some(next) = projected_visible.checked_sub(consumed) else {
+                    break;
+                };
+                projected_visible = next;
             }
 
             // `consumed <= remaining <= incoming_quantity`, so this sum cannot
@@ -1062,6 +1272,19 @@ impl PriceLevel {
         timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
+        // -------- Fail-fast on a poisoned level (issue #130) --------
+        //
+        // If a guard holder panicked mid-operation the level may be half-mutated
+        // and cannot be trusted to match. `match_order` returns [`MatchResult`],
+        // not `Result`, so it cannot surface `InvalidOperation` the way
+        // `add_order` / `update_order` do; instead it REFUSES to match — an empty
+        // result (no trades, full remaining) — which is the safe outcome (the
+        // taker takes no liquidity from a corrupt level). The one-time `ERROR`
+        // log was already emitted when the poison was first recovered.
+        if self.is_poisoned() {
+            return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+        }
+
         // -------- Self-match is terminal (issue #126, tightening #120) --------
         //
         // If the taker's own id already rests at this level, the taker cannot
@@ -1097,11 +1320,22 @@ impl PriceLevel {
         // emits zero trades" hold under *every* interleaving: no concurrent
         // `add_order` can turn a resting decision into a trade, because there is
         // no sweep to consume the newly-added depth. The verdict is linearized at
-        // the `has_matchable_depth` check: depth committed before it is crossed
-        // (reject); depth committed after it is ordered "later" (behind this
-        // taker), so resting is correct at the check instant. No guard is needed.
+        // the `has_matchable_depth` check, which re-scans under the mutation epoch
+        // so a concurrent add / cancel / resize racing the scan is DETECTED and
+        // the scan retried (issue #130) — a stable epoch across the scan gives the
+        // verdict a single-queue-state linearization point rather than a torn
+        // read. Depth committed before the linearized scan is crossed (reject);
+        // depth committed after it is ordered "later" (behind this taker), so
+        // resting is correct at the scan instant. No guard is needed.
         if taker_kind.is_post_only() && incoming_quantity > 0 {
-            if self.has_matchable_depth(taker_order_id) {
+            let crossable = self.has_matchable_depth(taker_order_id);
+            // Deterministic race seam (issue #130): fires BETWEEN the depth
+            // decision and the commit below so a test can inject an `add_order`
+            // in that exact window and confirm PostOnly still emits zero trades
+            // (there is no sweep to consume the added depth). No-op in production.
+            #[cfg(test)]
+            fire_post_only_decision_hook();
+            if crossable {
                 tracing::debug!(
                     taker_order_id = %taker_order_id,
                     incoming_quantity,
@@ -1128,6 +1362,11 @@ impl PriceLevel {
         // method (after the sweep). The non-FOK paths take no guard.
         let _fok_guard = if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
             let guard = self.fok_write();
+            // Acquiring the write guard may have just recovered a poison; refuse
+            // to match a half-mutated level rather than sweep it (issue #130).
+            if self.is_poisoned() {
+                return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+            }
             let available = self.matchable_quantity(incoming_quantity, taker_order_id);
             if available < incoming_quantity {
                 tracing::debug!(
@@ -1581,6 +1820,18 @@ impl PriceLevel {
     /// restore.
     #[must_use]
     pub fn snapshot(&self) -> PriceLevelSnapshot {
+        // Hold the fill-or-kill guard's SHARED side across the materialization
+        // (issue #130) so a snapshot can never capture a multi-maker fill-or-kill
+        // mid-transaction: the FOK holds the EXCLUSIVE side across its dry-run and
+        // sweep, so this read waits for it to fully commit or is excluded before
+        // it starts — the snapshot sees the pre- or post-FOK state, never a
+        // partial sweep. Ordinary mutators (`add_order` / `update_order`) also
+        // take the shared side, so they run concurrently with this read (read vs
+        // read) and are handled by the topology-epoch retry below for side
+        // transitions. `snapshot` intentionally does NOT poison-check: it stays
+        // available on a poisoned level for diagnostics / reconstruction.
+        let _fok = self.fok_read();
+
         // Materialize the orders exactly once, in queue-consumption (insertion
         // sequence) order so a snapshot round-trip re-enqueues them in identical
         // priority order; every aggregate is derived from this same snapshot so
@@ -1740,7 +1991,17 @@ impl PriceLevel {
         // is writer-preferring, so the queued writer blocks the second reader)
         // would deadlock against a `fok_write` waiting on the first reader.
         let _fok = self.fok_read();
-        self.update_order_inner(update)
+        // Fail fast on a poisoned level (issue #130).
+        self.poison_check()?;
+        let result = self.update_order_inner(update);
+        // A committed mutation (`Ok(Some(_))` — the order was found and
+        // cancelled / resized / moved) bumps the mutation epoch so a racing
+        // post-only depth scan retries (issue #130). `Ok(None)` (not found) and
+        // `Err` change nothing, so they do not bump.
+        if matches!(result, Ok(Some(_))) {
+            self.bump_mutation_epoch();
+        }
+        result
     }
 
     /// Guard-free body of [`Self::update_order`].

@@ -8434,6 +8434,146 @@ mod tests {
             assert_counters_match_queue(&level);
         }
     }
+
+    #[test]
+    fn test_fok_killed_on_replenish_headroom_abort() {
+        // Issue #130: the fill-or-kill dry run must model the sweep's
+        // replenish-headroom ABORT. Reviewer's construction — FIFO [standard 1,
+        // auto-reserve(visible 1, replenish 100), standard u64::MAX-2] with the
+        // level's visible counter at capacity (u64::MAX). A FOK(2) trades maker 1
+        // and then the reserve would replenish (visible net delta +99) which
+        // overflows u64, so the real sweep ABORTS mid-fill. matchable_quantity
+        // must model that stop (returns 1, not 2), so the FOK is KILLED up front:
+        // zero trades, level untouched. Without the fix it would partial-fill.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_sell_standard_order(1, 10_000, 1))
+            .expect("maker 1");
+        level
+            .add_order(create_reserve_order(2, 10_000, 1, 100, 1, true, Some(100)))
+            .expect("auto-reserve maker 2");
+        level
+            .add_order(create_sell_standard_order(3, 10_000, u64::MAX - 2))
+            .expect("maker 3 fills the visible counter to u64::MAX");
+        assert_eq!(level.visible_quantity(), u64::MAX, "counter at capacity");
+
+        // The dry run models the abort: only maker 1's unit is reachable.
+        assert_eq!(level.matchable_quantity(2, Id::from_u64(999)), 1);
+
+        let before = level.snapshot_by_insertion_seq();
+        let result = level.match_order(
+            2,
+            Id::from_u64(999),
+            TimeInForce::Fok,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+
+        assert!(
+            result.was_killed(),
+            "FOK must be killed, not partially filled"
+        );
+        assert_eq!(result.trades().len(), 0, "a killed FOK emits zero trades");
+        assert_eq!(result.remaining_quantity().as_u64(), 2);
+        // Level byte-identical: all three makers still rest in order.
+        let after = level.snapshot_by_insertion_seq();
+        assert_eq!(
+            before.iter().map(|o| o.id()).collect::<Vec<_>>(),
+            after.iter().map(|o| o.id()).collect::<Vec<_>>(),
+            "the queue must be untouched"
+        );
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn test_level_poisoned_fails_fast() {
+        // Issue #130: a poisoned fill-or-kill guard (a holder panicked) fails
+        // fast — add_order / update_order return InvalidOperation and match_order
+        // refuses to match — while snapshot stays allowed for diagnostics.
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_sell_standard_order(1, 10_000, 10))
+            .expect("add before poison");
+
+        // Genuinely poison the guard (panic while holding the write side).
+        level.test_poison_guard();
+
+        // The next admission acquires the guard, recovers the poison, sets the
+        // sticky flag, and fails fast.
+        let err = level.add_order(create_sell_standard_order(2, 10_000, 5));
+        assert!(
+            matches!(err, Err(PriceLevelError::InvalidOperation { .. })),
+            "add_order must fail fast on a poisoned level, got {err:?}"
+        );
+
+        // update_order (cancel) also fails fast.
+        let err = level.update_order(OrderUpdate::Cancel {
+            order_id: Id::from_u64(1),
+        });
+        assert!(
+            matches!(err, Err(PriceLevelError::InvalidOperation { .. })),
+            "update_order must fail fast on a poisoned level, got {err:?}"
+        );
+
+        // match_order refuses to match (empty result, no trades).
+        let result = level.match_order(
+            5,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+        assert_eq!(
+            result.trades().len(),
+            0,
+            "a poisoned level refuses to match"
+        );
+
+        // snapshot stays allowed (diagnostics / reconstruction): maker 1 is still
+        // resting and readable.
+        let snapshot = level.snapshot();
+        assert_eq!(snapshot.order_count(), 1);
+    }
+
+    #[test]
+    fn test_post_only_zero_trades_with_add_in_decision_window() {
+        // Issue #130 deterministic seam: a matchable maker is added in the EXACT
+        // window between PostOnly's depth decision and its commit. PostOnly must
+        // STILL emit zero trades (it never sweeps) and leave the added maker
+        // resting — no scheduler stress needed.
+        let level = std::sync::Arc::new(PriceLevel::new(10_000));
+        let hook_level = std::sync::Arc::clone(&level);
+        let _hook_guard =
+            crate::price_level::level::set_post_only_decision_hook(Box::new(move || {
+                // The level was empty at the decision; add crossable depth now.
+                let _ = hook_level.add_order(create_sell_standard_order(1, 10_000, 50));
+            }));
+
+        let result = level.match_order(
+            50,
+            Id::from_u64(999),
+            TimeInForce::Gtc,
+            TakerKind::PostOnly,
+            TimestampMs::new(1_700_000_000_000),
+            &new_trade_id_generator(),
+        );
+
+        assert_eq!(
+            result.trades().len(),
+            0,
+            "PostOnly must emit zero trades even with depth added in the decision window"
+        );
+        assert!(
+            !result.was_rejected(),
+            "the pre-add scan found no depth, so it rests"
+        );
+        // The maker added in the window rests, untouched.
+        assert_eq!(level.order_count(), 1);
+        assert_counters_match_queue(&level);
+    }
 }
 
 #[cfg(test)]
