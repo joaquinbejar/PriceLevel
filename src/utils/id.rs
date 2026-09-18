@@ -83,7 +83,7 @@ impl Id {
     /// Create a new random id (defaults to ULID for better sortability).
     #[must_use]
     pub fn new() -> Self {
-        Self::Ulid(Ulid::new())
+        Self::Ulid(Ulid::generate())
     }
 
     /// Create a new UUID-based id.
@@ -95,7 +95,7 @@ impl Id {
     /// Create a new ULID-based id.
     #[must_use]
     pub fn new_ulid() -> Self {
-        Self::Ulid(Ulid::new())
+        Self::Ulid(Ulid::generate())
     }
 
     /// Create a nil UUID id.
