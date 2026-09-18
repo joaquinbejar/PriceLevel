@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.9.2] - 2026-09-18
+
+### Changed
+
+- Dependencies updated to latest stable versions: `ulid` 1.2 -> 3.0
+  (`Ulid::new()` -> `Ulid::generate()` in `src/utils/id.rs`; no public API
+  change), `uuid` 1.23 -> 1.26, `dashmap` 6.1 -> 6.2 (#138).
+
 ## [0.9.1] - 2026-07-14
 
 ### Fixed
