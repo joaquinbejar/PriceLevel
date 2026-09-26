@@ -464,6 +464,35 @@
 //! either version, so a legacy v2 package's SHA-256 still matches. New snapshots
 //! are written at v3. No code changes are required at the call sites.
 //!
+//! ## Migration Guide (`value_executed` is `u128`, snapshot format v3 → v4 — breaking)
+//!
+//! `PriceLevelStatistics::value_executed()` (reached through
+//! [`PriceLevel::stats`]) now returns `u128` instead of `u64` (issue #140). It
+//! accumulates `quantity * price`, the same product that
+//! [`MatchResult::executed_value`](crate::execution::MatchResult::executed_value)
+//! and [`Trade::total_value`](crate::execution::Trade::total_value) already
+//! return as `u128`. With a `u64` accumulator, a caller scaling both price and
+//! quantity to fixed point (e.g. 1e8 each) exhausted it under ordinary volume
+//! (after 1845 executions of 1.0 @ 1.0), after which every execution's
+//! statistics were dropped and the level was permanently marked degraded. The
+//! trade stream was never affected. Callers that bind the result to a `u64`
+//! must widen it (or convert with `u64::try_from`).
+//!
+//! The accumulator is a lock-free `AtomicU128` from the `portable-atomic`
+//! crate (a new dependency) on targets with a native 128-bit CAS (aarch64, and
+//! x86_64 with `cmpxchg16b`); elsewhere `portable-atomic` falls back to a lock
+//! for this one counter. A `u128` overflow is still rejected all-or-nothing and
+//! marks the statistics degraded.
+//!
+//! `SNAPSHOT_FORMAT_VERSION` is bumped from `3` to `4`. A v4 payload may carry a
+//! `value_executed` above `u64::MAX`, which a v3 reader cannot represent, so new
+//! packages are labelled v4 and a pre-0.10 reader rejects them with a version
+//! mismatch rather than failing mid-decode. Restore is **backward compatible**:
+//! [`PriceLevelSnapshotPackage::validate`] accepts v2, v3 and v4, and the JSON
+//! of a legacy `u64` value is unchanged, so snapshots written by earlier
+//! releases keep restoring with their original SHA-256 checksum. The
+//! `Display` / `FromStr` text form likewise parses both widths.
+//!
 //! ## Migration Guide (`Trade::total_value` is now checked)
 //!
 //! [`Trade::total_value`](crate::execution::Trade::total_value) now returns
