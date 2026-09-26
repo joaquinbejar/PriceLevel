@@ -81,3 +81,90 @@ fn partial_fill_keeps_price_time_priority_across_calls() {
     assert_eq!(level.visible_quantity(), 90);
     assert_eq!(level.order_count(), 1);
 }
+
+/// Fixed-point scale applied to both price and quantity in the issue #140
+/// reproduction.
+const ISSUE_140_SCALE: u64 = 100_000_000;
+
+fn scaled_sell(id: u64, price: u128, quantity: u64) -> OrderType<()> {
+    OrderType::Standard {
+        id: Id::from_u64(id),
+        price: Price::new(price),
+        quantity: Quantity::new(quantity),
+        side: Side::Sell,
+        user_id: Hash32::zero(),
+        timestamp: TimestampMs::new(1),
+        time_in_force: TimeInForce::Gtc,
+        extra_fields: (),
+    }
+}
+
+/// End-to-end repro for issue #140 through the public surface, case A: one
+/// execution whose `quantity * price` (both scaled by 1e8) exceeds `u64::MAX`
+/// is recorded in full and does not degrade the level's statistics.
+#[test]
+fn scaled_single_execution_above_u64_max_is_recorded() {
+    let price = 49_995 * u128::from(ISSUE_140_SCALE);
+    let level = PriceLevel::new(price);
+    let trade_ids = UuidGenerator::new(Uuid::nil());
+
+    level
+        .add_order(scaled_sell(1, price, ISSUE_140_SCALE))
+        .expect("add_order");
+    let result = level.match_order(
+        ISSUE_140_SCALE,
+        Id::from_u64(1_000_000),
+        TimeInForce::Gtc,
+        TakerKind::Standard,
+        TimestampMs::new(2),
+        &trade_ids,
+    );
+    assert!(result.is_complete());
+
+    let expected = u128::from(ISSUE_140_SCALE) * price;
+    assert!(expected > u128::from(u64::MAX));
+    let stats = level.stats();
+    assert!(!stats.stats_degraded());
+    assert_eq!(stats.value_executed(), expected);
+    assert_eq!(result.executed_value().expect("executed_value"), expected);
+}
+
+/// Issue #140 case B: 1.0 @ 1.0 (both scaled by 1e8) degraded the level after
+/// 1845 executions when the accumulator was `u64`. 3000 executions now record
+/// exactly, and the level still round-trips through its checksummed snapshot.
+#[test]
+fn scaled_running_total_above_u64_max_is_recorded_and_snapshots() {
+    const ROUNDS: u64 = 3_000;
+    let price = u128::from(ISSUE_140_SCALE);
+    let level = PriceLevel::new(price);
+    let trade_ids = UuidGenerator::new(Uuid::nil());
+
+    for i in 0..ROUNDS {
+        level
+            .add_order(scaled_sell(i + 1, price, ISSUE_140_SCALE))
+            .expect("add_order");
+        let result = level.match_order(
+            ISSUE_140_SCALE,
+            Id::from_u64(1_000_000 + i),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(2),
+            &trade_ids,
+        );
+        assert!(result.is_complete());
+        assert!(
+            !level.stats().stats_degraded(),
+            "degraded after {} executions",
+            i + 1
+        );
+    }
+
+    let expected = u128::from(ROUNDS) * u128::from(ISSUE_140_SCALE) * price;
+    assert!(expected > u128::from(u64::MAX));
+    assert_eq!(level.stats().value_executed(), expected);
+
+    let json = level.snapshot_to_json().expect("snapshot_to_json");
+    let restored = PriceLevel::from_snapshot_json(&json).expect("from_snapshot_json");
+    assert_eq!(restored.stats().value_executed(), expected);
+    assert!(!restored.stats().stats_degraded());
+}
