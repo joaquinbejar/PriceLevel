@@ -44,6 +44,11 @@ uuid = { workspace = true, features = ["v4", "v5", "serde"] }
 ulid = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true }
 sha2 = { workspace = true }
+# `AtomicU128` for the widened `value_executed` statistics accumulator (issue
+# #140): `std`'s `AtomicU128` is not stable. Default features (`fallback`)
+# keep the type available on every target; it is lock-free where the CPU has a
+# native 128-bit CAS (see `PriceLevelStatistics` docs).
+portable-atomic = { workspace = true }
 
 
 [dev-dependencies]
@@ -104,3 +109,4 @@ uuid = { version = "1.26", features = ["v4", "v5", "serde"] }
 ulid = { version = "3.0", features = ["serde"] }
 dashmap = "6.2"
 sha2 = "0.11"
+portable-atomic = "1.15"

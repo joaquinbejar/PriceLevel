@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use portable_atomic::AtomicU128;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -36,8 +37,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// the fields, `Acquire`-fences, re-loads it, and retries if it changed or was
 /// odd. Writers are serialized by the engine model (one matcher per level +
 /// `reset`'s quiescence contract), which the seqlock assumes. The lone
-/// read-modify-write loop in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64)
-/// is a standard `compare_exchange_weak` CAS retry.
+/// read-modify-write loops in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64)
+/// and [`checked_fetch_add_u128`](Self::checked_fetch_add_u128) are standard
+/// `compare_exchange_weak` CAS retries.
+///
+/// # `value_executed` width (issue #140)
+///
+/// `value_executed` accumulates `quantity * price`, the same product that
+/// [`MatchResult::executed_value`](crate::execution::MatchResult::executed_value)
+/// and [`Trade::total_value`](crate::execution::Trade::total_value) return as
+/// `u128`. It is stored in a `u128` so that fixed-point callers, whose product
+/// carries the scale of both operands, do not exhaust the accumulator under
+/// ordinary volume. The ceiling is raised, not removed: a `u128` overflow is
+/// still rejected all-or-nothing and marks the statistics degraded.
+///
+/// The accumulator is a [`portable_atomic::AtomicU128`] because `std`'s
+/// `AtomicU128` is not stable. It is lock-free where the CPU provides a native
+/// 128-bit CAS: aarch64, and x86_64 with `cmpxchg16b` (detected at run time
+/// unless enabled at compile time). On a target without one, `portable-atomic`
+/// falls back to a global lock for this single counter; the other counters and
+/// the order queue are unaffected.
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
@@ -52,8 +71,8 @@ pub struct PriceLevelStatistics {
     /// Total quantity executed
     quantity_executed: AtomicU64,
 
-    /// Total value executed
-    value_executed: AtomicU64,
+    /// Total value executed (`sum(quantity * price)`), `u128` (issue #140).
+    value_executed: AtomicU128,
 
     /// Last execution timestamp
     last_execution_time: AtomicU64,
@@ -120,7 +139,7 @@ struct StatsData {
     orders_removed: usize,
     orders_executed: usize,
     quantity_executed: u64,
-    value_executed: u64,
+    value_executed: u128,
     last_execution_time: u64,
     first_arrival_time: u64,
     sum_waiting_time: u64,
@@ -152,6 +171,32 @@ impl PriceLevelStatistics {
             // nothing to another thread, so neither acquire on failure nor
             // release on success is needed. The retry body is allocation-free,
             // per the tight-CAS-loop rule.
+            match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Checked `+= value` on the `u128` value accumulator, mirroring
+    /// [`checked_fetch_add_u64`](Self::checked_fetch_add_u64) (issue #140).
+    #[inline]
+    fn checked_fetch_add_u128(
+        target: &AtomicU128,
+        value: u128,
+        field: &str,
+    ) -> Result<(), PriceLevelError> {
+        // `Relaxed`, for the same reasons as `checked_fetch_add_u64`: an advisory
+        // observability counter that publishes nothing to another thread.
+        let mut current = target.load(Ordering::Relaxed);
+        loop {
+            let next =
+                current
+                    .checked_add(value)
+                    .ok_or_else(|| PriceLevelError::InvalidOperation {
+                        message: format!("{field} overflow"),
+                    })?;
             match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
             {
                 Ok(_) => return Ok(()),
@@ -253,7 +298,7 @@ impl PriceLevelStatistics {
             orders_removed: AtomicUsize::new(data.orders_removed),
             orders_executed: AtomicUsize::new(data.orders_executed),
             quantity_executed: AtomicU64::new(data.quantity_executed),
-            value_executed: AtomicU64::new(data.value_executed),
+            value_executed: AtomicU128::new(data.value_executed),
             last_execution_time: AtomicU64::new(data.last_execution_time),
             first_arrival_time: AtomicU64::new(data.first_arrival_time),
             sum_waiting_time: AtomicU64::new(data.sum_waiting_time),
@@ -287,7 +332,7 @@ impl PriceLevelStatistics {
             orders_removed: AtomicUsize::new(0),
             orders_executed: AtomicUsize::new(0),
             quantity_executed: AtomicU64::new(0),
-            value_executed: AtomicU64::new(0),
+            value_executed: AtomicU128::new(0),
             last_execution_time: AtomicU64::new(0),
             first_arrival_time: AtomicU64::new(current_time),
             sum_waiting_time: AtomicU64::new(0),
@@ -339,9 +384,10 @@ impl PriceLevelStatistics {
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if any of the counter
-    /// accumulations overflow, if the value (`quantity * price`) overflows
-    /// `u128`/`u64`, or if `order_timestamp` is strictly greater than
-    /// `execution_timestamp` (a maker arriving in the future of execution).
+    /// accumulations overflow (`value_executed` is a `u128` accumulator, issue
+    /// #140), if the value (`quantity * price`) overflows `u128`, or if
+    /// `order_timestamp` is strictly greater than `execution_timestamp` (a
+    /// maker arriving in the future of execution).
     pub fn record_execution(
         &self,
         quantity: u64,
@@ -377,16 +423,15 @@ impl PriceLevelStatistics {
             None
         };
 
-        let value_u64 = match u128::from(quantity)
-            .checked_mul(price)
-            .and_then(|value| u64::try_from(value).ok())
-        {
+        // `quantity * price` in `u128`, stored at full width (issue #140): the
+        // multiplication itself can only overflow when `price` is within a
+        // factor of `quantity` of `u128::MAX`.
+        let value = match u128::from(quantity).checked_mul(price) {
             Some(value) => value,
             None => {
                 self.mark_degraded();
                 return Err(PriceLevelError::InvalidOperation {
-                    message: "value_executed overflow (quantity * price exceeds u64 storage)"
-                        .to_string(),
+                    message: "value_executed overflow (quantity * price exceeds u128)".to_string(),
                 });
             }
         };
@@ -413,7 +458,7 @@ impl PriceLevelStatistics {
         }
 
         if let Err(err) =
-            Self::checked_fetch_add_u64(&self.value_executed, value_u64, "value_executed")
+            Self::checked_fetch_add_u128(&self.value_executed, value, "value_executed")
         {
             self.quantity_executed
                 .fetch_sub(quantity, Ordering::Relaxed);
@@ -429,7 +474,7 @@ impl PriceLevelStatistics {
                 "sum_waiting_time",
             )
         {
-            self.value_executed.fetch_sub(value_u64, Ordering::Relaxed);
+            self.value_executed.fetch_sub(value, Ordering::Relaxed);
             self.quantity_executed
                 .fetch_sub(quantity, Ordering::Relaxed);
             self.orders_executed.fetch_sub(1, Ordering::Relaxed);
@@ -470,9 +515,15 @@ impl PriceLevelStatistics {
         self.quantity_executed.load(Ordering::Relaxed)
     }
 
-    /// Get total value executed
+    /// Get total value executed: the running `sum(quantity * price)` over every
+    /// recorded execution.
+    ///
+    /// Returned as `u128`, the same width as
+    /// [`MatchResult::executed_value`](crate::execution::MatchResult::executed_value)
+    /// and [`Trade::total_value`](crate::execution::Trade::total_value) (issue
+    /// #140; it was `u64` before 0.10.0).
     #[must_use]
-    pub fn value_executed(&self) -> u64 {
+    pub fn value_executed(&self) -> u128 {
         self.value_executed.load(Ordering::Relaxed)
     }
 
@@ -707,7 +758,15 @@ impl FromStr for PriceLevelStatistics {
         let quantity_executed = parse_u64("quantity_executed", quantity_executed_str)?;
 
         let value_executed_str = get_field("value_executed")?;
-        let value_executed = parse_u64("value_executed", value_executed_str)?;
+        // `u128` since issue #140; a string written by an older version (a
+        // `u64` value) parses unchanged.
+        let value_executed =
+            value_executed_str
+                .parse::<u128>()
+                .map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: "value_executed".to_string(),
+                    value: value_executed_str.to_string(),
+                })?;
 
         let last_execution_time_str = get_field("last_execution_time")?;
         let last_execution_time = parse_u64("last_execution_time", last_execution_time_str)?;
@@ -737,7 +796,7 @@ impl FromStr for PriceLevelStatistics {
             orders_removed: AtomicUsize::new(orders_removed),
             orders_executed: AtomicUsize::new(orders_executed),
             quantity_executed: AtomicU64::new(quantity_executed),
-            value_executed: AtomicU64::new(value_executed),
+            value_executed: AtomicU128::new(value_executed),
             last_execution_time: AtomicU64::new(last_execution_time),
             first_arrival_time: AtomicU64::new(first_arrival_time),
             sum_waiting_time: AtomicU64::new(sum_waiting_time),
@@ -762,10 +821,10 @@ impl Serialize for PriceLevelStatistics {
         // 8-field form — byte-identical to a v2 statistics payload persisted
         // before this flag existed — so a `PriceLevelSnapshotPackage`'s SHA-256
         // checksum, recomputed over the re-serialized bytes on
-        // `validate` / `from_snapshot_json`, still matches for BOTH a legacy v2
-        // and a new v3 non-degraded package (issue #129 keeps checksum
+        // `validate` / `from_snapshot_json`, still matches for a legacy v2, a v3
+        // and a new v4 non-degraded package (issue #129 keeps checksum
         // recomputation version-agnostic — see `SNAPSHOT_FORMAT_VERSION`). A
-        // degraded level adds the 9th field (the v3-only shape); `Deserialize` /
+        // degraded level adds the 9th field (v3+ shape); `Deserialize` /
         // `FromStr` default a missing flag to `false`, so both directions
         // round-trip.
         let degraded = d.stats_degraded;
@@ -945,7 +1004,7 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                     orders_removed: AtomicUsize::new(orders_removed),
                     orders_executed: AtomicUsize::new(orders_executed),
                     quantity_executed: AtomicU64::new(quantity_executed),
-                    value_executed: AtomicU64::new(value_executed),
+                    value_executed: AtomicU128::new(value_executed),
                     last_execution_time: AtomicU64::new(last_execution_time),
                     first_arrival_time: AtomicU64::new(first_arrival_time),
                     sum_waiting_time: AtomicU64::new(sum_waiting_time),
