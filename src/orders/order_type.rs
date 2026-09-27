@@ -23,16 +23,101 @@ fn user_id_from_str(value: &str) -> Result<Hash32, PriceLevelError> {
 ///
 /// A replenish amount is structurally non-zero: a zero replenish would draw an
 /// empty visible tranche from hidden, silently leaving nothing visible. The
-/// type therefore is [`NonZeroU64`] rather than a raw `u64`. The constant is
-/// built in a `const`-evaluable form (a `match` on [`NonZeroU64::new`]) so it
-/// carries no runtime `unwrap`/`expect`.
-pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: NonZeroU64 = match NonZeroU64::new(80) {
-    Some(value) => value,
-    // Unreachable: 80 is a non-zero literal, so `NonZeroU64::new` is always
-    // `Some` here. The branch is resolved at compile time, so this carries no
-    // runtime `unwrap`/`expect`.
-    None => unreachable!(),
-};
+/// type therefore is [`NonZeroU64`] rather than a raw `u64`.
+///
+/// # Construction (issue #169)
+///
+/// The value is built entirely at compile time, with no `unsafe`, no
+/// `unwrap`/`expect` and no panic or assertion form:
+///
+/// 1. A private `NonZeroWitness` trait is implemented **only** for the
+///    private `NonZeroProof<true>`. The initializer names
+///    `NonZeroProof<{ literal != 0 }>` as a `NonZeroWitness`, so changing the
+///    literal to `0` is a *type-check* error (an unsatisfied trait bound, not
+///    a const-evaluation panic).
+/// 2. With that proof established, [`NonZeroU64::new`] is `Some` for the
+///    literal; the `None` arm reads the witness's associated constant, which
+///    exists only because the bound in step 1 holds. It is never evaluated
+///    (const evaluation takes the `Some` arm) and is not a runtime fallback:
+///    the whole expression is folded to the constant `80` during compilation.
+pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: NonZeroU64 =
+    match NonZeroU64::new(DEFAULT_RESERVE_REPLENISH_RAW) {
+        Some(value) => value,
+        None => <NonZeroProof<{ DEFAULT_RESERVE_REPLENISH_RAW != 0 }> as NonZeroWitness>::DEAD_ARM,
+    };
+
+/// The raw literal behind [`DEFAULT_RESERVE_REPLENISH_AMOUNT`], in quantity
+/// units. Private: the public surface only exposes the [`NonZeroU64`] form.
+const DEFAULT_RESERVE_REPLENISH_RAW: u64 = 80;
+
+/// Compile-time proof carrier for [`DEFAULT_RESERVE_REPLENISH_AMOUNT`]: the
+/// const parameter is the boolean `literal != 0`.
+struct NonZeroProof<const HOLDS: bool>;
+
+/// Implemented only for [`NonZeroProof<true>`], so naming the witness for a
+/// zero literal fails type-checking instead of panicking in const evaluation.
+trait NonZeroWitness {
+    /// Value of the statically dead `None` arm of
+    /// [`DEFAULT_RESERVE_REPLENISH_AMOUNT`]'s construction. It is never read:
+    /// the proof guarantees `NonZeroU64::new` returns `Some` for the literal.
+    const DEAD_ARM: NonZeroU64;
+}
+
+impl NonZeroWitness for NonZeroProof<true> {
+    const DEAD_ARM: NonZeroU64 = NonZeroU64::MIN;
+}
+
+/// Checked quantity subtraction for the order-matching paths (issue #169).
+///
+/// `context` names the operation (e.g. `"iceberg refresh hidden"`) so the
+/// typed error identifies which quantity would have underflowed.
+#[inline]
+pub(super) fn quantity_sub(
+    lhs: u64,
+    rhs: u64,
+    context: &'static str,
+) -> Result<u64, PriceLevelError> {
+    match lhs.checked_sub(rhs) {
+        Some(value) => Ok(value),
+        None => Err(quantity_arithmetic_error(
+            context,
+            "underflow",
+            lhs,
+            '-',
+            rhs,
+        )),
+    }
+}
+
+/// Checked quantity addition for the order-matching paths (issue #169).
+#[inline]
+pub(super) fn quantity_add(
+    lhs: u64,
+    rhs: u64,
+    context: &'static str,
+) -> Result<u64, PriceLevelError> {
+    match lhs.checked_add(rhs) {
+        Some(value) => Ok(value),
+        None => Err(quantity_arithmetic_error(
+            context, "overflow", lhs, '+', rhs,
+        )),
+    }
+}
+
+/// Cold constructor for the typed arithmetic failure of the matching paths.
+#[cold]
+#[inline(never)]
+fn quantity_arithmetic_error(
+    context: &'static str,
+    kind: &'static str,
+    lhs: u64,
+    op: char,
+    rhs: u64,
+) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!("{context}: quantity {kind} ({lhs} {op} {rhs})"),
+    }
+}
 
 /// Represents different types of limit orders
 ///
@@ -595,8 +680,18 @@ impl<T: Clone> OrderType<T> {
     /// Returns the refreshed order and the quantity drawn from hidden. For a
     /// non-iceberg / non-reserve order the order is returned unchanged with a
     /// drawn quantity of `0`.
-    #[must_use]
-    pub fn refresh_iceberg(&self, refresh_amount: NonZeroU64) -> (Self, u64) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if the hidden-quantity
+    /// arithmetic would underflow (issue #169). The draw is capped at the
+    /// hidden quantity, so this cannot happen for any input; the checked form
+    /// replaces an unchecked subtraction. `self` is borrowed and never
+    /// modified, so on error the order is unchanged.
+    pub fn refresh_iceberg(
+        &self,
+        refresh_amount: NonZeroU64,
+    ) -> Result<(Self, u64), PriceLevelError> {
         match self {
             Self::IcebergOrder {
                 id,
@@ -610,9 +705,13 @@ impl<T: Clone> OrderType<T> {
                 extra_fields,
             } => {
                 let used_hidden = refresh_amount.get().min(hidden_quantity.as_u64());
-                let new_hidden = hidden_quantity.as_u64() - used_hidden;
+                let new_hidden = quantity_sub(
+                    hidden_quantity.as_u64(),
+                    used_hidden,
+                    "refresh hidden quantity",
+                )?;
 
-                (
+                Ok((
                     Self::IcebergOrder {
                         id: *id,
                         price: *price,
@@ -625,7 +724,7 @@ impl<T: Clone> OrderType<T> {
                         extra_fields: extra_fields.clone(),
                     },
                     used_hidden,
-                )
+                ))
             }
             Self::ReserveOrder {
                 id,
@@ -642,9 +741,13 @@ impl<T: Clone> OrderType<T> {
                 extra_fields,
             } => {
                 let used_hidden = refresh_amount.get().min(hidden_quantity.as_u64());
-                let new_hidden = hidden_quantity.as_u64() - used_hidden;
+                let new_hidden = quantity_sub(
+                    hidden_quantity.as_u64(),
+                    used_hidden,
+                    "refresh hidden quantity",
+                )?;
 
-                (
+                Ok((
                     Self::ReserveOrder {
                         id: *id,
                         price: *price,
@@ -660,7 +763,7 @@ impl<T: Clone> OrderType<T> {
                         extra_fields: extra_fields.clone(),
                     },
                     used_hidden,
-                )
+                ))
             }
             // Single-tranche variants have no hidden reserve to draw from, so a
             // refresh is a no-op that draws `0`. Listed explicitly (rather than
@@ -670,7 +773,7 @@ impl<T: Clone> OrderType<T> {
             | Self::PostOnly { .. }
             | Self::TrailingStop { .. }
             | Self::PeggedOrder { .. }
-            | Self::MarketToLimit { .. } => (self.clone(), 0),
+            | Self::MarketToLimit { .. } => Ok((self.clone(), 0)),
         }
     }
 }
@@ -678,7 +781,7 @@ impl<T: Clone> OrderType<T> {
 impl<T: Clone> OrderType<T> {
     /// Matches this order against an incoming quantity
     ///
-    /// Returns a tuple containing:
+    /// On success returns a tuple containing:
     /// - The quantity consumed from the incoming order
     /// - Optionally, an updated version of this order (if partially filled)
     /// - The quantity that was reduced from hidden portion (for iceberg/reserve orders)
@@ -687,20 +790,28 @@ impl<T: Clone> OrderType<T> {
     /// For a generic `T`, a partial fill clones the payload into the residual;
     /// that caller `Clone` must not panic (see the type-level note).
     ///
-    /// # Overflow
+    /// # Errors
     ///
-    /// The only quantity *addition* on any match path is a reserve order's
-    /// partial-fill replenishment (`new_visible + replenish_qty`). If that sum
-    /// would overflow `u64` — reachable only for a pathological reserve whose
-    /// visible + hidden already exceeds `u64::MAX` — this returns the
-    /// no-progress sentinel `(0, Some(self.clone()), 0, incoming_quantity)`
-    /// instead of panicking or wrapping. The caller's sweep (and the
-    /// fill-or-kill dry run) already treat that sentinel as "set this maker
-    /// aside", so the step fails atomically: no trade, maker and taker
-    /// unchanged. Every other path uses only subtraction / `min`, which cannot
-    /// overflow.
-    #[must_use]
-    pub fn match_against(&self, incoming_quantity: u64) -> (u64, Option<Self>, u64, u64) {
+    /// Every quantity operation is checked (issue #169). Returns
+    /// [`PriceLevelError::InvalidOperation`] when:
+    ///
+    /// - a reserve order's partial-fill replenishment `new_visible +
+    ///   replenish_qty` would overflow `u64`. This is reachable only for a
+    ///   pathological reserve whose visible + hidden already exceeds
+    ///   `u64::MAX` (e.g. visible = hidden = threshold = `u64::MAX`,
+    ///   `auto_replenish`, incoming `1`), which [`crate::PriceLevel`] never
+    ///   admits but this public method accepts. Before v0.10 this returned an
+    ///   unchanged-order "no progress" sentinel; it is now an explicit error.
+    /// - any subtraction would underflow. Each one is bounded by a preceding
+    ///   comparison or `min`, so this cannot happen for any input; the checked
+    ///   form replaces the former unchecked subtraction.
+    ///
+    /// `self` is borrowed and never modified, so on error the order is
+    /// unchanged and no partial result is produced.
+    pub fn match_against(
+        &self,
+        incoming_quantity: u64,
+    ) -> Result<(u64, Option<Self>, u64, u64), PriceLevelError> {
         match self {
             Self::Standard {
                 id,
@@ -713,34 +824,39 @@ impl<T: Clone> OrderType<T> {
                 extra_fields,
             } => {
                 if quantity.as_u64() <= incoming_quantity {
-                    // Full match
-                    (
-                        quantity.as_u64(),                     // consumed = full order quantity
-                        None,                                  // no updated order (fully matched)
-                        0,                                     // no hidden quantity reduced
-                        incoming_quantity - quantity.as_u64(), // remaining = incoming - consumed
-                    )
+                    // Full match: consume the whole order, no residual, no
+                    // hidden reduced; the taker keeps `incoming - consumed`.
+                    let remaining = quantity_sub(
+                        incoming_quantity,
+                        quantity.as_u64(),
+                        "standard full match remaining",
+                    )?;
+                    Ok((quantity.as_u64(), None, 0, remaining))
                 } else {
-                    // Partial match
-                    (
-                        incoming_quantity, // consumed = all incoming quantity
+                    // Partial match: consume all incoming quantity.
+                    let residual = quantity_sub(
+                        quantity.as_u64(),
+                        incoming_quantity,
+                        "standard partial match residual",
+                    )?;
+                    Ok((
+                        incoming_quantity,
                         Some(Self::Standard {
                             id: *id,
                             price: *price,
-                            quantity: Quantity::new(quantity.as_u64() - incoming_quantity),
+                            quantity: Quantity::new(residual),
                             side: *side,
                             user_id: *user_id,
                             timestamp: *timestamp,
                             time_in_force: *time_in_force,
                             extra_fields: extra_fields.clone(),
                         }),
-                        0, // not hidden quantity reduced
-                        0, // not remaining quantity
-                    )
+                        0, // no hidden quantity reduced
+                        0, // no remaining quantity
+                    ))
                 }
             }
 
-            // En OrderType::match_against para IcebergOrder
             Self::IcebergOrder {
                 id,
                 price,
@@ -755,7 +871,8 @@ impl<T: Clone> OrderType<T> {
                 if visible_quantity.as_u64() <= incoming_quantity {
                     // Fully match the visible portion
                     let consumed = visible_quantity.as_u64();
-                    let remaining = incoming_quantity - consumed;
+                    let remaining =
+                        quantity_sub(incoming_quantity, consumed, "iceberg full match remaining")?;
 
                     if hidden_quantity.as_u64() > 0 {
                         // Refresh visible portion from hidden. The tranche size
@@ -777,10 +894,14 @@ impl<T: Clone> OrderType<T> {
                             visible_quantity.as_u64()
                         };
                         let refresh_qty = std::cmp::min(hidden_quantity.as_u64(), tranche);
-                        let new_hidden = hidden_quantity.as_u64() - refresh_qty;
+                        let new_hidden = quantity_sub(
+                            hidden_quantity.as_u64(),
+                            refresh_qty,
+                            "iceberg refresh hidden quantity",
+                        )?;
 
                         // Create updated order with refreshed quantities
-                        (
+                        Ok((
                             consumed,
                             Some(Self::IcebergOrder {
                                 id: *id,
@@ -795,21 +916,26 @@ impl<T: Clone> OrderType<T> {
                             }),
                             refresh_qty,
                             remaining,
-                        )
+                        ))
                     } else {
                         // No hidden quantity left
-                        (consumed, None, 0, remaining)
+                        Ok((consumed, None, 0, remaining))
                     }
                 } else {
                     // Partial match of visible quantity
                     let executed = incoming_quantity;
+                    let new_visible = quantity_sub(
+                        visible_quantity.as_u64(),
+                        executed,
+                        "iceberg partial match visible quantity",
+                    )?;
 
-                    (
+                    Ok((
                         executed,
                         Some(Self::IcebergOrder {
                             id: *id,
                             price: *price,
-                            visible_quantity: Quantity::new(visible_quantity.as_u64() - executed),
+                            visible_quantity: Quantity::new(new_visible),
                             hidden_quantity: *hidden_quantity,
                             side: *side,
                             user_id: *user_id,
@@ -819,7 +945,7 @@ impl<T: Clone> OrderType<T> {
                         }),
                         0,
                         0,
-                    )
+                    ))
                 }
             }
 
@@ -852,14 +978,19 @@ impl<T: Clone> OrderType<T> {
                 if visible_quantity.as_u64() <= incoming_quantity {
                     // Full match of the visible part
                     let consumed = visible_quantity.as_u64();
-                    let remaining = incoming_quantity - consumed;
+                    let remaining =
+                        quantity_sub(incoming_quantity, consumed, "reserve full match remaining")?;
 
                     // Verify if we need and can replenish
                     if hidden_quantity.as_u64() > 0 && *auto_replenish {
                         // Restore from the hidden quantity
-                        let new_hidden = hidden_quantity.as_u64() - replenish_qty;
+                        let new_hidden = quantity_sub(
+                            hidden_quantity.as_u64(),
+                            replenish_qty,
+                            "reserve replenish hidden quantity",
+                        )?;
 
-                        (
+                        Ok((
                             consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
@@ -877,15 +1008,19 @@ impl<T: Clone> OrderType<T> {
                             }),
                             replenish_qty,
                             remaining,
-                        )
+                        ))
                     } else {
                         // If there is no auto-replenishment or no hidden quantity, delete the order
-                        (consumed, None, 0, remaining)
+                        Ok((consumed, None, 0, remaining))
                     }
                 } else {
                     // Partial match of the visible part
                     let consumed = incoming_quantity;
-                    let new_visible = visible_quantity.as_u64() - consumed;
+                    let new_visible = quantity_sub(
+                        visible_quantity.as_u64(),
+                        consumed,
+                        "reserve partial match visible quantity",
+                    )?;
 
                     // Check if we need to replenish (we fell below the threshold)
                     if new_visible < safe_threshold
@@ -898,24 +1033,25 @@ impl<T: Clone> OrderType<T> {
                         // `replenish_qty` is capped by `.min(hidden_quantity)`
                         // above, and `PriceLevel::add_order` /
                         // `PriceLevelSnapshot::refresh_aggregates` reject any
-                        // order whose own `visible + hidden` overflows `u64`,
-                        // so `new_visible + replenish_qty <= visible + hidden
-                        // <= u64::MAX`. The `checked_add` is therefore kept as
-                        // defense-in-depth against an unadmitted / internally
-                        // constructed order (e.g. a direct `match_against` unit
-                        // test): on the unreachable overflow it makes NO progress
-                        // — the maker is handed back unchanged with
-                        // `consumed == 0` and `remaining` untouched, the
-                        // no-progress sentinel both the real sweep and the
-                        // fill-or-kill dry run detect and set aside — never a
-                        // partial or a manufactured (wrapped) fill.
-                        let Some(refreshed_visible) = new_visible.checked_add(replenish_qty) else {
-                            return (0, Some(self.clone()), 0, incoming_quantity);
-                        };
+                        // order whose own `visible + hidden` overflows `u64`.
+                        // An unadmitted order handed directly to this public
+                        // method can still overflow it: that is a typed
+                        // `InvalidOperation` (issue #169), never a wrapped or
+                        // manufactured fill and never a disguised no-progress
+                        // success.
+                        let refreshed_visible = quantity_add(
+                            new_visible,
+                            replenish_qty,
+                            "reserve partial-fill replenishment visible quantity",
+                        )?;
                         // Restore from the hidden quantity.
-                        let new_hidden = hidden_quantity.as_u64() - replenish_qty;
+                        let new_hidden = quantity_sub(
+                            hidden_quantity.as_u64(),
+                            replenish_qty,
+                            "reserve replenish hidden quantity",
+                        )?;
 
-                        (
+                        Ok((
                             consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
@@ -933,10 +1069,10 @@ impl<T: Clone> OrderType<T> {
                             }),
                             replenish_qty,
                             0,
-                        )
+                        ))
                     } else {
                         // We don't need to replenish or it is not automatic
-                        (
+                        Ok((
                             consumed,
                             Some(Self::ReserveOrder {
                                 id: *id,
@@ -954,7 +1090,7 @@ impl<T: Clone> OrderType<T> {
                             }),
                             0,
                             0,
-                        )
+                        ))
                     }
                 }
             }
@@ -974,21 +1110,27 @@ impl<T: Clone> OrderType<T> {
                 let visible_qty = self.visible_quantity().as_u64();
 
                 if visible_qty <= incoming_quantity {
-                    // Full match
-                    (
-                        visible_qty,                     // consumed full visible quantity
-                        None,                            // fully matched
-                        0,                               // no hidden reduced
-                        incoming_quantity - visible_qty, // remaining quantity
-                    )
+                    // Full match: consumed the full visible quantity, fully
+                    // matched, no hidden reduced.
+                    let remaining = quantity_sub(
+                        incoming_quantity,
+                        visible_qty,
+                        "single-tranche full match remaining",
+                    )?;
+                    Ok((visible_qty, None, 0, remaining))
                 } else {
-                    // Partial match
-                    (
-                        incoming_quantity, // consumed all incoming
-                        Some(self.with_reduced_quantity(visible_qty - incoming_quantity)),
-                        0, // not hidden reduced
-                        0, // not remaining quantity
-                    )
+                    // Partial match: consumed all incoming.
+                    let residual = quantity_sub(
+                        visible_qty,
+                        incoming_quantity,
+                        "single-tranche partial match residual",
+                    )?;
+                    Ok((
+                        incoming_quantity,
+                        Some(self.with_reduced_quantity(residual)),
+                        0, // no hidden reduced
+                        0, // no remaining quantity
+                    ))
                 }
             }
         }

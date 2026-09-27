@@ -281,11 +281,15 @@ pub struct PriceLevel {
 }
 
 /// Result of [`PriceLevel::dry_run`]: what a sweep would fill and how many
-/// trades it would emit.
-#[derive(Debug, Clone, Copy)]
+/// trades it would emit, plus the typed failure that would stop the sweep.
+#[derive(Debug, Clone)]
 struct DryRun {
     filled: u64,
     trades: usize,
+    /// The [`OrderType::match_against`] error the real sweep would hit at the
+    /// maker where the dry run stopped (issue #169). `filled` / `trades` are
+    /// then the committed prefix the real sweep would report alongside it.
+    error: Option<PriceLevelError>,
 }
 
 impl PriceLevel {
@@ -754,6 +758,18 @@ impl PriceLevel {
         self.orders.debug_shard_runs()
     }
 
+    /// Rest `order` in the queue WITHOUT admission validation and without
+    /// reserving it on the quantity / topology counters (issue #169 test seam).
+    /// Used to place an order `add_order` would reject (e.g. a reserve whose
+    /// visible + hidden overflows `u64`) so a test can drive
+    /// [`OrderType::match_against`]'s typed error through the real sweep and
+    /// the fill-or-kill dry run. The counters then describe only the admitted
+    /// orders; tests assert they are unchanged by the failing step.
+    #[cfg(test)]
+    pub(crate) fn test_rest_unadmitted(&self, order: OrderType<()>) -> Result<(), PriceLevelError> {
+        self.orders.try_push(Arc::new(order))
+    }
+
     #[cfg(test)]
     pub(crate) fn test_poison_guard(&self) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1139,6 +1155,7 @@ impl PriceLevel {
         let mut dry = DryRun {
             filled: 0,
             trades: 0,
+            error: None,
         };
         if incoming_quantity == 0 {
             return dry;
@@ -1180,8 +1197,18 @@ impl PriceLevel {
             if order.id() == taker_id {
                 continue;
             }
+            // A typed arithmetic failure (issue #169) stops the real sweep at
+            // this maker before it is mutated, keeping the fills committed so
+            // far. Stop here too and record it, so the prediction (prefix and
+            // error) is exactly what `match_order` reports.
             let (consumed, updated_order, hidden_reduced, new_remaining) =
-                order.match_against(remaining);
+                match order.match_against(remaining) {
+                    Ok(step) => step,
+                    Err(err) => {
+                        dry.error = Some(err);
+                        break;
+                    }
+                };
 
             // No-progress safety guard, identical in shape to the real sweep
             // (see `match_order`): a front maker that consumes nothing, draws no
@@ -1240,7 +1267,8 @@ impl PriceLevel {
                     None => break,
                 };
             }
-            dry = DryRun { filled, trades };
+            dry.filled = filled;
+            dry.trades = trades;
             remaining = new_remaining;
 
             if let Some(updated) = updated_order {
@@ -1569,6 +1597,26 @@ impl PriceLevel {
             let dry = self.dry_run(incoming_quantity, taker_order_id);
             let available = dry.filled;
             fok_trades = dry.trades;
+            if let Some(err) = dry.error {
+                // The sweep would stop at a maker whose matching arithmetic
+                // fails (issue #169). The fill cannot be complete, so kill the
+                // taker BEFORE any mutation and report the typed error: level
+                // untouched (#164 contract). Guard released before logging,
+                // as below (issue #172).
+                drop(guard);
+                tracing::error!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    available,
+                    price = self.price,
+                    error = %err,
+                    "fill-or-kill taker killed: maker matching arithmetic failed in dry run; level untouched"
+                );
+                let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+                result.mark_killed(incoming_quantity);
+                result.set_error(err);
+                return result;
+            }
             if available < incoming_quantity {
                 // Release the exclusive guard BEFORE emitting the event (issue
                 // #172): the kill verdict is already decided and nothing was
@@ -1730,6 +1778,15 @@ impl PriceLevel {
             Abort {
                 maker_id: Id,
             },
+            /// [`OrderType::match_against`] returned a typed arithmetic error
+            /// for the FIFO-front maker (issue #169). The queue action is
+            /// `SetAside` (a no-op that mutates nothing), so the maker rests
+            /// unchanged; the sweep stops with the committed prefix and the
+            /// error (#164 contract).
+            Failed {
+                maker_id: Id,
+                error: PriceLevelError,
+            },
         }
 
         while remaining > 0 {
@@ -1783,7 +1840,18 @@ impl PriceLevel {
                 }
 
                 let (consumed, updated_order, hidden_reduced, new_remaining) =
-                    order_arc.match_against(remaining);
+                    match order_arc.match_against(remaining) {
+                        Ok(step) => step,
+                        Err(error) => {
+                            return (
+                                FrontAction::SetAside,
+                                StepResult::Failed {
+                                    maker_id: order_arc.id(),
+                                    error,
+                                },
+                            );
+                        }
+                    };
 
                 // Detect a non-progressing maker: nothing consumed, no hidden
                 // drawn, the taker's remaining unchanged, and the maker handed
@@ -1932,6 +2000,21 @@ impl PriceLevel {
                                 order_id = %maker_id,
                                 "match sweep aborted: replenishment would overflow the level visible counter; front maker left intact, sweep terminated"
                             );
+                            break;
+                        }
+                        StepResult::Failed { maker_id, error } => {
+                            // The front maker's matching arithmetic failed before
+                            // it was mutated (issue #169): no trade, no counter
+                            // moved, maker left in place. Stop with the committed
+                            // prefix and report the error (#164 contract); it is
+                            // logged after the sweep with the other stop causes.
+                            tracing::debug!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                "match sweep: front maker matching arithmetic failed; sweep stopped"
+                            );
+                            sweep_error = Some((error, None));
                             break;
                         }
                         StepResult::SelfTradeSkipped { maker_id, seq } => {
@@ -2122,7 +2205,7 @@ impl PriceLevel {
                     trades = result.trades().len(),
                     remaining,
                     error = %err,
-                    "match sweep stopped early: result storage could not grow; committed fills reported"
+                    "match sweep stopped early before mutating the next maker; committed fills reported"
                 ),
             }
             result.set_error(err);
