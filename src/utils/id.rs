@@ -26,23 +26,52 @@ pub enum Id {
     Sequential(u64),
 }
 
+/// Parses the text form written by [`Id`]'s `Display` impl.
+///
+/// The grammar is disambiguated by **shape**, most specific first:
+///
+/// 1. exactly [`ulid::ULID_LEN`] (26) characters that decode as Crockford
+///    Base32 and whose first character is `0`..=`7` (26 × 5 = 130 bits, so a
+///    larger leading digit would overflow the 128-bit value) → [`Id::Ulid`];
+/// 2. any textual form `uuid` accepts (simple 32-hex, hyphenated 36, braced
+///    38, `urn:uuid:` 45) → [`Id::Uuid`];
+/// 3. otherwise a decimal `u64` as `u64::from_str` accepts it (leading zeros
+///    and a leading `+` included) → [`Id::Sequential`].
+///
+/// A canonical `u64` rendering is at most 20 characters, so it never has a
+/// ULID or UUID shape and `Sequential(n).to_string()` always parses back to
+/// `Sequential(n)`. Trying the ULID and UUID shapes first is what stops an
+/// all-digit ULID (e.g. the nil ULID `00000000000000000000000000`) from being
+/// claimed as `Sequential` through its leading zeros, so
+/// `id.to_string().parse::<Id>() == Ok(id)` holds for every [`Id`].
+///
+/// # Errors
+///
+/// [`PriceLevelError::ParseError`], carrying the input, when no rule matches.
 impl FromStr for Id {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(id) = s.parse::<u64>() {
-            return Ok(Self::Sequential(id));
+        // `Ulid::from_string` also checks the length; the explicit guard keeps
+        // the shape rule independent of that crate's internals. It does NOT
+        // check overflow: a first character above `7` silently loses its top
+        // bits (e.g. `8000…0` would decode to the nil ULID), so reject it here.
+        if s.len() == ulid::ULID_LEN
+            && matches!(s.as_bytes().first(), Some(b'0'..=b'7'))
+            && let Ok(ulid) = Ulid::from_string(s)
+        {
+            return Ok(Self::Ulid(ulid));
         }
 
         if let Ok(uuid) = Uuid::from_str(s) {
-            Ok(Self::Uuid(uuid))
-        } else if let Ok(ulid) = Ulid::from_string(s) {
-            Ok(Self::Ulid(ulid))
-        } else {
-            Err(PriceLevelError::ParseError {
-                message: format!("Failed to parse Id as u64, UUID, or ULID: {s}"),
-            })
+            return Ok(Self::Uuid(uuid));
         }
+
+        s.parse::<u64>()
+            .map(Self::Sequential)
+            .map_err(|_| PriceLevelError::ParseError {
+                message: format!("Failed to parse Id as ULID, UUID, or u64: {s}"),
+            })
     }
 }
 
@@ -518,9 +547,9 @@ mod tests {
                 &mut ConstEntropy(0xFF),
             )
             .unwrap(),
-            // Not an all-zero ULID: its text form is all digits and `Id::from_str`
-            // tries `u64` first, so it would parse back as `Sequential(0)`.
             Id::try_new_ulid_at(TimestampMs::ZERO, &mut ConstEntropy(0xFF)).unwrap(),
+            // All-zero (nil) ULID: its text form is all digits (#178).
+            Id::try_new_ulid_at(TimestampMs::ZERO, &mut ConstEntropy(0x00)).unwrap(),
         ];
         for id in ids {
             let json = serde_json::to_string(&id).unwrap();
@@ -586,5 +615,185 @@ mod tests {
 
         let parsed: Id = "42".parse().unwrap();
         assert_eq!(parsed, id);
+    }
+
+    /// Asserts `Display` -> `FromStr` and serde JSON both reproduce `id`.
+    fn assert_round_trips(id: Id) {
+        let text = id.to_string();
+        assert_eq!(Id::from_str(&text).unwrap(), id, "from_str of {text}");
+        let json = serde_json::to_string(&id).unwrap();
+        let back: Id = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id, "serde round-trip of {json}");
+    }
+
+    #[test]
+    fn test_from_str_nil_ulid_is_ulid_not_sequential() {
+        let nil = Id::from_ulid(ulid::Ulid::nil());
+        assert_eq!(nil.to_string(), "00000000000000000000000000");
+        let parsed = Id::from_str("00000000000000000000000000").unwrap();
+        assert!(parsed.is_ulid(), "got {parsed:?}");
+        assert_eq!(parsed, nil);
+        assert_round_trips(nil);
+    }
+
+    #[test]
+    fn test_from_str_near_epoch_all_digit_ulids_are_ulid() {
+        // Each Crockford digit 0-9 encodes 0-9, so these ULIDs render as
+        // decimal digits only and (with >= 6 leading zeros) fit in `u64`.
+        let cases = [
+            (0_u64, 1_u128),
+            (0, 9),
+            (0, 0x1234),
+            (1, 0),
+            (9, 0),
+            (1, 1),
+            (0, u128::from(u32::MAX)),
+        ];
+        for (ts, random) in cases {
+            let id = Id::from_ulid(ulid::Ulid::from_parts(ts, random));
+            let text = id.to_string();
+            assert_eq!(text.len(), 26);
+            if ts == 0 && random <= u128::from(u32::MAX) && text.bytes().all(|b| b.is_ascii_digit())
+            {
+                // The ambiguous shape: also a valid (non-canonical) `u64`.
+                assert!(text.parse::<u64>().is_ok(), "text {text}");
+            }
+            assert!(Id::from_str(&text).unwrap().is_ulid(), "text {text}");
+            assert_round_trips(id);
+        }
+        // A literal all-digit 26-char text that is also a valid `u64`.
+        let text = "00000000000000000000000042";
+        assert_eq!(text.parse::<u64>().unwrap(), 42);
+        let parsed = Id::from_str(text).unwrap();
+        assert_eq!(
+            parsed,
+            Id::from_ulid(ulid::Ulid::from_parts(0, 0x4 * 32 + 2))
+        );
+    }
+
+    #[test]
+    fn test_from_str_sequential_boundaries() {
+        for n in [0, 1, 42, u64::MAX - 1, u64::MAX] {
+            let id = Id::sequential(n);
+            assert_eq!(Id::from_str(&n.to_string()).unwrap(), id);
+            assert_round_trips(id);
+        }
+        assert_eq!(u64::MAX.to_string().len(), 20);
+    }
+
+    #[test]
+    fn test_from_str_keeps_non_canonical_decimal_acceptance() {
+        // Non-canonical decimals that are neither ULID- nor UUID-shaped keep
+        // parsing as `Sequential`, exactly as before #178.
+        assert_eq!(Id::from_str("007").unwrap(), Id::sequential(7));
+        assert_eq!(Id::from_str("+42").unwrap(), Id::sequential(42));
+        assert_eq!(
+            Id::from_str("0000000000000000000000042").unwrap(),
+            Id::sequential(42)
+        );
+        assert_eq!(
+            Id::from_str("000000000000000000000000042").unwrap(),
+            Id::sequential(42)
+        );
+        // A 26-char text that is not Crockford Base32 still falls back to u64.
+        assert_eq!(
+            Id::from_str("+0000000000000000000000042").unwrap(),
+            Id::sequential(42)
+        );
+    }
+
+    #[test]
+    fn test_from_str_uuid_forms() {
+        let uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        for text in [
+            "550e8400-e29b-41d4-a716-446655440000",
+            "550E8400-E29B-41D4-A716-446655440000",
+            "550e8400e29b41d4a716446655440000",
+            "{550e8400-e29b-41d4-a716-446655440000}",
+            "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            assert_eq!(Id::from_str(text).unwrap(), Id::from_uuid(uuid), "{text}");
+        }
+        // A 32-digit simple-form text is a UUID, even though `u64` would
+        // accept it through its leading zeros.
+        let text = "00000000000000000000000000000042";
+        assert_eq!(
+            Id::from_str(text).unwrap(),
+            Id::from_uuid(Uuid::from_u128(0x42))
+        );
+        for id in [
+            Id::nil(),
+            Id::from_uuid(uuid),
+            Id::from_uuid(Uuid::from_u128(1)),
+            Id::from_uuid(Uuid::max()),
+            Id::from_u64(12345),
+        ] {
+            assert_round_trips(id);
+        }
+    }
+
+    #[test]
+    fn test_from_str_errors_carry_input() {
+        for text in [
+            "",
+            "not-a-uuid",
+            "-1",
+            "18446744073709551616",
+            // 26 chars, first digit > 7: overflows 128 bits and u64.
+            "80000000000000000000000000",
+            "0000000000000000000000000U",
+        ] {
+            match Id::from_str(text) {
+                Err(PriceLevelError::ParseError { message }) => {
+                    assert!(message.ends_with(text), "{message}");
+                }
+                other => panic!("expected ParseError for {text:?}, got {other:?}"),
+            }
+            let json = serde_json::to_string(text).unwrap();
+            assert!(serde_json::from_str::<Id>(&json).is_err(), "{json}");
+        }
+    }
+
+    mod proptests {
+        use super::super::Id;
+        use proptest::prelude::*;
+        use std::str::FromStr;
+        use ulid::Ulid;
+        use uuid::Uuid;
+
+        fn any_id() -> impl Strategy<Value = Id> {
+            prop_oneof![
+                any::<u64>().prop_map(Id::sequential),
+                any::<u128>().prop_map(|v| Id::from_uuid(Uuid::from_u128(v))),
+                any::<u128>().prop_map(|v| Id::from_ulid(Ulid(v))),
+                // Near-epoch ULIDs with small randomness: all-digit texts.
+                (0_u64..1_000, 0_u128..1_000_000)
+                    .prop_map(|(ts, r)| Id::from_ulid(Ulid::from_parts(ts, r))),
+                // Small sequentials, including 0.
+                (0_u64..1_000).prop_map(Id::sequential),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 2048, ..ProptestConfig::default() })]
+
+            #[test]
+            fn prop_display_from_str_round_trip(id in any_id()) {
+                let text = id.to_string();
+                prop_assert_eq!(Id::from_str(&text).ok(), Some(id));
+            }
+
+            #[test]
+            fn prop_serde_round_trip(id in any_id()) {
+                let json = serde_json::to_string(&id).map_err(|e| TestCaseError::fail(e.to_string()))?;
+                let back: Id = serde_json::from_str(&json).map_err(|e| TestCaseError::fail(e.to_string()))?;
+                prop_assert_eq!(back, id);
+            }
+
+            #[test]
+            fn prop_from_str_never_panics(text in ".{0,48}") {
+                let _ = Id::from_str(&text);
+            }
+        }
     }
 }
