@@ -235,6 +235,13 @@ impl UuidGenerator {
 /// any sequence value can produce.
 const MAX_U64_DECIMAL_DIGITS: usize = 20;
 
+/// Decimal radix as a type-level nonzero divisor for [`encode_decimal`].
+///
+/// Built without `Option` so there is no panic form or dead fallback:
+/// `MIN` is 1 and `1 + 9` cannot reach `u64::MAX`, so this compile-time
+/// constant is exactly 10 (pinned by a unit test). It is not counter state.
+const DECIMAL_RADIX: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating_add(9);
+
 /// Writes the ASCII decimal representation of `value` (no sign, no leading
 /// zeros, `b"0"` for zero) right-aligned into `buf` and returns the used
 /// suffix: exactly the bytes of `value.to_string()`, without allocating.
@@ -251,12 +258,15 @@ fn encode_decimal(value: u64, buf: &mut [u8; MAX_U64_DECIMAL_DIGITS]) -> &[u8] {
     let mut remaining = value;
     let mut start = 0;
     for (position, slot) in buf.iter_mut().enumerate().rev() {
-        // `remaining % 10` is in `0..=9`, so its lowest little-endian byte is
+        // Division and remainder by `NonZeroU64` (`u64: Div<NonZeroU64>` /
+        // `Rem<NonZeroU64>`) have no divide-by-zero or overflow case: the
+        // divisor is nonzero by type, so there is no failure branch to handle.
+        // `remaining % TEN` is in `0..=9`, so its lowest little-endian byte is
         // the whole digit, and `b'0' | digit == b'0' + digit` (0x30 has its
         // low nibble clear).
-        let [digit, ..] = (remaining % 10).to_le_bytes();
+        let [digit, ..] = (remaining % DECIMAL_RADIX).to_le_bytes();
         *slot = b'0' | digit;
-        remaining /= 10;
+        remaining /= DECIMAL_RADIX;
         if remaining == 0 {
             start = position;
             break;
@@ -272,6 +282,11 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[test]
+    fn test_decimal_radix_is_exactly_ten() {
+        assert_eq!(DECIMAL_RADIX.get(), 10);
+    }
 
     // Helper function to create a test namespace
     fn create_test_namespace() -> Uuid {
