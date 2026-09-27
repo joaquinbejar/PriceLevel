@@ -6987,6 +6987,192 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Issue #145: zero-delta hidden reservation is skipped on admission
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_add_standard_order_leaves_hidden_quantity_unchanged() {
+        let level = PriceLevel::new(10_000);
+        for id in 1..=5 {
+            level
+                .add_order(create_sell_standard_order(id, 10_000, 100))
+                .expect("standard admission must succeed");
+            assert_eq!(level.hidden_quantity(), 0);
+        }
+        assert_eq!(level.visible_quantity(), 500);
+        assert_eq!(level.order_count(), 5);
+
+        // Standard admissions also leave a NONZERO hidden counter untouched,
+        // even when it sits at u64::MAX (a zero delta cannot overflow).
+        level
+            .add_order(create_iceberg_order(6, 10_000, 0, u64::MAX))
+            .expect("hidden-only iceberg to u64::MAX must succeed");
+        level
+            .add_order(create_sell_standard_order(7, 10_000, 1))
+            .expect("zero-hidden admission at hidden u64::MAX must succeed");
+        assert_eq!(level.hidden_quantity(), u64::MAX);
+        assert_eq!(level.visible_quantity(), 501);
+        assert_eq!(level.order_count(), 7);
+
+        // FIFO insertion priority is unchanged, and the snapshot round-trips.
+        let ids: Vec<Id> = level
+            .snapshot_by_insertion_seq()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        assert_eq!(ids, (1..=7).map(Id::from_u64).collect::<Vec<_>>());
+        let json = level.snapshot_to_json().expect("snapshot must serialize");
+        let restored = PriceLevel::from_snapshot_json(&json).expect("snapshot must round-trip");
+        assert_eq!(restored.visible_quantity(), 501);
+        assert_eq!(restored.hidden_quantity(), u64::MAX);
+        assert_eq!(restored.order_count(), 7);
+    }
+
+    #[test]
+    fn test_add_standard_order_zero_hidden_error_precedence_preserved() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_sell_standard_order(1, 10_000, u64::MAX))
+            .expect("first admission fills the visible counter");
+        let before_json = level.snapshot_to_json().expect("snapshot before");
+
+        // Duplicate id that would also overflow visible: identity wins.
+        match level.add_order(create_sell_standard_order(1, 10_000, 1)) {
+            Err(PriceLevelError::DuplicateOrderId(id)) => {
+                assert_eq!(id, Id::from_u64(1).to_string());
+            }
+            other => panic!("expected DuplicateOrderId, got {other:?}"),
+        }
+
+        // Free id, zero hidden, visible overflow: still rejected as visible.
+        match level.add_order(create_sell_standard_order(2, 10_000, 1)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("visible quantity overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected visible-overflow InvalidOperation, got {other:?}"),
+        }
+
+        // Own-total overflow is still checked first (before identity).
+        match level.add_order(create_iceberg_order(1, 10_000, u64::MAX, 1)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order total quantity overflows u64"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected own-total InvalidOperation, got {other:?}"),
+        }
+
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.hidden_quantity(), 0);
+        assert_eq!(level.order_count(), 1);
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before_json,
+            "rejected admissions must leave the level byte-identical"
+        );
+    }
+
+    #[test]
+    fn test_add_iceberg_and_reserve_still_reserve_hidden() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_iceberg_order(1, 10_000, 50, 150))
+            .expect("iceberg admission must succeed");
+        assert_eq!(level.hidden_quantity(), 150);
+        level
+            .add_order(create_reserve_order(2, 10_000, 40, 200, 10, true, None))
+            .expect("reserve admission must succeed");
+        assert_eq!(level.hidden_quantity(), 350);
+        level
+            .add_order(create_sell_standard_order(3, 10_000, 100))
+            .expect("standard admission must succeed");
+        assert_eq!(level.hidden_quantity(), 350);
+        assert_eq!(level.visible_quantity(), 190);
+        assert_eq!(level.order_count(), 3);
+        assert_eq!(level.total_quantity().expect("total fits"), 540);
+    }
+
+    #[test]
+    fn test_add_order_hidden_overflow_rolls_back_nonzero_visible() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_iceberg_order(1, 10_000, 10, u64::MAX - 10))
+            .expect("first admission must succeed");
+        let before_json = level.snapshot_to_json().expect("snapshot before");
+
+        // Nonzero visible AND nonzero hidden: the hidden reservation overflows,
+        // so the visible reservation this call made must be rolled back.
+        match level.add_order(create_iceberg_order(2, 10_000, 5, 11)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("hidden quantity overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected hidden-overflow InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(level.visible_quantity(), 10);
+        assert_eq!(level.hidden_quantity(), u64::MAX - 10);
+        assert_eq!(level.order_count(), 1);
+        assert_eq!(
+            level.snapshot_to_json().expect("snapshot after"),
+            before_json
+        );
+    }
+
+    #[test]
+    fn test_add_order_topology_rollback_zero_hidden_delta() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_iceberg_order(1, 10_000, 30, 70))
+            .expect("seed admission must succeed");
+        level.test_saturate_order_count(Side::Sell);
+
+        // Standard order (zero hidden) fails the count CAS: the visible
+        // reservation is undone and the hidden counter is left as it was.
+        match level.add_order(create_sell_standard_order(2, 10_000, 100)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order count overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected count-overflow InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(level.visible_quantity(), 30);
+        assert_eq!(level.hidden_quantity(), 70);
+        assert_eq!(level.snapshot_by_insertion_seq().len(), 1);
+    }
+
+    #[test]
+    fn test_add_order_topology_rollback_nonzero_hidden_delta() {
+        let level = PriceLevel::new(10_000);
+        level
+            .add_order(create_iceberg_order(1, 10_000, 30, 70))
+            .expect("seed admission must succeed");
+        level.test_saturate_order_count(Side::Sell);
+
+        // Iceberg (nonzero hidden) fails the count CAS: BOTH reservations are
+        // rolled back by the exact delta this call added.
+        match level.add_order(create_reserve_order(2, 10_000, 20, 500, 5, true, None)) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(
+                    message.contains("order count overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected count-overflow InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(level.visible_quantity(), 30);
+        assert_eq!(level.hidden_quantity(), 70);
+        assert_eq!(level.snapshot_by_insertion_seq().len(), 1);
+    }
+
+    // ------------------------------------------------------------------
     // Issue #120 — admission and trade topology invariants
     // ------------------------------------------------------------------
 
