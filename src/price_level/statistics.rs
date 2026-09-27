@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{TimestampMs, UnixClock};
 use portable_atomic::AtomicU128;
 use serde::de::{self, MapAccess, Visitor};
@@ -802,27 +803,27 @@ impl FromStr for PriceLevelStatistics {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 || parts[0] != "PriceLevelStatistics" {
-            return Err(PriceLevelError::InvalidFormat);
-        }
-
-        let fields_str = parts[1];
-        let mut fields = std::collections::HashMap::new();
-
-        for field_pair in fields_str.split(';') {
-            let kv: Vec<&str> = field_pair.split('=').collect();
-            if kv.len() == 2 {
-                fields.insert(kv[0], kv[1]);
-            }
-        }
-
-        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
-            match fields.get(field) {
-                Some(result) => Ok(*result),
-                None => Err(PriceLevelError::MissingField(field.to_string())),
-            }
+        // Exactly one `:` separates the `PriceLevelStatistics` tag from the field list.
+        let fields_str = match split_exactly_once(s, b':') {
+            Some(("PriceLevelStatistics", fields_str)) => fields_str,
+            _ => return Err(PriceLevelError::InvalidFormat),
         };
+
+        // `key=value` pairs: a pair without exactly one `=` is ignored and a
+        // repeated key keeps its last value (see `utils::text::Fields`).
+        const FIELD_NAMES: [&str; 9] = [
+            "orders_added",
+            "orders_removed",
+            "orders_executed",
+            "quantity_executed",
+            "value_executed",
+            "last_execution_time",
+            "first_arrival_time",
+            "sum_waiting_time",
+            "stats_degraded",
+        ];
+        let fields = Fields::parse(fields_str, &FIELD_NAMES);
+        let get_field = |name: &str| fields.require(name);
 
         let parse_usize = |field: &str, value: &str| -> Result<usize, PriceLevelError> {
             value
@@ -883,7 +884,7 @@ impl FromStr for PriceLevelStatistics {
                     .parse::<bool>()
                     .map_err(|_| PriceLevelError::InvalidFieldValue {
                         field: "stats_degraded".to_string(),
-                        value: (*value).to_string(),
+                        value: value.to_string(),
                     })?
             }
             None => false,

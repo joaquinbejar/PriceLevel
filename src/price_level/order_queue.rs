@@ -835,13 +835,12 @@ impl Serialize for OrderQueue {
 impl FromStr for OrderQueue {
     type Err = PriceLevelError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with("OrderQueue:orders=[") || !s.ends_with(']') {
-            return Err(PriceLevelError::ParseError {
+        let content = s
+            .strip_prefix("OrderQueue:orders=[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .ok_or_else(|| PriceLevelError::ParseError {
                 message: "Invalid format".to_string(),
-            });
-        }
-
-        let content = &s["OrderQueue:orders=[".len()..s.len() - 1];
+            })?;
         let queue = OrderQueue::new();
 
         if !content.is_empty() {

@@ -386,6 +386,18 @@ pub(crate) fn try_reserve<T>(vec: &mut Vec<T>, additional: usize) -> Result<(), 
     vec.try_reserve(additional).map_err(allocation_error)
 }
 
+/// Reserves room for `additional` more bytes in `s` through
+/// `String::try_reserve_exact`.
+///
+/// # Errors
+///
+/// [`PriceLevelError::InvalidOperation`] on capacity overflow or allocation
+/// failure; `s` is left unchanged.
+#[inline]
+pub(crate) fn try_reserve_str(s: &mut String, additional: usize) -> Result<(), PriceLevelError> {
+    s.try_reserve_exact(additional).map_err(allocation_error)
+}
+
 #[cold]
 #[inline(never)]
 fn allocation_error(e: std::collections::TryReserveError) -> PriceLevelError {
@@ -566,6 +578,10 @@ mod tests {
         let err = try_reserve(&mut v, usize::MAX).expect_err("must overflow");
         assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
         assert_eq!(v, vec![1]);
+        let mut s = String::from("x");
+        let err = try_reserve_str(&mut s, usize::MAX).expect_err("must overflow");
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+        assert_eq!(s, "x");
         try_push(&mut v, 2).expect("push");
         assert_eq!(v, vec![1, 2]);
     }
