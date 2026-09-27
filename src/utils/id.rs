@@ -1027,7 +1027,7 @@ mod tests {
 
         #[test]
         fn test_deserialize_bytes_and_char_match_pre_201_string_path() {
-            use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+            use crate::utils::encode::serde_parity_tests::assert_byte_and_char_parity;
             let texts = [
                 reference_text(Id::sequential(1)),
                 reference_text(Id::sequential(u64::MAX)),

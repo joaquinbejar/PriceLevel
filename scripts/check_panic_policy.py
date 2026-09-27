@@ -130,7 +130,9 @@ _TEST_MODULE_NAME = re.compile(r"^(tests|tests_.*|.*_tests)$")
 
 _ATTR_LINE = re.compile(r"[ \t]*#\[[^\]]*\][ \t]*(//[^\n]*)?\n")
 _BLANK_LINE = re.compile(r"[ \t]*(//[^\n]*)?\n")
-_MOD_HEAD = re.compile(r"[ \t]*mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{")
+_MOD_HEAD = re.compile(
+    r"[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"
+)
 _FN_HEAD = re.compile(
     r"[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*[^{;]*\{"
 )
