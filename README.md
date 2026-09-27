@@ -1157,13 +1157,15 @@ degraded while admissions and cancels continue.
   touched).
 - **Stop-cause precedence in one sweep step.** Before a step commits
   anything, the sweep checks, in this fixed order: the maker's
-  `match_against` arithmetic (`InvalidOperation`, #169), the trade id
-  (`CapacityExceeded { resource: IdSequence }`, #168), the FIFO sequence
-  for a replenishment (`CounterExhausted { counter: QueueSequence }`), and
-  the level's visible headroom. The first failure stops the sweep with the
-  committed prefix. A fill-or-kill taker checks the same causes up front:
-  dry-run arithmetic error, depth, sequence headroom, result storage, then
-  the trade-id block.
+  `match_against` arithmetic (`InvalidOperation`, #169), for a full
+  consume the resting-order count release (`InvalidOperation`, #163; see
+  the next guide), the trade id (`CapacityExceeded { resource: IdSequence }`,
+  #168), the FIFO sequence for a replenishment
+  (`CounterExhausted { counter: QueueSequence }`), and the level's visible
+  headroom. The first failure stops the sweep with the committed prefix. A
+  fill-or-kill taker checks the same causes up front: epoch headroom, the
+  dry run's stop error (arithmetic or count, whichever maker comes first),
+  depth, sequence headroom, result storage, then the trade-id block.
 - **Epochs** stop at `u64::MAX`, which readers treat as unknown; mutations
   and sweeps are refused before they start once an epoch is within `2^32`
   of it. A post-only taker that cannot linearize its depth scan is
@@ -1171,6 +1173,47 @@ degraded while admissions and cancels continue.
   epochs and sequences.
 - `OrderQueue`'s `From<Vec<_>>` silently dropped orders it could not
   insert (a repeated id); `TryFrom` rejects instead.
+
+### Migration Guide (transactional engine invariants — breaking behavior)
+
+Engine invariant checks that used to be debug-only assertions, or silent
+no-ops in release builds, are now typed, transactional failures (#163).
+No public signature changes; the observable behavior below is new.
+
+- **Resting-order count release.** A cancel / price-moving update
+  ([`PriceLevel::update_order`]) and every full consume in
+  [`PriceLevel::match_order`] validate the level's resting-order count
+  BEFORE the queue removal. A count that disagrees with the queue (zero
+  while the order rests) now returns
+  [`PriceLevelError::InvalidOperation`] with the queue, priority,
+  counters and statistics untouched. Previously release builds removed the
+  order and silently skipped the decrement.
+  - A non-fill-or-kill sweep stops at that maker with the committed prefix
+    and [`MatchResult::error`] set (the #164 contract).
+  - A fill-or-kill taker is [`MatchOutcome::Killed`] with the error before
+    its first mutation: its dry run (and [`PriceLevel::matchable_quantity`])
+    projects the same count.
+  - If the release still fails after the removal committed (reachable only
+    when the count already disagreed and a concurrent removal took the
+    last count), the call returns the error and the level is poisoned: later
+    mutators return `InvalidOperation` and matching is refused, as for a
+    panicked guard holder. Reconstruct the level from a snapshot.
+- **Update decisions.** A resize validates the decided order's id before
+  any level-counter reservation, and the counter deltas are checked. A
+  rejected update never leaves a partial reservation. If a rollback of a
+  partial reservation cannot be applied, the level is poisoned instead of
+  the counters drifting.
+- **Poison message.** The poisoned-level error now reads "price level
+  poisoned by a panicked operation or a broken internal invariant;
+  reconstruct it from a snapshot". Match on the variant, not the text.
+- **Width policy.** [`PriceLevel::order_count`] converts the stored `u64`
+  count with a checked conversion. Admission and snapshot restore cap the
+  count at `usize::MAX` on targets narrower than 64 bits (in addition to
+  the 62-bit count field), so the value is exact on every target. A
+  restore whose order vector exceeds that cap returns `InvalidOperation`.
+  The match pre-size hint uses a checked `usize::try_from` of the taker
+  quantity: a quantity above `usize::MAX` sizes by the order count instead
+  of truncating.
 
 
  ## Setup Instructions
