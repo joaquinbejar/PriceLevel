@@ -5,7 +5,34 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// Literal text of the full representation, excluding the four numeric values.
+const FULL_TEXT_LITERAL_LEN: usize =
+    "OrderBookEntry:price=;visible_quantity=;total_quantity=;index=".len();
+
+/// Maximum decimal digits of a `u128` (`price`).
+const MAX_U128_DECIMAL_DIGITS: usize = 39;
+
+/// Maximum decimal digits of a `u64` (`visible_quantity`, `total_quantity`).
+const MAX_U64_DECIMAL_DIGITS: usize = 20;
+
+/// Maximum decimal digits of a `usize` (`index`) on every supported target
+/// (at most 64-bit).
+const MAX_USIZE_DECIMAL_DIGITS: usize = 20;
+
 /// Represents a price level entry in the order book
+///
+/// Text forms:
+///
+/// - [`fmt::Display`] writes only the infallibly readable fields
+///   (`price`, `visible_quantity`, `index`) and never produces a
+///   crate-originated [`fmt::Error`].
+/// - [`OrderBookEntry::to_full_string`] additionally includes
+///   `total_quantity`, which can fail with a typed error when the level's
+///   `visible + hidden` quantity overflows `u64`.
+///
+/// Both forms are accepted by [`FromStr`], which reads `price` and `index`.
+///
+/// The type lives in a private module and is not part of the public API.
 #[derive(Debug)]
 pub struct OrderBookEntry {
     /// The price level
@@ -45,11 +72,65 @@ impl OrderBookEntry {
         self.level.total_quantity()
     }
 
+    /// Full text representation including `total_quantity`:
+    /// `OrderBookEntry:price=P;visible_quantity=V;total_quantity=T;index=I`.
+    ///
+    /// Unlike [`fmt::Display`], this form needs the level's checked
+    /// `visible + hidden` sum, so it is fallible. It never substitutes a
+    /// placeholder for an unrepresentable total. The level is only read.
+    ///
+    /// # Errors
+    ///
+    /// - [`PriceLevelError::InvalidOperation`] if the level's
+    ///   `visible + hidden` quantity overflows `u64`.
+    /// - [`PriceLevelError::SerializationError`] if the output buffer cannot
+    ///   be allocated or the text cannot be written.
+    #[allow(dead_code)]
+    pub fn to_full_string(&self) -> Result<String, PriceLevelError> {
+        use std::fmt::Write as _;
+
+        let total_quantity = self.total_quantity()?;
+        let price = self.price();
+        let visible_quantity = self.visible_quantity();
+
+        let capacity = full_text_capacity_bound()?;
+        let mut out = String::new();
+        out.try_reserve_exact(capacity)
+            .map_err(|err| full_text_error(format_args!("buffer reservation failed: {err}")))?;
+        write!(
+            out,
+            "OrderBookEntry:price={price};visible_quantity={visible_quantity};\
+             total_quantity={total_quantity};index={}",
+            self.index
+        )
+        .map_err(|err| full_text_error(format_args!("write failed: {err}")))?;
+        Ok(out)
+    }
+
     /// Get the order count at this entry
     #[allow(dead_code)]
     #[must_use]
     pub fn order_count(&self) -> usize {
         self.level.order_count()
+    }
+}
+
+/// Upper bound on the byte length of [`OrderBookEntry::to_full_string`], so
+/// the buffer is reserved once and never grows while writing.
+fn full_text_capacity_bound() -> Result<usize, PriceLevelError> {
+    FULL_TEXT_LITERAL_LEN
+        .checked_add(MAX_U128_DECIMAL_DIGITS)
+        .and_then(|n| n.checked_add(MAX_U64_DECIMAL_DIGITS))
+        .and_then(|n| n.checked_add(MAX_U64_DECIMAL_DIGITS))
+        .and_then(|n| n.checked_add(MAX_USIZE_DECIMAL_DIGITS))
+        .ok_or_else(|| full_text_error(format_args!("capacity bound overflow")))
+}
+
+/// Typed failure for the fallible full text conversion.
+#[cold]
+fn full_text_error(detail: fmt::Arguments<'_>) -> PriceLevelError {
+    PriceLevelError::SerializationError {
+        message: format!("OrderBookEntry full text conversion: {detail}"),
     }
 }
 
@@ -81,7 +162,8 @@ impl Serialize for OrderBookEntry {
     {
         use serde::ser::SerializeStruct;
 
-        let mut state = serializer.serialize_struct("OrderBookEntry", 3)?;
+        // Four fields: price, visible_quantity, total_quantity, index.
+        let mut state = serializer.serialize_struct("OrderBookEntry", 4)?;
         state.serialize_field("price", &self.price())?;
         state.serialize_field("visible_quantity", &self.visible_quantity())?;
         let total_quantity = self.total_quantity().map_err(serde::ser::Error::custom)?;
@@ -117,15 +199,19 @@ impl<'de> Deserialize<'de> for OrderBookEntry {
 }
 
 // Implement Display
+//
+// Writes only fields that are read infallibly. `total_quantity` is omitted on
+// purpose: it is a checked sum that can overflow, and a crate-originated
+// `fmt::Error` would make `to_string()` / `format!` panic. Use
+// `OrderBookEntry::to_full_string` for the representation that includes it.
+// Only genuine sink errors from the formatter are propagated.
 impl fmt::Display for OrderBookEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let total_quantity = self.total_quantity().map_err(|_| fmt::Error)?;
         write!(
             f,
-            "OrderBookEntry:price={};visible_quantity={};total_quantity={};index={}",
+            "OrderBookEntry:price={};visible_quantity={};index={}",
             self.price(),
             self.visible_quantity(),
-            total_quantity,
             self.index
         )
     }
