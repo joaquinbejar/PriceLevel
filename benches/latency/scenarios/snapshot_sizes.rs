@@ -252,7 +252,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             },
         );
         reports.push(ScenarioReport::from_samples(
-            "snapshot_package_legacy",
+            format!("snapshot_package_legacy@{size}"),
             "snap_sizes",
             size,
             "snapshot + Vec<&Order> + to_vec + SHA-256 (pre-#164 emulation)",
@@ -260,7 +260,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             note.clone(),
         ));
         reports.push(ScenarioReport::from_samples(
-            "snapshot_package_stream",
+            format!("snapshot_package_stream@{size}"),
             "snap_sizes",
             size,
             "PriceLevel::snapshot_package()",
@@ -279,7 +279,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             },
         );
         reports.push(ScenarioReport::from_samples(
-            "snapshot_to_json_legacy",
+            format!("snapshot_to_json_legacy@{size}"),
             "snap_sizes",
             size,
             "legacy package + serde_json::to_string (pre-#164 emulation)",
@@ -287,7 +287,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             note.clone(),
         ));
         reports.push(ScenarioReport::from_samples(
-            "snapshot_to_json_stream",
+            format!("snapshot_to_json_stream@{size}"),
             "snap_sizes",
             size,
             "PriceLevel::snapshot_to_json()",
@@ -302,7 +302,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             || package.validate().expect("snapshot_sizes: validate"),
         );
         reports.push(ScenarioReport::from_samples(
-            "validate_legacy",
+            format!("validate_legacy@{size}"),
             "snap_sizes",
             size,
             "to_vec(snapshot) + SHA-256 + compare (pre-#164 emulation)",
@@ -310,7 +310,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             note.clone(),
         ));
         reports.push(ScenarioReport::from_samples(
-            "validate_stream",
+            format!("validate_stream@{size}"),
             "snap_sizes",
             size,
             "PriceLevelSnapshotPackage::validate()",
@@ -318,6 +318,17 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             note,
         ));
     }
+    // Every (operation, variant, size) is its own artifact key: persistence
+    // writes one `<name>.csv` per report, so a repeated name would overwrite
+    // another size's observations (issue #149 review).
+    let mut names: Vec<&str> = reports.iter().map(|r| r.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        sizes().len() * 6,
+        "snapshot_sizes: every operation / variant / size must have a distinct report name"
+    );
     reports
 }
 

@@ -867,8 +867,12 @@ between runs in both variants; only p50 is comparable at 10,000 and
 
 - **Peak temporary memory** is where the buffers mattered. `validate` now
   peaks at 72 bytes (the hex checksum) instead of the whole payload
-  (34.4 MB at 100,000 orders); `snapshot_package` peaks at the snapshot's
-  own `Arc` vector (24 bytes per order) instead of payload plus vector.
+  (34.4 MB at 100,000 orders). `snapshot_package` peaks at 24 bytes per
+  order instead of that plus the payload: the capture's temporary
+  `(sequence, Arc)` pairs buffer (16 bytes per order on this host) is still
+  live while it is copied into the snapshot's output `Arc` vector (8 bytes
+  per order). Only the checksum stage is buffer-free; the capture buffer is
+  outside #149.
   `snapshot_to_json` still peaks at roughly the output JSON, which is the
   returned value.
 - **Allocated bytes** fall by about 8.5 MB per 10,000 orders on every path
@@ -883,8 +887,11 @@ between runs in both variants; only p50 is comparable at 10,000 and
   snapshot latency.
 - **Two passes remain.** `snapshot_to_json` serializes the snapshot once
   into SHA-256 and once into the package JSON; the table shows it at
-  roughly twice `snapshot_package`. A single-pass envelope changes the
-  package byte layout and needs a separate compatibility review.
+  roughly twice `snapshot_package`. The package writes `version`,
+  `snapshot`, `checksum` in that order, so a single-pass encoder could
+  forward the snapshot bytes to both the output and SHA-256 and append the
+  checksum, keeping the package bytes unchanged; it still needs a separate
+  compatibility review.
 
 Criterion numbers were not collected for this issue: no production code
 changed, and the per-operation harness above carries the percentiles and
