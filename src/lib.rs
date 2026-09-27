@@ -283,7 +283,7 @@
 //! | `Uuid` (raw) | [`Id`] enum (`Uuid`, `Ulid`, `Sequential`) |
 //! | `Uuid::new_v4()` | `Id::new()` or `Id::new_uuid()` (v0.10: [`Id::try_new`] / [`Id::try_new_uuid`], see below) |
 //! | `u64` order/trade IDs | [`Id::from_u64()`] or [`Id::sequential()`] |
-//! | `AtomicU64` trade counter | [`UuidGenerator::next()`] |
+//! | `AtomicU64` trade counter | `UuidGenerator::next()` (v0.10: [`UuidGenerator::try_next()`], see below) |
 //!
 //! ### Domain Newtypes
 //!
@@ -1059,6 +1059,57 @@
 //!   [`PriceLevel::matchable_quantity`] returns the same prefix.
 //! - [`DEFAULT_RESERVE_REPLENISH_AMOUNT`] keeps its type (`NonZeroU64`) and
 //!   value (`80`); only its construction changed (no `unreachable!`).
+//!
+//! ## Migration Guide (checked trade-id sequence — breaking)
+//!
+//! [`UuidGenerator`] no longer wraps its sequence counter (#168). The old
+//! `next()` advanced it with an unchecked atomic `fetch_add`: that never
+//! panicked, but at `u64::MAX` it wrapped to `0` and re-issued the
+//! counter-zero id, a duplicate-id correctness defect reachable at once by
+//! deserializing a generator near the end of its range.
+//!
+//! | v0.9 | v0.10 |
+//! |------|-------|
+//! | `UuidGenerator::next() -> Uuid` | [`UuidGenerator::try_next()`] `-> Result<Uuid, PriceLevelError>` |
+//! | — | [`UuidGenerator::EXHAUSTED`], [`UuidGenerator::is_exhausted`], [`UuidGenerator::remaining`], [`UuidGenerator::namespace`] |
+//! | — | [`CapacityResource::IdSequence`] |
+//!
+//! - Usable sequence values are `0 ..= u64::MAX - 1`; `u64::MAX` is the
+//!   exhaustion sentinel and is never issued. Every issued value produces the
+//!   same UUID bytes as before (v5 over the same namespace and decimal name).
+//! - Once exhausted, every request returns
+//!   [`PriceLevelError::CapacityExceeded`] `{ resource: IdSequence, additional }`
+//!   forever; the counter never wraps, saturates or resets. The serde form is
+//!   unchanged, and an exhausted generator serializes as
+//!   `"counter": 18446744073709551615` and restores exhausted.
+//! - [`PriceLevel::match_order`] reserves each trade id before committing the
+//!   maker mutation for that step. On exhaustion the sweep stops with
+//!   [`MatchResult::error`] set and the committed prefix reported (the #164
+//!   contract); later calls against crossable depth with that generator return
+//!   no trades and the error. A fill-or-kill taker reserves all of its ids up
+//!   front: if the generator cannot supply them, it is
+//!   [`MatchOutcome::Killed`] with the error set, the level is unchanged and no
+//!   id is consumed.
+//! - Trade ids are consumed only by steps that emit a trade, so a trade stream
+//!   for a fixed input stays gap-free and deterministic. A value reserved for a
+//!   step that then aborts on a visible-counter overflow, or a fill-or-kill id
+//!   left unused, is skipped and never re-issued.
+//!
+//! ```rust
+//! use pricelevel::{CapacityResource, PriceLevelError, UuidGenerator};
+//!
+//! let generator: UuidGenerator = serde_json::from_str(
+//!     r#"{"namespace":"00000000-0000-0000-0000-000000000000","counter":18446744073709551614}"#,
+//! )
+//! .map_err(|e| PriceLevelError::DeserializationError { message: e.to_string() })?;
+//! let _last = generator.try_next()?;
+//! assert!(generator.is_exhausted());
+//! assert!(matches!(
+//!     generator.try_next(),
+//!     Err(PriceLevelError::CapacityExceeded { resource: CapacityResource::IdSequence, .. })
+//! ));
+//! # Ok::<(), PriceLevelError>(())
+//! ```
 //!
 
 mod orders;

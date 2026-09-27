@@ -167,9 +167,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point-in-time view. `snapshot_package()` and `snapshot_to_json()` keep their
   signatures and propagate the new error. Snapshot format v4, checksums and
   restore order are unchanged for every successful snapshot.
+- **`UuidGenerator::next` is replaced by the checked `try_next` (#168).**
+  `try_next() -> Result<Uuid, PriceLevelError>` reserves the sequence value
+  with a checked, allocation-free CAS instead of an unchecked `fetch_add`,
+  which did not panic but wrapped `u64::MAX -> 0` and re-issued the
+  counter-zero id (a duplicate-id defect reachable by deserializing a
+  generator near the end of its range). `u64::MAX` is the exhaustion sentinel
+  and is never issued; once reached, every request fails with
+  `PriceLevelError::CapacityExceeded { resource: CapacityResource::IdSequence,
+  .. }` forever. Issued ids are byte-identical to before (same namespace and
+  decimal name). The serde form is unchanged; an exhausted generator
+  round-trips as exhausted.
+- **`match_order` reports trade-id exhaustion through `MatchResult::error`
+  (#168).** Each trade id is reserved before its step's maker mutation, so an
+  exhausted generator stops the sweep with the committed prefix, the true
+  remainder and a consistent level. A fill-or-kill taker reserves its exact
+  trade-id count before touching any maker and is `Killed` with the error set
+  and the level unchanged when the generator cannot supply them.
 
 ### Added
 
+- `UuidGenerator::EXHAUSTED`, `UuidGenerator::is_exhausted`,
+  `UuidGenerator::remaining`, `UuidGenerator::namespace` and
+  `CapacityResource::IdSequence` (#168).
 - `MatchResult::try_reserve`, `MatchResult::try_clone`,
   `TradeList::try_reserve`, `TradeList::capacity` and `TradeList::try_clone`
   (#170): fallible growth and cloning with typed `CapacityExceeded` failures.
