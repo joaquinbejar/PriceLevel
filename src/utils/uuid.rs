@@ -240,6 +240,9 @@ const MAX_U64_DECIMAL_DIGITS: usize = 20;
 /// Built without `Option` so there is no panic form or dead fallback:
 /// `MIN` is 1 and `1 + 9` cannot reach `u64::MAX`, so this compile-time
 /// constant is exactly 10 (pinned by a unit test). It is not counter state.
+// panic-policy-allow-saturating: compile-time-only constant, provably exact
+// (1 + 9 cannot saturate), pinned by `test_decimal_radix_is_exactly_ten`
+// (issue #173).
 const DECIMAL_RADIX: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating_add(9);
 
 /// Writes the ASCII decimal representation of `value` (no sign, no leading
@@ -277,6 +280,11 @@ fn encode_decimal(value: u64, buf: &mut [u8; MAX_U64_DECIMAL_DIGITS]) -> &[u8] {
 }
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): a `u64`-to-`usize`
+// narrowing cast on a test bound-count constant is permitted inside `mod
+// tests` per the Testing section of `rules/global_rules.md`. Production code
+// outside this module keeps the full deny list.
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
     use std::collections::HashSet;

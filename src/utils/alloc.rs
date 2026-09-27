@@ -349,7 +349,17 @@ pub(crate) mod test_seam {
                 Ok(())
             }
             None => {
-                INJECTED.with(|cell| cell.set(cell.get().wrapping_add(1)));
+                // Checked, not `wrapping_add` (issue #173): this diagnostic
+                // counter is read by `injected()` for test assertions, so a
+                // silent wrap back toward 0 would misreport the count. On
+                // the practically unreachable overflow it just stops
+                // counting instead (the fallback is the current value, not
+                // a fixed constant, so this is not the
+                // `clippy::manual_saturating_arithmetic` shape).
+                INJECTED.with(|cell| {
+                    let current = cell.get();
+                    cell.set(current.checked_add(1).unwrap_or(current));
+                });
                 Err(PriceLevelError::capacity_exceeded(resource, additional))
             }
         }

@@ -382,6 +382,12 @@ impl ParkedSeqs {
     /// Number of parked sequences (test inspection).
     #[cfg(test)]
     #[must_use]
+    // `spill.len()` is the count of parked sequences in a single test
+    // scenario (never near `usize::MAX`), so `+ 1` cannot overflow; a
+    // `checked_add` here only trips `clippy::manual_saturating_arithmetic`
+    // (issue #173) without adding a real guard. This helper is compiled out
+    // of every release build.
+    #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn len(&self) -> usize {
         self.spill.len() + usize::from(self.inline.is_some())
     }

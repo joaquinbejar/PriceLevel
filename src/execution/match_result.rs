@@ -1118,7 +1118,13 @@ pub(crate) mod test_seam {
                 message: "injected add_trade failure".to_string(),
             }),
             Some(n) => {
-                cell.set(Some(n - 1));
+                // `n != 0` here (the `Some(0)` arm above matches that case),
+                // so this is never the underflowing branch; `checked_sub`
+                // still avoids raw arithmetic on shared state per the
+                // Production Panic Policy (issue #173) — `test_seam` is
+                // called from the production `add_trade` under `cfg(test)`,
+                // not from a `mod tests` block, so it is not test-exempt.
+                cell.set(n.checked_sub(1));
                 Ok(())
             }
             None => Ok(()),
