@@ -57,6 +57,7 @@ below.
 | `snapshot`   | `snapshot()` capture, checksum `validate()`, `from_snapshot_json` restore |
 | `depth`      | `add_order` and a 1-unit taker match, swept across resting depth 100 / 1,000 / (opt-in) 10,000 / 100,000; order-quantity and level-price magnitude sweeps |
 | `contention` | one matcher thread (`match_order`) under `N-1` concurrent admissions/cancels/reads, run once with a GTC matcher and once with an FOK matcher |
+| `stats_contention` | statistics cache contention (issue #154): matcher alone, with producers / readers on the same level, and with the same workers on an independent level; successful and overflow-rollback recording as separate cases; bare `PriceLevelStatistics` bounds. See "Statistics cache contention" below |
 
 Every scenario asserts its own exact outcome counts (fills, rejections,
 "missing" cancels, etc.) **after** the timed loop, from the operations' own
@@ -268,6 +269,10 @@ Every knob is an environment variable (`benches/latency/config.rs`):
 | `PL_LATENCY_CONTENTION_THREADS`   | 4       | Total threads in the contention scenario (1 matcher + N-1 writers) |
 | `PL_LATENCY_CONTENTION_OPS`       | 5,000   | Matcher-thread operations measured per contention run |
 | `PL_LATENCY_ALLOC_REPS`           | 2,000   | Repetitions per operation in the allocation-measurement pass |
+| `PL_LATENCY_STATS_PRODUCERS`      | 2       | Producer (cancel + re-add) threads per `stats_contention` case |
+| `PL_LATENCY_STATS_READERS`        | 2       | Statistics-reader threads per `stats_contention` case |
+| `PL_LATENCY_STATS_OPS`            | 20,000  | Matcher operations measured per `stats_contention` case |
+| `PL_LATENCY_ONLY`                 | all     | Comma-separated groups to run: `isolated`, `match`, `tif`, `snapshot` (includes `iteration`), `depth`, `contention`, `stats_contention`, `alloc` |
 
 A short validation run (a few minutes at most, typically a few seconds):
 
@@ -398,6 +403,181 @@ reconstructs every order and re-admits it into a fresh level). This is a
 plausible, named explanation, not a `perf`-verified one; treat it as a
 hypothesis to check with a profiler before optimizing, not as a settled root
 cause.
+
+## Statistics cache contention (issue #154)
+
+Question: does the `PriceLevelStatistics` layout add latency when producers,
+the one matcher and statistics readers share a level? The work stays inside
+the writer contract of issue #153 (one `record_execution` writer per level;
+`record_order_added` / `record_order_removed` from any thread). Nothing here
+weakens checked arithmetic or all-or-nothing recording, and no CAS is
+replaced by a load / store.
+
+### Layout (measured)
+
+`PriceLevelStatistics::field_layout()` is a test-only probe built on
+`std::mem::offset_of!`, and
+`test_statistics_layout_64bit_is_compact_single_block` pins its result. The
+layout is identical on `aarch64-apple-darwin` and `x86_64-apple-darwin`:
+
+| Offset | Size | Field | Written by |
+|---|---|---|---|
+| 0 | 16 | `value_executed` (`AtomicU128`) | matcher |
+| 16 | 8 | `orders_added` | producers (any thread) |
+| 24 | 8 | `orders_removed` | producers (any thread) |
+| 32 | 8 | `orders_executed` | matcher |
+| 40 | 8 | `quantity_executed` | matcher |
+| 48 | 8 | `last_execution_time` | matcher |
+| 56 | 8 | `first_arrival_time` | construction / `reset` |
+| 64 | 8 | `sum_waiting_time` | matcher |
+| 72 | 8 | `stats_seq` | matcher (readers load it) |
+| 80 | 1 | `stats_degraded` | any failed record |
+
+`size_of` is 96 and `align_of` is 16. The level holds it as
+`Arc<PriceLevelStatistics>`, so each level costs one 112-byte heap
+allocation (16-byte `ArcInner` counts followed by the 96 bytes) plus the
+8-byte pointer. The allocator guarantees only 16-byte alignment, so which
+fields share a line depends on the address. Over the 16-byte-aligned
+placements:
+
+| Pair on one line | 64-byte lines (x86_64) | 128-byte lines (Apple aarch64) |
+|---|---|---|
+| `orders_added` and `orders_executed` | 3 of 4 | 7 of 8 |
+| `orders_added` and `value_executed` | 3 of 4 | 7 of 8 |
+| `orders_added` and `stats_seq` | 1 of 4 | 5 of 8 |
+| `Arc` strong count and `value_executed` | 3 of 4 | 7 of 8 |
+
+The whole object covers at most 2 lines of 128 bytes and at most 3 lines of
+64 bytes. The observed data offset inside a 128-byte line changed from run
+to run (16, 80, 96). The strong count matters because `PriceLevel::stats()`
+returns an `Arc` clone, so every reader that calls it performs an atomic RMW
+next to the statistics fields.
+
+### Scenarios
+
+All cases live in `benches/latency/scenarios/stats_contention.rs`. The
+matcher level is pre-seeded, in FIFO order, with `warmup + ops` one-unit
+makers, followed by 500 churn orders per producer. Each timed
+`match_order(1)` consumes exactly maker `i` on call `i`; this is asserted
+after the loop. Every case builds its levels the same way, through
+`from_snapshot`, so depth (23,000 at the start) and construction path match
+across topologies.
+
+- `statsc_{ok,overflow}_single`: the matcher runs alone (control).
+- `statsc_ok_same_producers` / `_same_readers` / `_same_mixed`: 2 producers
+  (cancel then re-add their own churn orders) and/or 2 readers (point reads
+  and a seqlock `Clone` through `PriceLevel::stats()`, plus a full
+  `snapshot()` every 1,024 ops) run on the matcher's level.
+- `statsc_{ok,overflow}_indep_mixed`: the same workers run on a second,
+  identically built level. This controls for machine load, core placement
+  and memory bandwidth.
+- `*_producer_add` / `*_reader_clone`: producer 0's `add_order` and reader
+  0's statistics `Clone`, recorded only while the matcher measures.
+- `statsc_raw_*`: a bare `PriceLevelStatistics`. One sample is a batch of 16
+  `record_execution` calls, because a single call is below the 41.67 ns
+  timer tick. Producers call `record_order_added` / `record_order_removed` on
+  the same object (they write different fields from the matcher, so any
+  cost is false sharing) or on another object (control). Readers `Clone` the
+  same object.
+
+Recording outcome is a separate axis. In `ok` cases every
+`record_execution` succeeds (asserted: `!stats_degraded()`, exact
+`quantity_executed()`). `overflow` cases restore `sum_waiting_time` at
+`u64::MAX`, so every record commits three aggregates, overflows, rolls them
+back and formats its error inside the write section (asserted:
+`stats_degraded()`, zero `quantity_executed()` / `orders_executed()`). This
+is the longest rejected path. Since #140, scaled-value workloads take the
+successful path. The two paths are never merged into one number.
+
+### Method
+
+- **Hardware and build:** Apple M5 Max (18 logical cores: 6 performance, 12
+  efficiency), macOS aarch64, rustc 1.98.1, `bench` profile. Threads are not
+  pinned; macOS exposes no affinity API. `Instant` ticks are 41.67 ns, so a
+  `reader_clone` p50 of 0 means under one tick.
+- **Sampling:** 20,000 measured samples and 2,000 warmup per case. Five
+  interleaved rounds per binary (A, B, A, B, ...), 100,000 pooled raw
+  observations per row. Percentiles below are nearest-rank over the pooled
+  CSVs from `target/latency/<run-id>/`.
+- **Worker rates (baseline, same level, mixed):** matcher about 1.1 M ops/s;
+  producers about 2.4 M ops/s combined; readers about 3.2 M ops/s combined.
+  In the raw case, producers reached about 29 M ops/s.
+- **Loop model:** closed-loop service time; see "Coordinated omission
+  disclosure".
+- **Prototype (B):** `#[repr(C, align(128))]` with `orders_added` /
+  `orders_removed` first and a 112-byte pad, so the producer counters, the
+  matcher / seqlock fields and the `Arc` counts each get their own 128-byte
+  line. `ArcInner` grows from 112 to 384 bytes (+272 bytes per level, with
+  128-byte alignment). This was a throwaway branch and is not committed.
+
+### Results
+
+p99.99 is an [exploratory estimate](#the-p9999-caveat). Values are ns.
+
+| Scenario | Baseline p50 | Padded p50 | Baseline p99 | Padded p99 | Baseline p99.9 | Padded p99.9 | Baseline p99.99 | Padded p99.99 |
+|---|---|---|---|---|---|---|---|---|
+| statsc_ok_single | 250 | 333 | 875 | 1000 | 1917 | 8917 | 12042 | 79791 |
+| statsc_ok_same_producers | 625 | 500 | 2250 | 2000 | 12667 | 15875 | 49250 | 427000 |
+| statsc_ok_same_readers | 292 | 292 | 1375 | 2083 | 20875 | 59625 | 457250 | 943250 |
+| statsc_ok_same_mixed | 833 | 666 | 4541 | 6833 | 63250 | 248417 | 986584 | 10012125 |
+| statsc_ok_same_mixed_producer_add | 708 | 584 | 2291 | 2375 | 13958 | 16708 | 180208 | 404083 |
+| statsc_ok_same_mixed_reader_clone | 0 | 0 | 333 | 166 | 583 | 250 | 8000 | 7833 |
+| statsc_ok_indep_mixed | 333 | 333 | 1708 | 1500 | 8541 | 8250 | 34834 | 39959 |
+| statsc_overflow_single | 333 | 333 | 959 | 917 | 8500 | 1666 | 34667 | 21333 |
+| statsc_overflow_same_mixed | 791 | 792 | 3791 | 7083 | 51334 | 72916 | 10018292 | 843208 |
+| statsc_overflow_indep_mixed | 375 | 375 | 1375 | 1459 | 4458 | 8834 | 21417 | 38292 |
+| statsc_raw_ok_single (per 16) | 166 | 166 | 209 | 208 | 250 | 250 | 9375 | 1500 |
+| statsc_raw_ok_same_producers (per 16) | 2708 | 166 | 10500 | 209 | 18541 | 375 | 60500 | 12958 |
+| statsc_raw_ok_indep_producers (per 16) | 166 | 166 | 209 | 209 | 292 | 542 | 9042 | 12667 |
+| statsc_raw_ok_same_readers (per 16) | 958 | 959 | 2958 | 2625 | 11250 | 11875 | 53916 | 47875 |
+| statsc_raw_overflow_single (per 16) | 916 | 917 | 1166 | 1167 | 11541 | 8750 | 79417 | 85583 |
+| statsc_raw_overflow_same_producers (per 16) | 10917 | 917 | 6075667 | 1208 | 36998000 | 9125 | 75595833 | 19458 |
+
+Allocation: no engine code changed, so allocation per operation is the same
+as in the rest of this document. The only memory change evaluated is the
+prototype's +272 bytes per level.
+
+### Reading
+
+1. **The false sharing is real at the statistics object.** Producers that
+   only touch `orders_added` / `orders_removed` raise the matcher's batch
+   p50 from 166 to 2,708 ns. The independent-object control stays at 166 ns,
+   and padding brings it back to 166 ns. On the rollback path, the same
+   tight-loop producers push the batch p99 to about 6 ms, and one run
+   reached 60 ms at p99.9. This looks like contended-atomic starvation on
+   Apple silicon, and padding removes it. These cases are upper bounds: the
+   producers do nothing but statistics RMWs, at about 29 M ops/s.
+2. **Inside the engine, the statistics line is a minor share of the
+   contention.** On the same level, the matcher's p50 rises by about
+   300 to 500 ns over the independent-level control (833 versus 333, and 791
+   versus 375). Padding recovers about 125 to 170 ns of p50 in the `ok`
+   producer and mixed cases. It recovers nothing in `overflow_same_mixed`
+   (791 versus 792). The rest comes from state that producers and the
+   matcher genuinely share (`topology`, `visible_quantity`, `DashMap`
+   shards, the `SkipMap`, the `fok_guard` reader count), which padding the
+   statistics cannot remove.
+3. **Tails do not improve.** Across five interleaved rounds, the padded
+   build's p99 / p99.9 are equal or worse in every same-level case
+   (`ok_same_mixed` p99 4,541 versus 6,833). Run-to-run spread (for example,
+   `ok_single` p99.9 from 1 to 9 µs) is larger than any difference
+   attributable to the layout. The address of the statistics allocation
+   inside a line also changes between runs. Reader `Clone` p99 improves
+   (333 to 166 ns), but that is a reader-side gain, not matcher tail latency.
+
+### Decision: no change
+
+The current layout stays. The only improvement the prototype shows inside
+the engine is a 15 to 20% p50 gain in two same-level cases. It shows no
+p99 / p99.9 benefit, costs 3.4 times the statistics memory per level
+(+272 bytes, 128-byte-aligned allocation), and would need a `repr(C)` field
+order plus pad fields kept in sync across every constructor. That
+does not meet the acceptance bar ("measured benefit with no unexplained tail
+regression"). The raw scenarios remain as a regression tripwire. Revisit if
+other shared-state contention on the level is reduced enough for the
+statistics lines to become a larger share, or on hardware where a
+same-level p99 difference shows up above run-to-run noise. Criterion
+numbers were not collected for this investigation; the per-operation
+harness above is the evidence.
 
 ## Retained Criterion benches
 

@@ -131,6 +131,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// unless enabled at compile time). On a target without one, `portable-atomic`
 /// falls back to a global lock for this single counter; the other counters and
 /// the order queue are unaffected.
+///
+/// # Layout (issue #154)
+///
+/// On 64-bit targets the fields form one unpadded 96-byte block (16-byte
+/// aligned), so the producer counters `orders_added` / `orders_removed` usually
+/// share a cache line with the matcher's execution aggregates and `stats_seq`.
+/// That false sharing was measured and deliberately kept: separating the
+/// groups onto their own 128-byte lines removed it from a bare statistics
+/// object but gave no p99 / p99.9 improvement on a shared level, while raising
+/// the per-level allocation from 112 to 384 bytes. The data and method are in
+/// `BENCH.md`, "Statistics cache contention".
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
