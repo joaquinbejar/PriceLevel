@@ -177,9 +177,16 @@ ALLOW_SATURATING_MARKER = "panic-policy-allow-saturating"
 # `get_vec()[0]` / `matrix[0][1]` still counts), immediately (only
 # whitespace/masked-comments between) followed by `[`, with that `[` not
 # immediately followed by `]` (excludes the invalid, so irrelevant, empty
-# `v[]`). A handful of keywords that can precede an array-literal /
-# range-in-a-`for` rather than an indexing expression (`return [...]`,
-# `break [...]`, `in [...]`, ...) are excluded by name below.
+# `v[]`). Punctuation that introduces a type or borrow instead of indexing
+# — `&[`, `-> [`, `: [`, `<[`, `, [`, ... — never has an identifier or
+# closing delimiter directly before the `[` in the first place, so it is
+# already excluded structurally; `_INDEXING_EXCLUDED_KEYWORDS` below
+# excludes the keywords that DO look like an identifier immediately before
+# `[` while still introducing a type/borrow/literal, not an index: `mut`
+# (`&mut [u8]` parameter/return type, `&mut [1u8, 2]` a borrowed mutable
+# array literal), `as` (`x as [T; N]`), and a handful that precede an
+# array-literal / range-in-a-`for` rather than an indexing expression
+# (`return [...]`, `break [...]`, `in [...]`, ...).
 #
 # What it deliberately does NOT try to distinguish, as a documented
 # limitation (see `doc/panic-boundaries.md`): a field access or a more
@@ -191,7 +198,19 @@ INDEXING_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(?P<target>[A-Za-z_][A-Za-z0-9_]*|[)\]])\s*\[(?!\s*\])"
 )
 _INDEXING_EXCLUDED_KEYWORDS = frozenset(
-    {"return", "yield", "break", "in", "else", "move", "let", "const", "static"}
+    {
+        "return",
+        "yield",
+        "break",
+        "in",
+        "else",
+        "move",
+        "let",
+        "const",
+        "static",
+        "mut",
+        "as",
+    }
 )
 
 # A test-module name the co-located test convention uses (`mod tests`, `mod
@@ -206,9 +225,58 @@ _BLANK_LINE = re.compile(r"[ \t]*(//[^\n]*)?\n")
 _MOD_HEAD = re.compile(
     r"[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"
 )
-_FN_HEAD = re.compile(
-    r"[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*[^{;]*\{"
+# Matches only up through the function NAME — not the parameter list /
+# return type, which `find_item_terminator` below scans with delimiter
+# nesting tracked (issue #173 review): a signature containing an array
+# type, e.g. `fn check(v: &[u8; 2]) -> u8`, has a `;` that is not the
+# terminator, and a naive `[^{;]*` character class (the previous approach)
+# stops there and never reaches the real `{`.
+_FN_NAME_HEAD = re.compile(
+    r"[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
+
+
+def find_item_terminator(masked: str, pos: int) -> tuple[str, int] | None:
+    """Scans `masked[pos:]` for the first `{` or `;` that is NOT nested
+    inside `(...)` / `[...]` — enough to get array-type parameters and
+    return types right (`&[u8; 2]`, `-> [u8; 4]`), which a plain "stop at
+    the first `;`" scan mistakes for a semicolon-terminated signature
+    (issue #173 review). Returns `("brace", index)` / `("semi", index)`, or
+    `None` if neither is found. `<...>` generics are deliberately NOT
+    depth-tracked (ambiguous with comparison operators outside a
+    signature); a `{`/`;` inside one is a residual, documented limitation.
+    """
+    n = len(masked)
+    depth = 0
+    i = pos
+    while i < n:
+        c = masked[i]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth = max(0, depth - 1)
+        elif depth == 0 and c == "{":
+            return "brace", i
+        elif depth == 0 and c == ";":
+            return "semi", i
+        i += 1
+    return None
+
+
+def match_fn_head(masked: str, pos: int) -> tuple[str, int] | None:
+    """If `masked[pos:]` is an `fn` item head (after optional visibility /
+    `async`), returns `(name, brace_index)` for its body's opening `{`.
+    Returns `None` if this is not an `fn` head, or if it is a
+    semicolon-terminated declaration with no body (a trait method
+    signature) — nothing to scan inside either way.
+    """
+    name_match = _FN_NAME_HEAD.match(masked, pos)
+    if not name_match:
+        return None
+    terminator = find_item_terminator(masked, name_match.end())
+    if terminator is None or terminator[0] != "brace":
+        return None
+    return name_match.group(1), terminator[1]
 
 
 # A char/byte-char literal's body: an escape sequence, or exactly one
@@ -419,10 +487,10 @@ def find_test_skip_spans(masked: str) -> SpanSets:
                 continue
             break
         if is_test_attr:
-            fn_head = _FN_HEAD.match(masked, pos)
+            fn_head = match_fn_head(masked, pos)
             if not fn_head:
                 continue
-            brace_index = fn_head.end() - 1
+            _, brace_index = fn_head
             end = find_matching_brace(masked, brace_index)
             skip.append(Skip(attr_match.start(), end + 1))
             continue
@@ -434,17 +502,17 @@ def find_test_skip_spans(masked: str) -> SpanSets:
         # production-adjacent test seam: NOT added to `skip`, but its
         # extent (found the same way, or — for shapes with no `fn`/`mod`
         # head, such as `impl` / `struct` / `type` / `thread_local!` — up
-        # to its next top-level `{...}` or `;`) is recorded in
-        # `cfg_test_scope`.
+        # to its next top-level `{...}` or `;`, delimiter-nesting tracked
+        # by `find_item_terminator`) is recorded in `cfg_test_scope`.
         mod_head = _MOD_HEAD.match(masked, pos)
         if mod_head and _TEST_MODULE_NAME.match(mod_head.group(1)):
             brace_index = mod_head.end() - 1
             end = find_matching_brace(masked, brace_index)
             skip.append(Skip(attr_match.start(), end + 1))
             continue
-        fn_head = _FN_HEAD.match(masked, pos)
-        if fn_head and fn_head.group(1).startswith("test_"):
-            brace_index = fn_head.end() - 1
+        fn_head = match_fn_head(masked, pos)
+        if fn_head and fn_head[0].startswith("test_"):
+            _, brace_index = fn_head
             end = find_matching_brace(masked, brace_index)
             skip.append(Skip(attr_match.start(), end + 1))
             continue
@@ -454,22 +522,25 @@ def find_test_skip_spans(masked: str) -> SpanSets:
             cfg_test_scope.append(Skip(attr_match.start(), end + 1))
             continue
         if fn_head:
-            brace_index = fn_head.end() - 1
+            _, brace_index = fn_head
             end = find_matching_brace(masked, brace_index)
             cfg_test_scope.append(Skip(attr_match.start(), end + 1))
             continue
         # `impl` / `struct` / `type` / `thread_local!` / anything else with
         # no `fn`/`mod` head: bounded by its next top-level `{` (matched)
-        # or `;`, whichever comes first.
-        brace_pos = masked.find("{", pos)
-        semi_pos = masked.find(";", pos)
-        if brace_pos == -1 and semi_pos == -1:
+        # or `;`, whichever comes first, with `(`/`[` nesting tracked the
+        # same way (a `type Foo = [u8; 4];` under `cfg(test)` has no real
+        # code inside either way, but the terminator itself must still
+        # land on the right `;`, not the one inside the array type).
+        terminator = find_item_terminator(masked, pos)
+        if terminator is None:
             continue
-        if brace_pos != -1 and (semi_pos == -1 or brace_pos < semi_pos):
-            end = find_matching_brace(masked, brace_pos)
+        kind, index = terminator
+        if kind == "brace":
+            end = find_matching_brace(masked, index)
             cfg_test_scope.append(Skip(attr_match.start(), end + 1))
         else:
-            cfg_test_scope.append(Skip(attr_match.start(), semi_pos + 1))
+            cfg_test_scope.append(Skip(attr_match.start(), index + 1))
     return SpanSets(skip=skip, cfg_test_scope=cfg_test_scope)
 
 

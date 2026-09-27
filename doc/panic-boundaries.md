@@ -264,7 +264,24 @@ never panics:
   applies). Known limitation: it does not follow a field access or a more
   complex expression before `[` (`self.buf[i]`, `(a + b)[i]`) — a false
   negative, not a false positive, and it is one heuristic layer, not a
-  parser, same as the rest of the script.
+  parser, same as the rest of the script. The keyword denylist also
+  excludes `mut` (`&mut [u8]` parameter/return types, `&mut [1u8, 2]`
+  borrowed mutable array literals) and `as` (`x as [T; N]`) — both looked
+  like an identifier directly before `[`, the same shape as real indexing,
+  until a second review pass (PR #207) found the false positive.
+- **Item-scope terminator with an array type in the signature (PR #207
+  review).** The item-scope scan that locates an `fn`/`impl`/`struct`/
+  `type`/`thread_local!` item's extent originally stopped at the first
+  literal `{` or `;`, full stop. An array-type parameter or return type
+  (`fn check(v: &[u8; 2]) -> u8`) has a `;` INSIDE `[u8; 2]` that is not
+  the signature's terminator; the naive scan stopped there, computed a
+  scope ending mid-signature, and the function's real body — with its
+  real indexing — fell outside `cfg_test_scope` entirely, escaping the
+  indexing check. `find_item_terminator` now tracks `(`/`[` nesting depth
+  and only accepts a `{`/`;` at depth 0, so a `;` nested inside a type is
+  correctly skipped. `<...>` generics are deliberately not depth-tracked
+  (ambiguous with comparison operators outside a signature); a `{`/`;`
+  nested only inside one is a residual, documented limitation.
 - A narrow, reviewed exception is still an exception, not a fix: the
   `f64`-to-integer boundary casts in `src/utils/value.rs` carry a
   function-scoped `#[allow(clippy::cast_possible_truncation,
