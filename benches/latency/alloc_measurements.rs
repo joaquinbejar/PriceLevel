@@ -70,6 +70,11 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
         measure_match_iceberg_replenish(config),
         measure_match_iceberg_multi(config),
         measure_match_reserve_replenish(config),
+        // Issue #147: repeated small fills of one large standard maker, with
+        // and without an externally retained `Arc` of that maker.
+        measure_single_maker_partial(config, Retention::None),
+        measure_single_maker_partial(config, Retention::Admission),
+        measure_single_maker_partial(config, Retention::View),
         measure_snapshot_capture(config),
         measure_checksum_validate(config),
         measure_restore(config),
@@ -516,4 +521,98 @@ fn measure_match_reserve_replenish(config: &Config) -> AllocReport {
         1,
         0,
     )
+}
+
+/// Who else holds an `Arc` of the resting maker while it is partially filled
+/// (issue #147).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retention {
+    /// The admission handle is dropped; nothing outside the level holds the
+    /// maker.
+    None,
+    /// The `Arc` returned by `add_order` is kept for the whole run. It pins
+    /// only the admitted allocation: every fill stores a new value, so the
+    /// retained handle stops aliasing the resting order after the first fill.
+    Admission,
+    /// A fresh view of the resting maker (`iter_orders().next()`, the same
+    /// shared `Arc` a `snapshot_orders` / `snapshot` would hold) is taken
+    /// before every fill and dropped after it, both outside the counted
+    /// window: every fill sees a shared maker.
+    View,
+}
+
+/// Repeated 10-unit fills of one huge standard maker resting alone on the
+/// level (issue #147). Counting is enabled around each `match_order` call
+/// only, so taking and dropping the retained view is not counted.
+fn measure_single_maker_partial(config: &Config, retention: Retention) -> AllocReport {
+    let reps = config.alloc_reps;
+    let level = PriceLevel::new(LEVEL_PRICE);
+    let admission = level
+        .add_order(fixtures::standard_order(
+            0,
+            Side::Sell,
+            1_000_000_000_000,
+            TimeInForce::Gtc,
+        ))
+        .expect("alloc measurement: the large maker must be admitted");
+    let admission = match retention {
+        Retention::Admission => Some(admission),
+        Retention::None | Retention::View => {
+            drop(admission);
+            None
+        }
+    };
+    let generator = fixtures::trade_id_generator();
+    let mut results = Vec::with_capacity(reps);
+    let mut totals = AllocStats::default();
+
+    alloc::reset();
+    for i in 0..reps {
+        let view = match retention {
+            Retention::View => level.iter_orders().next(),
+            Retention::None | Retention::Admission => None,
+        };
+        alloc::enable();
+        let before = AllocStats::read();
+        results.push(level.match_order(
+            10,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        ));
+        let after = AllocStats::read();
+        alloc::disable();
+        let step = after.since(before);
+        totals.alloc_count += step.alloc_count;
+        totals.alloc_bytes += step.alloc_bytes;
+        totals.dealloc_count += step.dealloc_count;
+        totals.dealloc_bytes += step.dealloc_bytes;
+        drop(view);
+    }
+
+    for r in &results {
+        assert!(
+            r.error().is_none(),
+            "alloc measurement (#147): no early stop"
+        );
+        assert_eq!(r.trades().len(), 1, "alloc measurement (#147): one trade");
+        assert!(
+            r.filled_order_ids().is_empty(),
+            "alloc measurement (#147): no filled maker"
+        );
+    }
+    drop(results);
+    drop(admission);
+
+    AllocReport {
+        name: match retention {
+            Retention::None => "single_partial",
+            Retention::Admission => "single_partial_adm",
+            Retention::View => "single_partial_view",
+        },
+        reps,
+        totals,
+    }
 }
