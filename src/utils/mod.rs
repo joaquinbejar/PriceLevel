@@ -10,6 +10,8 @@ pub(crate) mod encode;
 mod entropy;
 mod id;
 mod logger;
+#[cfg(test)]
+pub(crate) mod test_tls;
 pub(crate) mod text;
 mod uuid;
 mod value;

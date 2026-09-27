@@ -259,23 +259,27 @@ pub(crate) mod test_seam {
 
     impl Drop for TradeLimitGuard {
         fn drop(&mut self) {
-            TRADE_LIMIT.with(|cell| cell.set(self.0));
+            crate::utils::test_tls::cell_set(&TRADE_LIMIT, self.0);
         }
     }
 
     /// Caps every `TradeList` on this thread at `limit` trades until the guard
     /// drops.
     pub(crate) fn limit_trades(limit: usize) -> TradeLimitGuard {
-        TradeLimitGuard(TRADE_LIMIT.with(|cell| cell.replace(Some(limit))))
+        TradeLimitGuard(crate::utils::test_tls::cell_replace(
+            &TRADE_LIMIT,
+            Some(limit),
+            None,
+        ))
     }
 
     /// `true` while a limit is armed on this thread.
     pub(crate) fn armed() -> bool {
-        TRADE_LIMIT.with(Cell::get).is_some()
+        crate::utils::test_tls::cell_get(&TRADE_LIMIT, None).is_some()
     }
 
     pub(super) fn check(len: usize, additional: usize) -> Result<(), PriceLevelError> {
-        let over = TRADE_LIMIT.with(Cell::get).is_some_and(|limit| {
+        let over = crate::utils::test_tls::cell_get(&TRADE_LIMIT, None).is_some_and(|limit| {
             len.checked_add(additional)
                 .is_none_or(|wanted| wanted > limit)
         });

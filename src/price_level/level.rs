@@ -125,7 +125,7 @@ const LAZY_WALK_DIVISOR: u64 = 64;
 #[inline]
 fn lazy_walk_budget(count: u64) -> u64 {
     #[cfg(test)]
-    if let Some(budget) = LAZY_WALK_BUDGET_OVERRIDE.with(std::cell::Cell::get) {
+    if let Some(budget) = crate::utils::test_tls::cell_get(&LAZY_WALK_BUDGET_OVERRIDE, None) {
         return budget;
     }
     count
@@ -146,7 +146,7 @@ pub(crate) struct LazyWalkBudgetGuard(Option<u64>);
 #[cfg(test)]
 impl Drop for LazyWalkBudgetGuard {
     fn drop(&mut self) {
-        LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.set(self.0));
+        crate::utils::test_tls::cell_set(&LAZY_WALK_BUDGET_OVERRIDE, self.0);
     }
 }
 
@@ -154,7 +154,11 @@ impl Drop for LazyWalkBudgetGuard {
 /// thread so small books exercise the bulk continuation.
 #[cfg(test)]
 pub(crate) fn override_lazy_walk_budget(budget: u64) -> LazyWalkBudgetGuard {
-    LazyWalkBudgetGuard(LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.replace(Some(budget))))
+    LazyWalkBudgetGuard(crate::utils::test_tls::cell_replace(
+        &LAZY_WALK_BUDGET_OVERRIDE,
+        Some(budget),
+        None,
+    ))
 }
 
 /// Counts one more parked maker for the fill-or-kill park-set preflight
@@ -416,7 +420,7 @@ thread_local! {
 /// #130). Returns a guard that clears the hook on drop.
 #[cfg(test)]
 pub(crate) fn set_post_only_decision_hook(hook: Box<dyn FnMut()>) -> PostOnlyHookGuard {
-    POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&POST_ONLY_DECISION_HOOK, Some(hook));
     PostOnlyHookGuard
 }
 
@@ -427,7 +431,7 @@ pub(crate) struct PostOnlyHookGuard;
 #[cfg(test)]
 impl Drop for PostOnlyHookGuard {
     fn drop(&mut self) {
-        POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&POST_ONLY_DECISION_HOOK, None);
     }
 }
 
@@ -450,7 +454,7 @@ pub(crate) struct SweepStartHookGuard;
 #[cfg(test)]
 impl Drop for SweepStartHookGuard {
     fn drop(&mut self) {
-        SWEEP_START_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&SWEEP_START_HOOK, None);
     }
 }
 
@@ -458,14 +462,14 @@ impl Drop for SweepStartHookGuard {
 /// (test seam, issue #164).
 #[cfg(test)]
 pub(crate) fn set_sweep_start_hook(hook: Box<dyn FnMut()>) -> SweepStartHookGuard {
-    SWEEP_START_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&SWEEP_START_HOOK, Some(hook));
     SweepStartHookGuard
 }
 
 /// Fire (and consume) the sweep-start hook if one is installed.
 #[cfg(test)]
 fn fire_sweep_start_hook() {
-    let hook = SWEEP_START_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&SWEEP_START_HOOK);
     if let Some(mut hook) = hook {
         hook();
     }
@@ -490,7 +494,7 @@ pub(crate) struct PreFokLockHookGuard;
 #[cfg(test)]
 impl Drop for PreFokLockHookGuard {
     fn drop(&mut self) {
-        PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&PRE_FOK_LOCK_HOOK, None);
     }
 }
 
@@ -498,14 +502,14 @@ impl Drop for PreFokLockHookGuard {
 /// fill-or-kill taker acquires the exclusive guard (test seam, issue #164).
 #[cfg(test)]
 pub(crate) fn set_pre_fok_lock_hook(hook: Box<dyn FnMut()>) -> PreFokLockHookGuard {
-    PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&PRE_FOK_LOCK_HOOK, Some(hook));
     PreFokLockHookGuard
 }
 
 /// Fire (and consume) the pre-fill-or-kill-lock hook if one is installed.
 #[cfg(test)]
 fn fire_pre_fok_lock_hook() {
-    let hook = PRE_FOK_LOCK_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&PRE_FOK_LOCK_HOOK);
     if let Some(mut hook) = hook {
         hook();
     }
@@ -530,7 +534,7 @@ pub(crate) struct FokLockedHookGuard;
 #[cfg(test)]
 impl Drop for FokLockedHookGuard {
     fn drop(&mut self) {
-        FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&FOK_LOCKED_HOOK, None);
     }
 }
 
@@ -538,22 +542,17 @@ impl Drop for FokLockedHookGuard {
 /// thread holds the exclusive guard (test seam, issue #206).
 #[cfg(test)]
 pub(crate) fn set_fok_locked_hook(hook: Box<dyn FnMut()>) -> FokLockedHookGuard {
-    FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&FOK_LOCKED_HOOK, Some(hook));
     FokLockedHookGuard
 }
 
 /// Fire the fill-or-kill-locked hook, if installed, and keep it installed.
 #[cfg(test)]
 fn fire_fok_locked_hook() {
-    let hook = FOK_LOCKED_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&FOK_LOCKED_HOOK);
     if let Some(mut hook) = hook {
         hook();
-        FOK_LOCKED_HOOK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
-        });
+        crate::utils::test_tls::slot_restore(&FOK_LOCKED_HOOK, hook);
     }
 }
 
@@ -562,15 +561,10 @@ fn fire_fok_locked_hook() {
 fn fire_post_only_decision_hook() {
     // Take the hook OUT of the slot while firing so a re-entrant `match_order`
     // inside the hook does not double-borrow the `RefCell`.
-    let hook = POST_ONLY_DECISION_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&POST_ONLY_DECISION_HOOK);
     if let Some(mut hook) = hook {
         hook();
-        POST_ONLY_DECISION_HOOK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
-        });
+        crate::utils::test_tls::slot_restore(&POST_ONLY_DECISION_HOOK, hook);
     }
 }
 
@@ -593,11 +587,7 @@ thread_local! {
 /// (test seam, issue #163). Returns a guard that clears the hook on drop.
 #[cfg(test)]
 pub(crate) fn set_update_decision_hook(hook: UpdateDecisionHook) -> UpdateDecisionHookGuard {
-    UPDATE_DECISION_HOOK.with(|slot| {
-        if let Ok(mut slot) = slot.try_borrow_mut() {
-            *slot = Some(hook);
-        }
-    });
+    crate::utils::test_tls::slot_set(&UPDATE_DECISION_HOOK, Some(hook));
     UpdateDecisionHookGuard
 }
 
@@ -608,11 +598,7 @@ pub(crate) struct UpdateDecisionHookGuard;
 #[cfg(test)]
 impl Drop for UpdateDecisionHookGuard {
     fn drop(&mut self) {
-        UPDATE_DECISION_HOOK.with(|slot| {
-            if let Ok(mut slot) = slot.try_borrow_mut() {
-                *slot = None;
-            }
-        });
+        crate::utils::test_tls::slot_set(&UPDATE_DECISION_HOOK, None);
     }
 }
 
@@ -621,18 +607,11 @@ impl Drop for UpdateDecisionHookGuard {
 /// re-entrant update inside the hook) is treated as "no hook".
 #[cfg(test)]
 fn apply_update_decision_hook(order: Arc<OrderType<()>>) -> Arc<OrderType<()>> {
-    let hook =
-        UPDATE_DECISION_HOOK.with(|slot| slot.try_borrow_mut().ok().and_then(|mut s| s.take()));
+    let hook = crate::utils::test_tls::slot_take(&UPDATE_DECISION_HOOK);
     match hook {
         Some(mut hook) => {
             let rewritten = hook(order);
-            UPDATE_DECISION_HOOK.with(|slot| {
-                if let Ok(mut slot) = slot.try_borrow_mut()
-                    && slot.is_none()
-                {
-                    *slot = Some(hook);
-                }
-            });
+            crate::utils::test_tls::slot_restore(&UPDATE_DECISION_HOOK, hook);
             rewritten
         }
         None => order,
@@ -963,7 +942,7 @@ thread_local! {
 /// call. A flag, not a counter, so the probe does no arithmetic.
 #[cfg(test)]
 pub(crate) fn test_take_tail_revisited() -> bool {
-    DRY_RUN_TAIL_REVISITED.with(|cell| cell.replace(false))
+    crate::utils::test_tls::cell_replace(&DRY_RUN_TAIL_REVISITED, false, false)
 }
 
 /// Terminal epoch value (issue #165): an epoch never moves past it, and a
@@ -2460,7 +2439,7 @@ impl PriceLevel {
                 &resting_order
             } else if let Some(requeued) = tail.pop_front() {
                 #[cfg(test)]
-                DRY_RUN_TAIL_REVISITED.with(|cell| cell.set(true));
+                crate::utils::test_tls::cell_set(&DRY_RUN_TAIL_REVISITED, true);
                 residual = requeued;
                 &residual
             } else {

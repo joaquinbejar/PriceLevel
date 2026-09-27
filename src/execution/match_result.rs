@@ -1124,18 +1124,18 @@ pub(crate) mod test_seam {
 
     impl Drop for AddTradeFailGuard {
         fn drop(&mut self) {
-            FAIL_ADD_TRADE_AFTER.with(|cell| cell.set(None));
+            crate::utils::test_tls::cell_set(&FAIL_ADD_TRADE_AFTER, None);
         }
     }
 
     /// Makes the `(after + 1)`-th `add_trade` on this thread fail.
     pub(crate) fn fail_add_trade_after(after: usize) -> AddTradeFailGuard {
-        FAIL_ADD_TRADE_AFTER.with(|cell| cell.set(Some(after)));
+        crate::utils::test_tls::cell_set(&FAIL_ADD_TRADE_AFTER, Some(after));
         AddTradeFailGuard
     }
 
     pub(super) fn check_add_trade() -> Result<(), PriceLevelError> {
-        FAIL_ADD_TRADE_AFTER.with(|cell| match cell.get() {
+        match crate::utils::test_tls::cell_get(&FAIL_ADD_TRADE_AFTER, None) {
             Some(0) => Err(PriceLevelError::InvalidOperation {
                 message: "injected add_trade failure".to_string(),
             }),
@@ -1146,10 +1146,10 @@ pub(crate) mod test_seam {
                 // Production Panic Policy (issue #173) — `test_seam` is
                 // called from the production `add_trade` under `cfg(test)`,
                 // not from a `mod tests` block, so it is not test-exempt.
-                cell.set(n.checked_sub(1));
+                crate::utils::test_tls::cell_set(&FAIL_ADD_TRADE_AFTER, n.checked_sub(1));
                 Ok(())
             }
             None => Ok(()),
-        })
+        }
     }
 }

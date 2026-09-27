@@ -308,21 +308,25 @@ pub(crate) mod test_seam {
 
     impl Drop for FailGuard {
         fn drop(&mut self) {
-            PLAN.with(|cell| cell.set(self.0));
+            crate::utils::test_tls::cell_set(&PLAN, self.0);
         }
     }
 
     /// Lets the next `allowed` reservations of `resource` on this thread
     /// succeed and fails every later one, until the guard drops.
     pub(crate) fn fail_after(resource: CapacityResource, allowed: usize) -> FailGuard {
-        INJECTED.with(|cell| cell.set(0));
-        FailGuard(PLAN.with(|cell| cell.replace(Some(Plan { resource, allowed }))))
+        crate::utils::test_tls::cell_set(&INJECTED, 0);
+        FailGuard(crate::utils::test_tls::cell_replace(
+            &PLAN,
+            Some(Plan { resource, allowed }),
+            None,
+        ))
     }
 
     /// Number of failures injected on this thread since the last
     /// [`fail_after`].
     pub(crate) fn injected() -> usize {
-        INJECTED.with(Cell::get)
+        crate::utils::test_tls::cell_get(&INJECTED, 0)
     }
 
     pub(super) fn check(
@@ -332,7 +336,7 @@ pub(crate) mod test_seam {
         if additional == 0 {
             return Ok(());
         }
-        let Some(plan) = PLAN.with(Cell::get) else {
+        let Some(plan) = crate::utils::test_tls::cell_get(&PLAN, None) else {
             return Ok(());
         };
         if plan.resource != resource {
@@ -340,12 +344,13 @@ pub(crate) mod test_seam {
         }
         match plan.allowed.checked_sub(1) {
             Some(left) => {
-                PLAN.with(|cell| {
-                    cell.set(Some(Plan {
+                crate::utils::test_tls::cell_set(
+                    &PLAN,
+                    Some(Plan {
                         resource,
                         allowed: left,
-                    }));
-                });
+                    }),
+                );
                 Ok(())
             }
             None => {
@@ -356,10 +361,11 @@ pub(crate) mod test_seam {
                 // counting instead (the fallback is the current value, not
                 // a fixed constant, so this is not the
                 // `clippy::manual_saturating_arithmetic` shape).
-                INJECTED.with(|cell| {
-                    let current = cell.get();
-                    cell.set(current.checked_add(1).unwrap_or(current));
-                });
+                let current = crate::utils::test_tls::cell_get(&INJECTED, 0);
+                crate::utils::test_tls::cell_set(
+                    &INJECTED,
+                    current.checked_add(1).unwrap_or(current),
+                );
                 Err(PriceLevelError::capacity_exceeded(resource, additional))
             }
         }

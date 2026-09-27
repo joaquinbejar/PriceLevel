@@ -103,32 +103,38 @@ pub(crate) struct HandoffYieldsGuard(Option<u32>);
 #[cfg(test)]
 impl Drop for HandoffYieldsGuard {
     fn drop(&mut self) {
-        HANDOFF_YIELDS_OVERRIDE.with(|cell| cell.set(self.0));
+        let _ = HANDOFF_YIELDS_OVERRIDE.try_with(|cell| cell.set(self.0));
     }
 }
 
 /// Override the hand-off yield budget on the calling thread (test seam).
 #[cfg(test)]
 pub(crate) fn override_handoff_yields(yields: u32) -> HandoffYieldsGuard {
-    HandoffYieldsGuard(HANDOFF_YIELDS_OVERRIDE.with(|cell| cell.replace(Some(yields))))
+    HandoffYieldsGuard(
+        HANDOFF_YIELDS_OVERRIDE
+            .try_with(|cell| cell.replace(Some(yields)))
+            .unwrap_or(None),
+    )
 }
 
 /// The calling thread's hand-off tally `(waited, exhausted)` (test seam).
 #[cfg(test)]
 pub(crate) fn handoff_tally() -> (u64, u64) {
-    HANDOFF_TALLY.with(std::cell::Cell::get)
+    HANDOFF_TALLY
+        .try_with(std::cell::Cell::get)
+        .unwrap_or((0, 0))
 }
 
 /// Announcements the calling thread has made (test seam).
 #[cfg(test)]
 pub(crate) fn announce_tally() -> u64 {
-    ANNOUNCE_TALLY.with(std::cell::Cell::get)
+    ANNOUNCE_TALLY.try_with(std::cell::Cell::get).unwrap_or(0)
 }
 
 #[inline]
 fn handoff_yields() -> u32 {
     #[cfg(test)]
-    if let Some(yields) = HANDOFF_YIELDS_OVERRIDE.with(std::cell::Cell::get) {
+    if let Ok(Some(yields)) = HANDOFF_YIELDS_OVERRIDE.try_with(std::cell::Cell::get) {
         return yields;
     }
     HANDOFF_YIELDS
@@ -227,7 +233,7 @@ impl FokGuard {
     fn hand_off(&self, spins: u32, yields: u32) -> bool {
         let drained = self.wait_rounds(spins, spin_loop) || self.wait_rounds(yields, yield_now);
         #[cfg(test)]
-        HANDOFF_TALLY.with(|cell| {
+        let _ = HANDOFF_TALLY.try_with(|cell| {
             let (waited, exhausted) = cell.get();
             // A tally that would overflow simply stops counting.
             if let (Some(waited), Some(exhausted)) = (
@@ -296,7 +302,7 @@ impl<'a> Announcement<'a> {
             .is_ok();
         #[cfg(test)]
         if announced {
-            ANNOUNCE_TALLY.with(|cell| {
+            let _ = ANNOUNCE_TALLY.try_with(|cell| {
                 if let Some(next) = cell.get().checked_add(1) {
                     cell.set(next);
                 }
