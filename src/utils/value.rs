@@ -2,7 +2,7 @@ use crate::errors::PriceLevelError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Domain value type representing a price.
 #[derive(
@@ -228,6 +228,22 @@ impl TimestampMs {
                 .map_err(|error| PriceLevelError::InvalidOperation {
                     message: format!("time is before the unix epoch: {error}"),
                 })?;
+        Self::try_from_duration_since_epoch(since_epoch)
+    }
+
+    /// Converts a span since the Unix epoch into whole milliseconds with a
+    /// checked `u128 -> u64` narrowing (issue #171). This is the injectable
+    /// core of [`Self::try_from_system_time`]: a `Duration` can represent more
+    /// than `u64::MAX` milliseconds, so the boundary is testable
+    /// deterministically without a platform `SystemTime` that reaches it.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidFieldValue`] (field `timestamp_ms`) if the
+    /// millisecond count does not fit in `u64`.
+    pub(crate) fn try_from_duration_since_epoch(
+        since_epoch: Duration,
+    ) -> Result<Self, PriceLevelError> {
         let millis = since_epoch.as_millis();
         let millis = u64::try_from(millis).map_err(|_| PriceLevelError::InvalidFieldValue {
             field: "timestamp_ms".to_string(),
@@ -308,6 +324,49 @@ mod tests {
             let ts = TimestampMs::try_from_system_time(max).unwrap();
             assert_eq!(ts.as_u64(), u64::MAX);
         }
+    }
+
+    // Deterministic conversion boundaries through the injectable helper
+    // (issue #171): epoch, ordinary time, the largest representable
+    // millisecond count and the first unrepresentable one.
+    #[test]
+    fn duration_conversion_epoch_is_zero() {
+        let ts = TimestampMs::try_from_duration_since_epoch(Duration::ZERO).unwrap();
+        assert_eq!(ts, TimestampMs::ZERO);
+    }
+
+    #[test]
+    fn duration_conversion_ordinary_time() {
+        let ts = TimestampMs::try_from_duration_since_epoch(Duration::from_micros(
+            1_716_000_000_123_999,
+        ))
+        .unwrap();
+        assert_eq!(ts.as_u64(), 1_716_000_000_123);
+    }
+
+    #[test]
+    fn duration_conversion_max_representable_millis() {
+        let ts =
+            TimestampMs::try_from_duration_since_epoch(Duration::from_millis(u64::MAX)).unwrap();
+        assert_eq!(ts.as_u64(), u64::MAX);
+        // Sub-millisecond excess still truncates to u64::MAX.
+        let just_below_next = Duration::from_millis(u64::MAX) + Duration::from_nanos(999_999);
+        let ts = TimestampMs::try_from_duration_since_epoch(just_below_next).unwrap();
+        assert_eq!(ts.as_u64(), u64::MAX);
+    }
+
+    #[test]
+    fn duration_conversion_first_unrepresentable_millis() {
+        let first_bad = Duration::from_millis(u64::MAX) + Duration::from_millis(1);
+        match TimestampMs::try_from_duration_since_epoch(first_bad).unwrap_err() {
+            PriceLevelError::InvalidFieldValue { field, value } => {
+                assert_eq!(field, "timestamp_ms");
+                assert_eq!(value, (u128::from(u64::MAX) + 1).to_string());
+            }
+            other => panic!("unexpected error {other:?}"),
+        }
+        let err = TimestampMs::try_from_duration_since_epoch(Duration::MAX).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidFieldValue { .. }));
     }
 
     #[test]
