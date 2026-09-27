@@ -4,6 +4,7 @@ mod level;
 mod order_queue;
 mod result_failures;
 mod snapshot;
+mod snapshot_coherence;
 mod statistics;
 mod text_parser_corpus;
 mod text_parsers;

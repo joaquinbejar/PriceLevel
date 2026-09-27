@@ -171,8 +171,11 @@ impl PriceLevelSnapshot {
     /// Constructs a snapshot with pre-computed aggregates and recorded statistics.
     ///
     /// This is intended for internal crate use where the caller has already
-    /// computed the aggregate values (e.g., from atomic counters) and wants to
-    /// preserve the level's execution statistics through the snapshot.
+    /// computed the aggregate values and wants to preserve the level's
+    /// execution statistics through the snapshot. The caller is responsible for
+    /// passing aggregates that agree with `orders`;
+    /// [`crate::price_level::PriceLevel::snapshot`] derives them from `orders`
+    /// with [`SnapshotAggregates::from_orders`].
     #[must_use]
     pub(crate) fn from_raw_parts_with_stats(
         price: Price,
@@ -215,18 +218,59 @@ impl PriceLevelSnapshot {
 
     /// Recomputes aggregate fields (`visible_quantity`, `hidden_quantity`, and `order_count`) based on current orders.
     ///
+    /// Transactional: every replacement value is computed with checked
+    /// arithmetic first, and the three fields are committed together only once
+    /// all of them succeeded. On error the snapshot is left exactly as it was;
+    /// no field is partially refreshed.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if any single order's own
     /// visible + hidden total overflows `u64`, or if summing the per-order
     /// visible or hidden quantities across the level overflows `u64`.
     pub fn refresh_aggregates(&mut self) -> Result<(), PriceLevelError> {
-        self.order_count = self.orders.len();
+        let aggregates = SnapshotAggregates::from_orders(&self.orders)?;
+        self.visible_quantity = aggregates.visible_quantity;
+        self.hidden_quantity = aggregates.hidden_quantity;
+        self.order_count = aggregates.order_count;
+        Ok(())
+    }
+}
 
+/// The three aggregate fields of a [`PriceLevelSnapshot`], derived from one
+/// orders slice with checked arithmetic.
+///
+/// Shared by [`PriceLevelSnapshot::refresh_aggregates`] and
+/// [`crate::price_level::PriceLevel::snapshot`], so a live snapshot and a
+/// refreshed or restored one validate their orders with exactly the same
+/// rules: a snapshot the level returns always passes the package's refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SnapshotAggregates {
+    /// Sum of the per-order visible quantities.
+    pub(crate) visible_quantity: Quantity,
+    /// Sum of the per-order hidden quantities.
+    pub(crate) hidden_quantity: Quantity,
+    /// Number of orders in the slice.
+    pub(crate) order_count: usize,
+}
+
+impl SnapshotAggregates {
+    /// Folds `orders` into their aggregates. Pure: nothing is mutated, so a
+    /// failure leaves every caller-owned value untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if any single order's own
+    /// visible + hidden total overflows `u64`, or if the visible or hidden sum
+    /// across `orders` overflows `u64`.
+    pub(crate) fn from_orders(orders: &[Arc<OrderType<()>>]) -> Result<Self, PriceLevelError> {
         let mut visible_total: u64 = 0;
         let mut hidden_total: u64 = 0;
 
-        for order in &self.orders {
+        for order in orders {
+            let visible = order.visible_quantity().as_u64();
+            let hidden = order.hidden_quantity().as_u64();
+
             // Reject any order whose OWN visible + hidden total is not
             // representable in `u64`. `PriceLevel::add_order` enforces this same
             // per-order invariant at admission, and the match sweep's reserve
@@ -235,31 +279,32 @@ impl PriceLevelSnapshot {
             // only if the order's own total already does). Restoring such an
             // order would smuggle in a state admission rejects, so the restore
             // path validates it too rather than trusting the serialized bytes.
-            order
-                .visible_quantity()
-                .as_u64()
-                .checked_add(order.hidden_quantity().as_u64())
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
-                    message: "order total quantity overflows u64".to_string(),
-                })?;
+            if visible.checked_add(hidden).is_none() {
+                return Err(aggregate_overflow("order total quantity overflows u64"));
+            }
 
             visible_total = visible_total
-                .checked_add(order.visible_quantity().as_u64())
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
-                    message: "snapshot visible quantity overflow".to_string(),
-                })?;
+                .checked_add(visible)
+                .ok_or_else(|| aggregate_overflow("snapshot visible quantity overflow"))?;
 
             hidden_total = hidden_total
-                .checked_add(order.hidden_quantity().as_u64())
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
-                    message: "snapshot hidden quantity overflow".to_string(),
-                })?;
+                .checked_add(hidden)
+                .ok_or_else(|| aggregate_overflow("snapshot hidden quantity overflow"))?;
         }
 
-        self.visible_quantity = Quantity::new(visible_total);
-        self.hidden_quantity = Quantity::new(hidden_total);
+        Ok(Self {
+            visible_quantity: Quantity::new(visible_total),
+            hidden_quantity: Quantity::new(hidden_total),
+            order_count: orders.len(),
+        })
+    }
+}
 
-        Ok(())
+/// Builds the typed error for a snapshot aggregate that does not fit `u64`.
+#[cold]
+fn aggregate_overflow(message: &str) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: message.to_string(),
     }
 }
 

@@ -175,7 +175,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
             // Create multiple snapshots
             for _ in 0..10 {
-                black_box(price_level.snapshot());
+                let _ = black_box(price_level.snapshot());
             }
         })
     });

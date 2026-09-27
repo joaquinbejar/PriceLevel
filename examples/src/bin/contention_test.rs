@@ -199,6 +199,9 @@ fn test_read_write_ratio() {
                     tally.reads += 1;
                     match local_counter % 3 {
                         0 => {
+                            // Fallible since #162: under sustained mutation the
+                            // bounded recollection may give up with a typed
+                            // `InvalidOperation`; a stress read ignores it.
                             let _snapshot = level.snapshot();
                         }
                         1 => {
