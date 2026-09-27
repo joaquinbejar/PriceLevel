@@ -1,0 +1,63 @@
+# Standalone 0.9.2-vs-0.10 comparison harness.
+#
+# Deliberately NOT a member of the root workspace: this crate declares its own
+# empty `[workspace]` table so cargo treats this directory as its own
+# workspace root instead of attaching it to `../../Cargo.toml`'s workspace
+# (which only lists `examples`). The root package's `include` list also does
+# not ship `benches/compare/**` in the published crate — see the comment
+# there. `cargo publish` / `cargo package` at the repo root never sees this
+# directory; `cargo test` / `cargo build` / `cargo clippy` run from the repo
+# root never build it either, because it is not a path dependency of the root
+# package and not a workspace member.
+[workspace]
+
+[package]
+name = "pricelevel-compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Apples-to-apples Criterion + allocation comparison of pricelevel 0.9.2 (crates.io) vs the local 0.10 tree. Not part of the published pricelevel crate."
+
+# Exactly one of these two must be enabled for any build (checked at compile
+# time in `src/lib.rs`). They pull in the SAME upstream crate under two
+# different local names so one workload source can run unmodified against
+# both API surfaces.
+[features]
+default = []
+old = ["pricelevel_old"]
+new = ["pricelevel_new"]
+
+[dependencies]
+# 0.9.2 exactly as published on crates.io (the released baseline).
+pricelevel_old = { package = "pricelevel", version = "=0.9.2", optional = true }
+# The local worktree (will publish as 0.10.0).
+pricelevel_new = { package = "pricelevel", path = "../..", optional = true }
+# Same major version the main crate depends on (workspace.dependencies in the
+# root Cargo.toml); used only to build a fixed namespace UUID for
+# `UuidGenerator::new`, which is unchanged between 0.9.2 and 0.10.
+uuid = { version = "1.26" }
+
+[dev-dependencies]
+# Same criterion version the main crate uses as a dev-dependency (rules/global_rules.md:
+# "no new dependencies"; this is the existing approved dev-dependency, reused here).
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+
+[[bench]]
+name = "compare"
+path = "benches/compare.rs"
+harness = false
+
+[[bin]]
+name = "alloc_compare"
+path = "src/alloc_compare.rs"
+
+[[bin]]
+name = "contention_compare"
+path = "src/contention_compare.rs"
+
+# Deliberately no [profile.bench] override here: the default cargo `bench`
+# profile (inherits `release`: opt-level = 3, debug = false, lto = false,
+# codegen-units = 16, panic = "unwind") is what the root crate's own
+# `benches/mod.rs` / `benches/latency/main.rs` build under too (the root
+# `Cargo.toml` has no `[profile.bench]` override either) — same compiler
+# settings on both sides of the comparison.

@@ -208,6 +208,35 @@ bench-clean:
 bench-latency:
 	cargo bench --bench latency
 
+# Standalone pricelevel 0.9.2 (crates.io) vs local 0.10 tree comparison
+# (`benches/compare/`, its own `Cargo.toml` with an empty `[workspace]`
+# table — never part of THIS crate's own build/test/lint). Runs the same
+# Criterion workload source twice, selected by a Cargo feature, against
+# each version's own API; see `BENCHMARKS.md` at the repo root for the
+# resulting tables and `benches/compare/src/lib.rs` for how the two builds
+# share one workload source.
+.PHONY: bench-compare-0.9
+bench-compare-0.9:
+	cargo bench --manifest-path benches/compare/Cargo.toml --features old --bench compare
+	cargo bench --manifest-path benches/compare/Cargo.toml --features new --bench compare
+
+# Allocation-count comparison (separate pass from the Criterion timing
+# above, same rationale as `benches/latency/alloc.rs` on the main harness:
+# a counting allocator installed alongside a timed loop would inflate what
+# it measures).
+.PHONY: bench-compare-0.9-alloc
+bench-compare-0.9-alloc:
+	cargo run --manifest-path benches/compare/Cargo.toml --release --features old --bin alloc_compare
+	cargo run --manifest-path benches/compare/Cargo.toml --release --features new --bin alloc_compare
+
+# Single-matcher / N-writer contention comparison (not a Criterion
+# benchmark — see `benches/compare/src/contention_compare.rs`'s doc
+# comment for why).
+.PHONY: bench-compare-0.9-contention
+bench-compare-0.9-contention:
+	cargo run --manifest-path benches/compare/Cargo.toml --release --features old --bin contention_compare
+	cargo run --manifest-path benches/compare/Cargo.toml --release --features new --bin contention_compare
+
 
 .PHONY: workflow-coverage
 workflow-coverage:

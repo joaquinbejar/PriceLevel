@@ -1,0 +1,56 @@
+    Finished `bench` profile [optimized] target(s) in 0.08s
+     Running benches/compare.rs (target/release/deps/compare-1509f391af0f6f98)
+pricelevel-compare[0.10.0]: self-check passed
+test add_orders_batch_100/0.10.0/standard ... bench:       9,300 ns/iter (+/- 545)
+test add_orders_batch_100/0.10.0/iceberg ... bench:       9,492 ns/iter (+/- 860)
+test add_orders_batch_100/0.10.0/reserve ... bench:       9,085 ns/iter (+/- 181)
+
+test isolated_updates/0.10.0/cancel ... bench:       7,697 ns/iter (+/- 1,484)
+test isolated_updates/0.10.0/update_quantity_increase ... bench:       8,107 ns/iter (+/- 910)
+test isolated_updates/0.10.0/update_quantity_decrease ... bench:       8,159 ns/iter (+/- 1,195)
+test isolated_updates/0.10.0/replace_same_price ... bench:       8,962 ns/iter (+/- 1,363)
+test isolated_updates/0.10.0/replace_diff_price ... bench:       8,632 ns/iter (+/- 1,527)
+
+test matching/0.10.0/standard_full ... bench:         799 ns/iter (+/- 242)
+test matching/0.10.0/iceberg ... bench:         895 ns/iter (+/- 216)
+test matching/0.10.0/reserve ... bench:         897 ns/iter (+/- 246)
+test matching/0.10.0/mixed_100 ... bench:      23,962 ns/iter (+/- 1,169)
+test matching/0.10.0/sweep_100_makers ... bench:      21,579 ns/iter (+/- 1,508)
+test matching/0.10.0/partial_fill_reinsert ... bench:       1,043 ns/iter (+/- 181)
+test matching/0.10.0/partial_fill_churn_10x10 ... bench:       2,745 ns/iter (+/- 266)
+test matching/0.10.0/ioc_partial ... bench:         891 ns/iter (+/- 179)
+test matching/0.10.0/post_only_reject ... bench:       1,093 ns/iter (+/- 165)
+
+test fok_depth/0.10.0/success_depth_1 ... bench:         818 ns/iter (+/- 252)
+test fok_depth/0.10.0/success_depth_100 ... bench:       3,747 ns/iter (+/- 794)
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.6s, enable flat sampling, or reduce sample count to 60.
+test fok_depth/0.10.0/success_depth_10000 ... bench:     212,713 ns/iter (+/- 30,168)
+test fok_depth/0.10.0/reject_depth_100 ... bench:       6,700 ns/iter (+/- 846)
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.6s, enable flat sampling, or reduce sample count to 50.
+test fok_depth/0.10.0/reject_depth_10000 ... bench:     422,983 ns/iter (+/- 45,092)
+test fok_depth/0.10.0/replenish_depth_10000 ... bench:   2,177,180 ns/iter (+/- 78,695)
+
+test iter_orders/0.10.0/depth_100 ... bench:       2,509 ns/iter (+/- 401)
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.0s, enable flat sampling, or reduce sample count to 50.
+test iter_orders/0.10.0/depth_10000 ... bench:      90,621 ns/iter (+/- 17,415)
+
+test snapshot/0.10.0/capture_depth_100 ... bench:       3,351 ns/iter (+/- 361)
+test snapshot/0.10.0/package_depth_100 ... bench:      21,150 ns/iter (+/- 980)
+test snapshot/0.10.0/to_json_depth_100 ... bench:      35,600 ns/iter (+/- 1,041)
+test snapshot/0.10.0/restore_depth_100 ... bench:      56,827 ns/iter (+/- 1,664)
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.2s, enable flat sampling, or reduce sample count to 50.
+test snapshot/0.10.0/capture_depth_10000 ... bench:     186,413 ns/iter (+/- 28,928)
+test snapshot/0.10.0/package_depth_10000 ... bench:   2,073,016 ns/iter (+/- 162,771)
+test snapshot/0.10.0/to_json_depth_10000 ... bench:   3,437,748 ns/iter (+/- 228,109)
+test snapshot/0.10.0/restore_depth_10000 ... bench:   6,026,295 ns/iter (+/- 407,970)
+
+test match_result_analytics/0.10.0/n_256 ... bench:         546 ns/iter (+/- 60)
+test match_result_analytics/0.10.0/n_4096 ... bench:      10,963 ns/iter (+/- 376)
+
+test trade_list_parse/0.10.0/n_32 ... bench:      11,100 ns/iter (+/- 238)
+test trade_list_parse/0.10.0/n_1024 ... bench:     350,307 ns/iter (+/- 5,305)
+
