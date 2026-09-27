@@ -317,8 +317,16 @@ fn main() {
         info!("Average waiting time: {:.2} ms", avg_wait);
     }
 
-    if let Some(time_since) = stats.time_since_last_execution() {
-        info!("Time since last execution: {} ms", time_since);
+    // The application reads the clock itself (its own failure policy) and
+    // passes an explicit timestamp; the crate converts it with checked
+    // arithmetic, so a pre-epoch or unrepresentable reading is a typed error
+    // rather than a silent `0`.
+    let elapsed = TimestampMs::try_from_system_time(std::time::SystemTime::now())
+        .and_then(|now| stats.time_since_last_execution_at(now));
+    match elapsed {
+        Ok(Some(time_since)) => info!("Time since last execution: {} ms", time_since),
+        Ok(None) => info!("No execution recorded yet"),
+        Err(error) => info!("Time since last execution unavailable: {}", error),
     }
 }
 

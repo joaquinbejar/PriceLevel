@@ -3,9 +3,10 @@ mod tests {
     use crate::errors::PriceLevelError;
     use crate::execution::trade::Trade;
     use crate::orders::{Id, Side};
-    use crate::utils::{Price, Quantity, TimestampMs};
+    use crate::utils::{Price, Quantity, TimestampMs, UnixClock};
+    use std::cell::Cell;
     use std::str::FromStr;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, UNIX_EPOCH};
     use uuid::Uuid;
 
     fn create_test_trade() -> Trade {
@@ -176,38 +177,105 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_new_trade() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+    /// Test clock returning a fixed reading and counting how often it is read.
+    struct FixedClock {
+        now: u64,
+        reads: Cell<u32>,
+    }
 
+    impl UnixClock for FixedClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(TimestampMs::new(self.now))
+        }
+    }
+
+    /// Test clock whose reading is a caller-chosen `SystemTime` offset, run
+    /// through the crate's checked conversion.
+    struct SystemTimeClock(std::time::SystemTime);
+
+    impl UnixClock for SystemTimeClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            TimestampMs::try_from_system_time(self.0)
+        }
+    }
+
+    fn try_new_with<C: UnixClock + ?Sized>(clock: &C) -> Result<Trade, PriceLevelError> {
         let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
-        let transaction = Trade::new(
+        Trade::try_new(
             Id::from_uuid(uuid),
             Id::from_u64(1),
             Id::from_u64(2),
             Price::new(10000),
             Quantity::new(5),
             Side::Buy,
-        );
+            clock,
+        )
+    }
 
+    #[test]
+    fn test_try_new_trade_stamps_clock_reading_once() {
+        let clock = FixedClock {
+            now: 1_716_000_000_000,
+            reads: Cell::new(0),
+        };
+        let transaction = try_new_with(&clock).unwrap();
+        assert_eq!(clock.reads.get(), 1);
+
+        let uuid = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
         assert_eq!(transaction.trade_id(), Id::from_uuid(uuid));
         assert_eq!(transaction.taker_order_id(), Id::from_u64(1));
         assert_eq!(transaction.maker_order_id(), Id::from_u64(2));
         assert_eq!(transaction.price(), Price::new(10000));
         assert_eq!(transaction.quantity(), Quantity::new(5));
         assert_eq!(transaction.taker_side(), Side::Buy);
+        assert_eq!(transaction.timestamp(), TimestampMs::new(1_716_000_000_000));
 
-        // The timestamp should be approximately now
-        let timestamp_diff = transaction.timestamp().as_u64().abs_diff(now);
-
-        // Timestamp should be within 100ms of current time
-        assert!(
-            timestamp_diff < 100,
-            "Timestamp difference is too large: {timestamp_diff}"
+        // Identical to the explicit-timestamp constructor.
+        assert_eq!(
+            transaction,
+            Trade::with_timestamp(
+                Id::from_uuid(uuid),
+                Id::from_u64(1),
+                Id::from_u64(2),
+                Price::new(10000),
+                Quantity::new(5),
+                Side::Buy,
+                TimestampMs::new(1_716_000_000_000),
+            )
         );
+
+        // Works through a trait object too.
+        let dyn_clock: &dyn UnixClock = &clock;
+        assert!(try_new_with(dyn_clock).is_ok());
+    }
+
+    #[test]
+    fn test_try_new_trade_propagates_pre_epoch_clock() {
+        let before = UNIX_EPOCH.checked_sub(Duration::from_millis(1)).unwrap();
+        let err = try_new_with(&SystemTimeClock(before)).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn test_try_new_trade_epoch_is_not_a_fallback() {
+        // The epoch is a legitimate reading (0 ms), distinct from a failure.
+        let trade = try_new_with(&SystemTimeClock(UNIX_EPOCH)).unwrap();
+        assert_eq!(trade.timestamp(), TimestampMs::ZERO);
+    }
+
+    #[test]
+    fn test_try_new_trade_rejects_unrepresentable_millis() {
+        let span = Duration::from_millis(u64::MAX) + Duration::from_millis(1);
+        // Only reachable where the platform `SystemTime` can represent it.
+        if let Some(far_future) = UNIX_EPOCH.checked_add(span) {
+            let err = try_new_with(&SystemTimeClock(far_future)).unwrap_err();
+            assert!(matches!(err, PriceLevelError::InvalidFieldValue { .. }));
+        }
+        if let Some(max) = UNIX_EPOCH.checked_add(Duration::from_millis(u64::MAX)) {
+            let trade = try_new_with(&SystemTimeClock(max)).unwrap();
+            assert_eq!(trade.timestamp().as_u64(), u64::MAX);
+        }
     }
 
     // In execution/transaction.rs test module or in a separate test file

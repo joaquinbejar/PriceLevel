@@ -51,7 +51,8 @@ impl PriceLevelSnapshot {
 
     /// Creates a snapshot populated with orders, computing aggregates automatically.
     ///
-    /// The statistics are initialized empty; use [`Self::with_orders_and_stats`]
+    /// The statistics are initialized empty and unstamped (deterministic, no
+    /// clock read); use [`Self::with_orders_and_stats`]
     /// to carry recorded execution statistics into the snapshot.
     ///
     /// The `orders` vector order is significant: it is the queue-consumption
@@ -614,7 +615,8 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                     order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
                 let orders = orders.unwrap_or_default();
                 // `statistics` is optional on deserialize so a payload that omits
-                // it (e.g. a hand-built fixture) restores with empty statistics
+                // it (e.g. a hand-built fixture) restores with empty, unstamped
+                // (deterministic, clock-free) statistics
                 // rather than failing — i.e. tolerant of a *missing* field, not
                 // forward-compatible with future *added* fields (this visitor
                 // still rejects unknown fields). A genuine v1 *package* is

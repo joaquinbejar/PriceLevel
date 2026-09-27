@@ -809,6 +809,87 @@
 //! assert_eq!("18446744073709551615".parse::<Id>().unwrap(), Id::sequential(u64::MAX));
 //! ```
 //!
+//! ## Migration Guide (trade and statistics clock reads — breaking)
+//!
+//! `Trade::new` and the statistics helpers read the wall clock, narrowed
+//! `Duration::as_millis()` from `u128` to `u64` with `as`, and substituted `0`
+//! for a pre-epoch clock. The crate now reads no clock at all: time is either
+//! supplied by the caller as a [`TimestampMs`] or read once from a
+//! **caller-supplied** [`UnixClock`] whose failure is returned unchanged.
+//!
+//! | v0.9 | v0.10 |
+//! |------|-------|
+//! | `Trade::new(id, taker, maker, price, qty, side)` | [`Trade::try_new(id, taker, maker, price, qty, side, &clock)`](Trade::try_new) `-> Result<Trade, _>`, or the unchanged infallible [`Trade::with_timestamp`] |
+//! | `stats.reset()` | [`stats.reset(&clock)`](PriceLevelStatistics::reset) `-> Result<(), _>`, or [`stats.reset_at(ts)`](PriceLevelStatistics::reset_at) |
+//! | `stats.time_since_last_execution() -> Option<u64>` | [`stats.time_since_last_execution(&clock)`](PriceLevelStatistics::time_since_last_execution) / [`time_since_last_execution_at(now)`](PriceLevelStatistics::time_since_last_execution_at) `-> Result<Option<u64>, _>` |
+//! | — | [`PriceLevelStatistics::new_at(ts)`](PriceLevelStatistics::new_at), [`PriceLevelStatistics::try_new(&clock)`](PriceLevelStatistics::try_new) |
+//!
+//! Semantics:
+//!
+//! - `reset(&clock)` reads the clock **before** mutating anything; on failure
+//!   every counter, timestamp and the degraded flag is left unchanged.
+//! - `time_since_last_execution*` returns `Ok(None)` only when no execution
+//!   was recorded (the clock is not read then); a clock failure is `Err`, and a
+//!   `now` earlier than the last execution is
+//!   [`PriceLevelError::InvalidOperation`] (it used to be `None`).
+//! - **Behavior change, no signature change:** [`PriceLevelStatistics::new`],
+//!   its [`Default`], [`PriceLevel::new`], [`PriceLevelSnapshot::new`],
+//!   [`PriceLevelSnapshot::with_orders`], `PriceLevelSnapshot::from_str` and a
+//!   snapshot payload that omits `statistics` no longer stamp the wall clock:
+//!   `first_arrival_time()` starts at `0`, meaning *unstamped*. They are now
+//!   deterministic (identical input gives byte-identical, identically
+//!   checksummed snapshots), and no clock failure can hide behind them. Use
+//!   `new_at` / `try_new`, or `reset_at` / `reset` on a still-quiescent
+//!   level, to record a start time.
+//! - A serialized statistics object that **omits** `first_arrival_time` now
+//!   decodes it as `0` (unstamped) instead of the restore instant, which was
+//!   never the original start time. Every package this crate writes carries the
+//!   field, so v2, v3 and v4 packages and their checksums are unaffected.
+//! - [`PriceLevel::match_order`] was already clock-free; trade fields,
+//!   explicit timestamps and matching determinism are unchanged.
+//! - [`PriceLevelStatistics`] is now re-exported at the crate root so the new
+//!   constructors are nameable (it was previously reachable only through
+//!   [`PriceLevel::stats`] and [`PriceLevelSnapshot::statistics`]).
+//!
+//! A conforming [`UnixClock`] must not panic. `std::time::SystemTime::now`
+//! can panic inside `std` if the platform clock call fails, so an
+//! implementation built on it does **not** meet that contract. The simplest
+//! path needs no clock trait: read the time in your own code (with whatever
+//! failure policy your application accepts), convert it with the checked
+//! [`TimestampMs::try_from_system_time`] (pre-epoch and `u64` overflow are
+//! typed errors), and pass the explicit timestamp to the `_at` APIs or
+//! [`Trade::with_timestamp`]. A clock you inject for tests or replay can be a
+//! fixed value:
+//!
+//! ```rust
+//! use pricelevel::{PriceLevelError, PriceLevelStatistics, TimestampMs, UnixClock};
+//! use std::time::{Duration, UNIX_EPOCH};
+//!
+//! // Explicit-timestamp path: the application owns the clock read.
+//! // (`UNIX_EPOCH + ...` stands in for a time your code already read.)
+//! let read_by_caller = UNIX_EPOCH + Duration::from_millis(1_716_000_000_500);
+//! let now = TimestampMs::try_from_system_time(read_by_caller)?;
+//!
+//! let stats = PriceLevelStatistics::new_at(TimestampMs::new(1_716_000_000_000));
+//! stats.record_execution(10, 100, 0, 1_716_000_000_000)?;
+//! assert_eq!(stats.time_since_last_execution_at(now)?, Some(500));
+//! stats.reset_at(now);
+//!
+//! // Injected clock path: a fixed clock that cannot panic.
+//! struct FixedClock(TimestampMs);
+//!
+//! impl UnixClock for FixedClock {
+//!     fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+//!         Ok(self.0)
+//!     }
+//! }
+//!
+//! stats.reset(&FixedClock(now))?;
+//! assert_eq!(stats.first_arrival_time(), now.as_u64());
+//! assert_eq!(stats.time_since_last_execution(&FixedClock(now))?, None);
+//! # Ok::<(), PriceLevelError>(())
+//! ```
+//!
 
 mod orders;
 mod price_level;
@@ -826,6 +907,7 @@ pub use orders::PegReferenceType;
 pub use orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
 pub use price_level::{
     OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot, PriceLevelSnapshotPackage,
+    PriceLevelStatistics,
 };
 pub use utils::{
     EntropySource, Price, Quantity, TimestampMs, UnixClock, UuidGenerator, setup_logger,

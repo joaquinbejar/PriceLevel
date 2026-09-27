@@ -208,7 +208,8 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let stats = level.stats();
             black_box(stats.average_execution_price());
             black_box(stats.average_waiting_time());
-            black_box(stats.time_since_last_execution());
+            let _ =
+                black_box(stats.time_since_last_execution_at(TimestampMs::new(1_716_000_000_500)));
         })
     });
 

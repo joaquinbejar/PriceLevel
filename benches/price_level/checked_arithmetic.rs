@@ -75,13 +75,14 @@ pub fn register_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let mut mr = MatchResult::new(Id::from_u64(1), Quantity::new(1000));
             for i in 0..50_u64 {
-                let trade = Trade::new(
+                let trade = Trade::with_timestamp(
                     Id::from_u64(100 + i),
                     Id::from_u64(1),
                     Id::from_u64(i),
                     Price::new(10000),
                     Quantity::new(20),
                     Side::Buy,
+                    TimestampMs::new(1_716_000_000_000),
                 );
                 let _ = mr.add_trade(trade);
             }

@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::{TimestampMs, UnixClock};
 use portable_atomic::AtomicU128;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
@@ -6,7 +7,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Tracks performance statistics for a price level.
 ///
@@ -37,8 +37,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// the fields, `Acquire`-fences, re-loads it, and retries if it changed or was
 /// odd. Writers are serialized by the engine model (one matcher per level +
 /// `reset`'s quiescence contract), which the seqlock assumes. The lone
-/// read-modify-write loops in [`checked_fetch_add_u64`](Self::checked_fetch_add_u64)
-/// and [`checked_fetch_add_u128`](Self::checked_fetch_add_u128) are standard
+/// read-modify-write loops in `checked_fetch_add_u64`
+/// and `checked_fetch_add_u128` are standard
 /// `compare_exchange_weak` CAS retries.
 ///
 /// # `value_executed` width (issue #140)
@@ -307,26 +307,24 @@ impl PriceLevelStatistics {
         }
     }
 
-    #[inline]
-    fn current_timestamp_milliseconds() -> Result<u64, PriceLevelError> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| PriceLevelError::InvalidOperation {
-                message: format!("system clock error while reading unix time: {error}"),
-            })
-            .map(|duration| duration.as_millis() as u64)
-    }
-
-    #[inline]
-    fn current_timestamp_milliseconds_or_zero() -> u64 {
-        Self::current_timestamp_milliseconds().unwrap_or(0)
-    }
-
-    /// Create new empty statistics
+    /// Creates empty statistics whose start time is **unstamped**
+    /// (`first_arrival_time() == 0`).
+    ///
+    /// This constructor is deterministic and reads no clock (issue #171): two
+    /// levels built from the same input produce byte-identical snapshots, and
+    /// no clock failure can be hidden behind an infallible constructor. Use
+    /// [`Self::new_at`] with a known time, or [`Self::try_new`] with a
+    /// caller-supplied [`UnixClock`], to record when tracking began.
     #[must_use]
     pub fn new() -> Self {
-        let current_time = Self::current_timestamp_milliseconds_or_zero();
+        Self::new_at(TimestampMs::ZERO)
+    }
 
+    /// Creates empty statistics whose start time
+    /// ([`first_arrival_time`](Self::first_arrival_time)) is the caller-supplied
+    /// `started_at`. Infallible and clock-free.
+    #[must_use]
+    pub fn new_at(started_at: TimestampMs) -> Self {
         Self {
             orders_added: AtomicUsize::new(0),
             orders_removed: AtomicUsize::new(0),
@@ -334,11 +332,25 @@ impl PriceLevelStatistics {
             quantity_executed: AtomicU64::new(0),
             value_executed: AtomicU128::new(0),
             last_execution_time: AtomicU64::new(0),
-            first_arrival_time: AtomicU64::new(current_time),
+            first_arrival_time: AtomicU64::new(started_at.as_u64()),
             sum_waiting_time: AtomicU64::new(0),
             stats_degraded: AtomicBool::new(false),
             stats_seq: AtomicU64::new(0),
         }
+    }
+
+    /// Creates empty statistics stamped with the current time read once from
+    /// a caller-supplied [`UnixClock`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the clock's error unchanged; no fallback start time is
+    /// substituted.
+    pub fn try_new<C>(clock: &C) -> Result<Self, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+    {
+        Ok(Self::new_at(clock.try_now_ms()?))
     }
 
     /// Record a new order being added
@@ -539,10 +551,15 @@ impl PriceLevelStatistics {
     /// Get the statistics initialization timestamp, in milliseconds since the
     /// Unix epoch.
     ///
-    /// Set when the statistics are created and on [`reset`](Self::reset) with the
-    /// current wall-clock time (`0` if the system clock could not be read). It is
-    /// **not** updated on order arrival, so it marks when statistics tracking
-    /// began for this level, not the first order's actual arrival time.
+    /// Set from the caller-supplied time at construction
+    /// ([`new_at`](Self::new_at) / [`try_new`](Self::try_new)) and on
+    /// [`reset`](Self::reset) / [`reset_at`](Self::reset_at). `0` means
+    /// **unstamped**: the statistics were built with the deterministic
+    /// [`new`](Self::new) / [`Default`] (as `PriceLevel::new` does), or restored
+    /// from a legacy payload that omitted the field. The crate never writes `0`
+    /// to stand in for a failed clock read. It is **not** updated on order
+    /// arrival, so it marks when statistics tracking began for this level, not
+    /// the first order's actual arrival time.
     #[must_use]
     pub fn first_arrival_time(&self) -> u64 {
         self.first_arrival_time.load(Ordering::Relaxed)
@@ -609,38 +626,117 @@ impl PriceLevelStatistics {
         }
     }
 
-    /// Get time since last execution (in milliseconds)
-    #[must_use]
-    pub fn time_since_last_execution(&self) -> Option<u64> {
+    /// Milliseconds elapsed between the most recent execution and `now`.
+    ///
+    /// Returns `Ok(None)` when no execution has been recorded yet, and
+    /// `Ok(Some(elapsed))` otherwise. Clock-free: the caller supplies `now`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `now` is earlier than
+    /// the last execution time (a clock running behind the recorded execution),
+    /// rather than conflating it with the "no execution" case. With a
+    /// concurrent matcher, a `now` the caller sampled before a fill that lands
+    /// before this call's load is reported this way; prefer
+    /// [`time_since_last_execution`](Self::time_since_last_execution), which
+    /// loads the last execution before sampling its clock.
+    pub fn time_since_last_execution_at(
+        &self,
+        now: TimestampMs,
+    ) -> Result<Option<u64>, PriceLevelError> {
         let last = self.last_execution_time.load(Ordering::Relaxed);
-        if last == 0 {
-            None
-        } else {
-            let current_time = Self::current_timestamp_milliseconds_or_zero();
-            current_time.checked_sub(last)
-        }
+        Self::elapsed_since_execution(last, now)
     }
 
-    /// Reset all statistics to zero (and re-stamp `first_arrival_time`).
+    /// Milliseconds elapsed since the most recent execution, reading the
+    /// current time once from a caller-supplied [`UnixClock`].
+    ///
+    /// Returns `Ok(None)` when no execution has been recorded yet; the clock is
+    /// not read in that case.
+    ///
+    /// `last_execution_time` is loaded **once, before** the clock is sampled,
+    /// and that same value is used for the difference. A fill recorded by a
+    /// concurrent matcher after the load therefore cannot make a healthy clock
+    /// reading look earlier than the last execution: the result is measured
+    /// from the execution observed at the load.
+    ///
+    /// # Errors
+    ///
+    /// Returns the clock's error unchanged, or
+    /// [`PriceLevelError::InvalidOperation`] if the clock reports a time
+    /// earlier than the execution loaded before it was read.
+    pub fn time_since_last_execution<C>(&self, clock: &C) -> Result<Option<u64>, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+    {
+        let last = self.last_execution_time.load(Ordering::Relaxed);
+        if last == 0 {
+            return Ok(None);
+        }
+        let now = clock.try_now_ms()?;
+        Self::elapsed_since_execution(last, now)
+    }
+
+    /// Shared elapsed-time computation over an already-loaded
+    /// `last_execution_time` (`0` means no execution) and a sampled `now`.
+    #[inline]
+    fn elapsed_since_execution(
+        last: u64,
+        now: TimestampMs,
+    ) -> Result<Option<u64>, PriceLevelError> {
+        if last == 0 {
+            return Ok(None);
+        }
+        let now = now.as_u64();
+        now.checked_sub(last)
+            .map(Some)
+            .ok_or_else(|| PriceLevelError::InvalidOperation {
+                message: format!("current time {now} is before the last execution time {last}"),
+            })
+    }
+
+    /// Reset all statistics to zero and re-stamp `first_arrival_time` with the
+    /// current time read once from a caller-supplied [`UnixClock`].
+    ///
+    /// The clock is read **before** anything is mutated, so a failed read
+    /// leaves every counter, timestamp and the degraded flag exactly as they
+    /// were (issue #171).
+    ///
+    /// # Errors
+    ///
+    /// Returns the clock's error unchanged; the statistics are untouched.
+    ///
+    /// # Quiescence contract
+    ///
+    /// Same as [`reset_at`](Self::reset_at).
+    pub fn reset<C>(&self, clock: &C) -> Result<(), PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+    {
+        let started_at = clock.try_now_ms()?;
+        self.reset_at(started_at);
+        Ok(())
+    }
+
+    /// Reset all statistics to zero and set `first_arrival_time` to the
+    /// caller-supplied `started_at`. Infallible and clock-free.
     ///
     /// # Quiescence contract
     ///
     /// This must only be called on a **quiescent** level — with no in-flight
     /// [`record_execution`](Self::record_execution) (and hence no in-flight
-    /// `PriceLevel::match_order`). `reset` participates in the seqlock as a
+    /// `PriceLevel::match_order`). A reset participates in the seqlock as a
     /// WRITER (issue #129), so it can never interleave the middle of a
     /// `record_execution` transaction's rollback (which would otherwise wrap a
     /// counter toward `u64::MAX` via a `store(0)` racing a `fetch_sub`) — but the
     /// seqlock protects READERS, it does not serialize two writers. The
     /// single-matcher-per-level model already serializes `record_execution`, and
-    /// this quiescence requirement extends that to `reset`. No engine path calls
-    /// `reset` during matching, so the race does not occur today; it remains a
-    /// caller obligation because `reset` is public. A multi-field reader
-    /// (`Clone` / serialize) racing `reset` retries and observes either the
+    /// this quiescence requirement extends that to a reset. No engine path
+    /// resets during matching, so the race does not occur today; it remains a
+    /// caller obligation because reset is public. A multi-field reader
+    /// (`Clone` / serialize) racing a reset retries and observes either the
     /// pre-reset or fully-reset state, never a mix.
-    pub fn reset(&self) {
-        let current_time = Self::current_timestamp_milliseconds_or_zero();
-
+    pub fn reset_at(&self, started_at: TimestampMs) {
         // Seqlock write section: a concurrent multi-field reader retries rather
         // than capture a half-reset copy.
         let _write = WriteSeqGuard::new(&self.stats_seq);
@@ -652,13 +748,15 @@ impl PriceLevelStatistics {
         self.value_executed.store(0, Ordering::Relaxed);
         self.last_execution_time.store(0, Ordering::Relaxed);
         self.first_arrival_time
-            .store(current_time, Ordering::Relaxed);
+            .store(started_at.as_u64(), Ordering::Relaxed);
         self.sum_waiting_time.store(0, Ordering::Relaxed);
         self.stats_degraded.store(false, Ordering::Relaxed);
     }
 }
 
 impl Default for PriceLevelStatistics {
+    /// Deterministic, clock-free empty statistics with an unstamped start time;
+    /// identical to [`PriceLevelStatistics::new`].
     fn default() -> Self {
         Self::new()
     }
@@ -990,9 +1088,14 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
                 let value_executed = value_executed.unwrap_or(0);
                 let last_execution_time = last_execution_time.unwrap_or(0);
 
-                let first_arrival_time = first_arrival_time.unwrap_or_else(|| {
-                    PriceLevelStatistics::current_timestamp_milliseconds_or_zero()
-                });
+                // A legacy payload that omits the start time decodes as
+                // UNSTAMPED (`0`), deterministically (issue #171). The previous
+                // behavior stamped the restore instant, which was never the
+                // original start time and made decoding depend on the wall clock
+                // (and silently wrote `0` on a clock failure). Every package this
+                // crate writes carries the field, so checksummed v2/v3/v4
+                // packages are unaffected.
+                let first_arrival_time = first_arrival_time.unwrap_or(0);
 
                 let sum_waiting_time = sum_waiting_time.unwrap_or(0);
                 // Optional for backward compatibility: a payload written before
