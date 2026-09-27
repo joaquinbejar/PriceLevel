@@ -131,7 +131,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new arm.
 - **`PriceLevel::matchable_quantity` replays in sweep order (#170).** The dry
   run walks the queue by insertion sequence (the order `match_order` consumes
-  it) instead of `(timestamp, sequence)`. The returned total is unchanged.
+  it) instead of `(timestamp, sequence)`. This corrects the dry run where
+  iceberg / reserve replenishment headroom depends on visit order: its total,
+  and so a fill-or-kill verdict, can now differ from 0.9 and matches what the
+  sweep executes.
 
 ### Added
 

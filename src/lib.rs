@@ -950,7 +950,14 @@
 //!   `result.error()` before resting a remainder.
 //! - [`PriceLevel::matchable_quantity`] now replays the resting queue in
 //!   insertion-sequence (sweep) order rather than `(timestamp, sequence)`
-//!   order. The returned total is unchanged; the per-step replay is now exact.
+//!   order, the order `match_order` actually consumes it. This is a correctness
+//!   fix that can change the returned total, and therefore a fill-or-kill
+//!   verdict, when iceberg / reserve replenishment headroom depends on visit
+//!   order: for example `Standard(qty 1, ts 200)`, `Iceberg(visible 0, hidden
+//!   1, ts 100)`, `Standard(qty u64::MAX - 1, ts 300)` inserted in that order
+//!   with a taker requesting 2 returned 0 before (the old timestamp-order replay
+//!   tried the iceberg at full visible capacity) and now returns 2, matching
+//!   what the sweep executes.
 //! - [`PriceLevelError`] now derives `Clone`, `PartialEq`, `Eq`, `Serialize`
 //!   and `Deserialize` (it travels inside `MatchResult`). Exhaustive matches
 //!   need an arm for `CapacityExceeded`; [`CapacityResource`] is
