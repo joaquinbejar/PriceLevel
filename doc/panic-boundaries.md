@@ -240,6 +240,31 @@ never panics:
   targets — those carry their own crate-root `#![allow(...)]` (see each
   file's header comment) because they are not production code, not because
   they are exempt from review as demos / harnesses in their own right.
+- **Indexing/slicing inside a `#[cfg(test)]` test seam (PR #207 review).**
+  `clippy.toml`'s `allow-indexing-slicing-in-tests` exempts `clippy::
+  indexing_slicing` for ANY `#[cfg(test)]` item — the same coarseness that
+  makes `scripts/check_panic_policy.py` re-check unwrap/expect/panic/
+  saturating on a standalone production-adjacent test seam. Two ways to
+  close this were evaluated: (a) drop the clippy.toml key and add an
+  explicit `#[allow(clippy::indexing_slicing, clippy::string_slice)]` to
+  every co-located `mod tests { ... }` block that indexes or slices, or (b)
+  add a syntax-aware indexing check to the script, scoped the same way as
+  its other checks. (a) was rejected: nearly every one of the ~30
+  co-located test files indexes or slices somewhere, so dropping the
+  toggle would require touching most of them for no behavioural change.
+  (b) is what shipped: `INDEXING_PATTERN` in the script matches an
+  identifier, or a closing `)` / `]`, immediately followed by `[` (so
+  `v[1]` and `matrix[0][1]` count, but a type `&[u8]` / `[u8; 4]` or a
+  literal `[1, 2, 3]` — never preceded by an identifier or closing
+  delimiter — do not), excluding a short keyword denylist
+  (`return`/`yield`/`break`/`in`/...) that can precede an array literal
+  instead of indexing. It runs ONLY inside the production-adjacent
+  `#[cfg(test)]` spans `check_panic_policy.py` already tracks (never over
+  ordinary production code, where clippy's own AST-accurate lint already
+  applies). Known limitation: it does not follow a field access or a more
+  complex expression before `[` (`self.buf[i]`, `(a + b)[i]`) — a false
+  negative, not a false positive, and it is one heuristic layer, not a
+  parser, same as the rest of the script.
 - A narrow, reviewed exception is still an exception, not a fix: the
   `f64`-to-integer boundary casts in `src/utils/value.rs` carry a
   function-scoped `#[allow(clippy::cast_possible_truncation,
@@ -264,4 +289,13 @@ closures, with test-only `catch_unwind`, to pin the behaviour above.
 `scripts/check_panic_policy.py --self-test` (`scripts/panic_policy_fixtures/`)
 pins the gate's own scanner behaviour: which forms fail, which test shapes
 pass, and that comments / string literals mentioning a forbidden form in
-prose are never mistaken for code.
+prose are never mistaken for code. Each macro-delimiter form
+(`(...)`/`{...}`/`[...]`, and whitespace before `!`) has its own
+single-violation fixture, so one caught form cannot mask another that was
+missed; separate fixtures also cover a char literal containing `"` or `{`/
+`}`, escaped and Unicode-escaped char/byte-char literals, lifetimes/labels,
+and raw strings, each immediately followed by a real violation the scanner
+must still catch. The `#[cfg(test)]`-scoped indexing check has its own
+fail/pass pairs, including the exact `fn check(v: &[u8]) -> u8 { v[1] }`
+shape and a `mod test_seam { ... }` variant, against array-type/array-
+literal and keyword-prefixed-literal shapes that must not be flagged.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production Panic Policy syntax gate (issue #173).
+r"""Production Panic Policy syntax gate (issue #173).
 
 `cargo clippy` with the restriction lints in `[lints.clippy]` (Cargo.toml)
 catches `.unwrap()` / `.expect()` / `panic!` / `unreachable!` / `todo!` /
@@ -47,11 +47,35 @@ with `test_`, an `impl`, `struct`, `type`, `thread_local!`, or a `mod` with
 any other name (e.g. `mod test_seam`, `mod snapshot_hook`) — is a
 production-adjacent test seam (a hook a production code path calls under
 `cfg(test)`, e.g. `fire_post_only_decision_hook`, `apply_update_decision_hook`,
-`test_seam::check_add_trade`), NOT a test, and stays fully in scope.
+`test_seam::check_add_trade`), NOT a test, and stays fully in scope. Its
+extent (to the matching `}` or `;`) is also where the indexing check below
+runs.
 
-Comments and string/char literal contents are masked out before scanning
-(replaced with spaces, same length, same line numbers) so a doc comment or
-string that merely mentions "unwrap" or "panic!" is never flagged.
+Comments and string/char/byte-char literal contents are masked out before
+scanning (replaced with spaces, same length, same line numbers) so a doc
+comment or string that merely mentions "unwrap" or "panic!" is never
+flagged. Char/byte-char literals (`'x'`, `'\''`, `'\\'`, `'\u{2764}'`,
+`b'"'`, ...) are lexed and masked separately from lifetimes/labels (`'a`,
+`'static`, `'outer:`), which are left untouched — a char literal containing
+a quote (`'"'`) must not be mistaken for the start of a string, or
+everything up to the next unrelated `"` gets wrongly masked out (issue
+#173 review).
+
+Every macro pattern below (the `assert!`/`panic!`/... family, not the
+`.unwrap()`-style method calls, which cannot use macro delimiters) matches
+all three Rust macro delimiters — `(...)`, `{...}`, `[...]` — and permits
+whitespace or comments before the `!` and before the delimiter: Rust does
+not require `assert!(x)` to be written with no space, and `assert! { x }` /
+`assert![x]` are equally valid macro invocations that must not slip past
+as an unmatched delimiter shape (issue #173 review).
+
+A syntax-aware indexing/slicing check (`INDEXING_PATTERN`) additionally runs
+— ONLY inside the production-adjacent `#[cfg(test)]` scope above, never over
+ordinary production code, where clippy's own AST-accurate `indexing_slicing`
+lint already applies — because `clippy.toml`'s `allow-indexing-slicing-in-
+tests` exempts that scope too and has no way to distinguish it from a real
+test. It is a heuristic (see `INDEXING_PATTERN`'s comment for exactly what it
+matches and does not).
 
 This is a lightweight, non-exhaustive lexer over Rust syntax, not a real
 parser — see the module docstring for the exact shapes it recognizes. It is
@@ -78,21 +102,36 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+def _macro_pattern(name: str) -> re.Pattern[str]:
+    """Matches `name` invoked as a macro with ANY of Rust's three delimiter
+    pairs (`(...)`, `{...}`, `[...]`), with optional whitespace (comments
+    are already masked to whitespace by the time this runs) both before the
+    `!` and before the opening delimiter. Rust does not require `assert!(x)`
+    to be written with no space: `assert ! (x)`, `assert!{x}` and
+    `assert![x]` are equally valid macro invocations (issue #173 review).
+    """
+    escaped = re.escape(name)
+    return re.compile(rf"\b{escaped}\s*!\s*[(\[{{]")
+
+
 # (pattern, human-readable label). Order does not matter: every pattern
 # names a distinct macro/method, none is a substring of another's match.
 FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\bassert_eq!\s*\("), "assert_eq!(...)"),
-    (re.compile(r"\bassert_ne!\s*\("), "assert_ne!(...)"),
-    (re.compile(r"\bassert!\s*\("), "assert!(...)"),
-    (re.compile(r"\bdebug_assert_eq!\s*\("), "debug_assert_eq!(...)"),
-    (re.compile(r"\bdebug_assert_ne!\s*\("), "debug_assert_ne!(...)"),
-    (re.compile(r"\bdebug_assert!\s*\("), "debug_assert!(...)"),
-    (re.compile(r"\bpanic!\s*\("), "panic!(...)"),
-    (re.compile(r"\btodo!\s*\("), "todo!(...)"),
-    (re.compile(r"\bunimplemented!\s*\("), "unimplemented!(...)"),
-    (re.compile(r"\bunreachable!\s*\("), "unreachable!(...)"),
+    (_macro_pattern("assert_eq"), "assert_eq!(...)"),
+    (_macro_pattern("assert_ne"), "assert_ne!(...)"),
+    (_macro_pattern("assert"), "assert!(...)"),
+    (_macro_pattern("debug_assert_eq"), "debug_assert_eq!(...)"),
+    (_macro_pattern("debug_assert_ne"), "debug_assert_ne!(...)"),
+    (_macro_pattern("debug_assert"), "debug_assert!(...)"),
+    (_macro_pattern("panic"), "panic!(...)"),
+    (_macro_pattern("todo"), "todo!(...)"),
+    (_macro_pattern("unimplemented"), "unimplemented!(...)"),
+    (_macro_pattern("unreachable"), "unreachable!(...)"),
+    # `panic_any` / `resume_unwind` are plain functions (`std::panic::`), not
+    # macros: only the `(...)` call form is valid Rust for them.
     (re.compile(r"\bpanic_any\s*\("), "panic_any(...)"),
     (re.compile(r"\bresume_unwind\s*\("), "resume_unwind(...)"),
+    # Method calls: `(...)` is the only valid form, no macro delimiters.
     (re.compile(r"\.unwrap\s*\("), ".unwrap()"),
     (re.compile(r"\.unwrap_err\s*\("), ".unwrap_err()"),
     (re.compile(r"\.expect\s*\("), ".expect()"),
@@ -121,6 +160,40 @@ SATURATING_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 ALLOW_SATURATING_MARKER = "panic-policy-allow-saturating"
 
+# Syntax-aware indexing/slicing check (issue #173 review): `clippy.toml`'s
+# `allow-indexing-slicing-in-tests` exempts `indexing_slicing` for ANY
+# `#[cfg(test)]` item, including the production-adjacent test-seam shape
+# `SATURATING_PATTERNS` / `FORBIDDEN_PATTERNS` already re-check for other
+# forms. Dropping that clippy.toml key instead, and adding an explicit
+# `#[allow(clippy::indexing_slicing, clippy::string_slice)]` to every
+# existing co-located `mod tests { ... }` block that indexes or slices,
+# would touch most of the ~30 test files in this crate for no behavioural
+# change (churn evaluated and rejected); this check only runs where
+# `find_test_skip_spans` finds a `cfg_test_scope` span, never over ordinary
+# production code (where clippy's own AST-accurate `indexing_slicing` lint
+# already applies without this heuristic's limitations).
+#
+# What it matches: an identifier, or a closing `)` / `]` (so a chained
+# `get_vec()[0]` / `matrix[0][1]` still counts), immediately (only
+# whitespace/masked-comments between) followed by `[`, with that `[` not
+# immediately followed by `]` (excludes the invalid, so irrelevant, empty
+# `v[]`). A handful of keywords that can precede an array-literal /
+# range-in-a-`for` rather than an indexing expression (`return [...]`,
+# `break [...]`, `in [...]`, ...) are excluded by name below.
+#
+# What it deliberately does NOT try to distinguish, as a documented
+# limitation (see `doc/panic-boundaries.md`): a field access or a more
+# complex expression right before `[` (`self.buf[i]`, `(a + b)[i]`) is not
+# matched (a false negative, not a false positive), and an unusual macro or
+# path shape immediately before `[` could in principle still slip through
+# either direction. It is one heuristic layer, not a parser.
+INDEXING_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<target>[A-Za-z_][A-Za-z0-9_]*|[)\]])\s*\[(?!\s*\])"
+)
+_INDEXING_EXCLUDED_KEYWORDS = frozenset(
+    {"return", "yield", "break", "in", "else", "move", "let", "const", "static"}
+)
+
 # A test-module name the co-located test convention uses (`mod tests`, `mod
 # tests_eq`, `mod transaction_serialization_tests`, ...). Deliberately does
 # NOT match singular `test_...` names (`test_seam`, `test_order_type_display`
@@ -138,14 +211,54 @@ _FN_HEAD = re.compile(
 )
 
 
-def mask_comments_and_strings(text: str) -> str:
-    """Blanks comment and string/char literal contents, same length/lines.
+# A char/byte-char literal's body: an escape sequence, or exactly one
+# non-`'`/non-`\` scalar value (Python's `str` indexes by Unicode scalar
+# value / code point, same granularity as a Rust `char`).
+_CHAR_ESCAPE = re.compile(r"\\(?:['\"nrt0\\]|x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\})")
 
-    Handles line comments, nested block comments, escaped string literals
-    and raw strings/byte strings (`r"..."`, `r#"..."#`, `br##"..."##`, ...).
-    Char literals and lifetimes are intentionally left untouched: the
-    longest forbidden pattern is longer than any char literal can be, so
-    leaving them unmasked cannot produce a false positive.
+
+def match_char_literal(text: str, i: int) -> int | None:
+    r"""If `text[i] == "'"` starts a char or byte-char literal (`'x'`,
+    `'\''`, `'\u{2764}'`, `b'"'`, ...), returns the index just past its
+    closing quote. Returns `None` for an empty `''` or anything that is not
+    terminated by a second `'` right after one escape / one scalar value —
+    in particular a lifetime or loop label (`'a`, `'static`, `'outer:`),
+    which have no closing quote and must be left untouched, not masked.
+
+    Distinguishing these matters (issue #173 review): a char literal
+    containing a quote character, like `'"'`, must not be mistaken by the
+    string-literal branch below for the START of a string — that would mask
+    everything up to the next unrelated `"` as string content, hiding real
+    code (and any violation in it) in between.
+    """
+    n = len(text)
+    if i >= n or text[i] != "'":
+        return None
+    j = i + 1
+    if j >= n or text[j] == "'":
+        return None
+    if text[j] == "\\":
+        m = _CHAR_ESCAPE.match(text, j)
+        if not m:
+            return None
+        j = m.end()
+    else:
+        j += 1
+    if j < n and text[j] == "'":
+        return j + 1
+    return None
+
+
+def mask_comments_and_strings(text: str) -> str:
+    """Blanks comment and string/char/byte-char literal contents, same
+    length/lines.
+
+    Handles line comments, nested block comments, escaped string literals,
+    raw strings/byte strings (`r"..."`, `r#"..."#`, `br##"..."##`, ...), and
+    char/byte-char literals via `match_char_literal`. Lifetimes and loop
+    labels (`'a`, `'static`, `'outer:`) are intentionally left untouched —
+    unlike a char literal, they have no closing quote to blank up to, and
+    none of the forbidden patterns can appear inside a bare identifier.
     """
     out = list(text)
     n = len(text)
@@ -186,6 +299,21 @@ def mask_comments_and_strings(text: str) -> str:
                     out[j] = " "
                 j += 1
             i = j
+            continue
+        # Char / byte-char literal: must run BEFORE the string branch below,
+        # since a char literal containing `"` (`'"'`) would otherwise be
+        # mistaken for the start of a string (see `match_char_literal`).
+        if c == "'":
+            end = match_char_literal(text, i)
+            if end is not None:
+                for k in range(i, end):
+                    if text[k] != "\n":
+                        out[k] = " "
+                i = end
+                continue
+            # Not a char/byte-char literal: a lifetime or label, or a bare
+            # `'`. Left untouched.
+            i += 1
             continue
         # Raw string / raw byte string: (b)r#*"..."#* (matching hash count).
         m = re.match(r'(?:b)?r(#*)"', text[i:i + 64])
@@ -255,9 +383,24 @@ class Skip:
     end: int
 
 
-def find_test_skip_spans(masked: str) -> list[Skip]:
-    """Finds every exempt test-module / `#[test]`-fn span (see module doc)."""
-    spans: list[Skip] = []
+@dataclass
+class SpanSets:
+    """`skip`: exempt test-module / `#[test]`-fn spans (see module doc).
+    `cfg_test_scope`: the complementary production-adjacent `#[cfg(test)]`
+    spans (test seams) — where the indexing check below additionally runs.
+    The two sets are disjoint by construction: each `#[cfg(test)]` /
+    `#[test]` attribute contributes to at most one of them.
+    """
+
+    skip: list[Skip]
+    cfg_test_scope: list[Skip]
+
+
+def find_test_skip_spans(masked: str) -> SpanSets:
+    """Finds every exempt test-module / `#[test]`-fn span, and every
+    production-adjacent `#[cfg(test)]` test-seam span (see module doc)."""
+    skip: list[Skip] = []
+    cfg_test_scope: list[Skip] = []
     for attr_match in re.finditer(r"#\[cfg\(test\)\]|#\[test\]", masked):
         is_test_attr = attr_match.group(0) == "#[test]"
         pos = attr_match.end()
@@ -281,27 +424,53 @@ def find_test_skip_spans(masked: str) -> list[Skip]:
                 continue
             brace_index = fn_head.end() - 1
             end = find_matching_brace(masked, brace_index)
-            spans.append(Skip(attr_match.start(), end + 1))
+            skip.append(Skip(attr_match.start(), end + 1))
             continue
         # `#[cfg(test)]`: a qualifying `mod` name, or a `test_`-prefixed
         # standalone fn (this crate's "test-invoked-only" convention — see
-        # the module docstring). Anything else (a bare `fn` that is not
-        # `test_`-prefixed, `impl`, `struct`, `type`, `thread_local!`, or a
-        # `mod` with a non-qualifying name) is a production-adjacent test
-        # seam and is deliberately NOT added to `spans`.
+        # the module docstring) is exempt. Anything else (a bare `fn` that
+        # is not `test_`-prefixed, `impl`, `struct`, `type`,
+        # `thread_local!`, or a `mod` with a non-qualifying name) is a
+        # production-adjacent test seam: NOT added to `skip`, but its
+        # extent (found the same way, or — for shapes with no `fn`/`mod`
+        # head, such as `impl` / `struct` / `type` / `thread_local!` — up
+        # to its next top-level `{...}` or `;`) is recorded in
+        # `cfg_test_scope`.
         mod_head = _MOD_HEAD.match(masked, pos)
         if mod_head and _TEST_MODULE_NAME.match(mod_head.group(1)):
             brace_index = mod_head.end() - 1
             end = find_matching_brace(masked, brace_index)
-            spans.append(Skip(attr_match.start(), end + 1))
+            skip.append(Skip(attr_match.start(), end + 1))
             continue
         fn_head = _FN_HEAD.match(masked, pos)
         if fn_head and fn_head.group(1).startswith("test_"):
             brace_index = fn_head.end() - 1
             end = find_matching_brace(masked, brace_index)
-            spans.append(Skip(attr_match.start(), end + 1))
+            skip.append(Skip(attr_match.start(), end + 1))
             continue
-    return spans
+        if mod_head:
+            brace_index = mod_head.end() - 1
+            end = find_matching_brace(masked, brace_index)
+            cfg_test_scope.append(Skip(attr_match.start(), end + 1))
+            continue
+        if fn_head:
+            brace_index = fn_head.end() - 1
+            end = find_matching_brace(masked, brace_index)
+            cfg_test_scope.append(Skip(attr_match.start(), end + 1))
+            continue
+        # `impl` / `struct` / `type` / `thread_local!` / anything else with
+        # no `fn`/`mod` head: bounded by its next top-level `{` (matched)
+        # or `;`, whichever comes first.
+        brace_pos = masked.find("{", pos)
+        semi_pos = masked.find(";", pos)
+        if brace_pos == -1 and semi_pos == -1:
+            continue
+        if brace_pos != -1 and (semi_pos == -1 or brace_pos < semi_pos):
+            end = find_matching_brace(masked, brace_pos)
+            cfg_test_scope.append(Skip(attr_match.start(), end + 1))
+        else:
+            cfg_test_scope.append(Skip(attr_match.start(), semi_pos + 1))
+    return SpanSets(skip=skip, cfg_test_scope=cfg_test_scope)
 
 
 def in_any_span(offset: int, spans: list[Skip]) -> bool:
@@ -316,6 +485,17 @@ class Finding:
     snippet: str
 
 
+def _line_bounds(text: str, offset: int) -> tuple[int, int, int]:
+    """Returns `(line_no, line_start, line_end)` for the line containing
+    `offset` (1-indexed line number; `line_end` excludes the newline)."""
+    line_no = text.count("\n", 0, offset) + 1
+    line_start = text.rfind("\n", 0, offset) + 1
+    line_end = text.find("\n", offset)
+    if line_end == -1:
+        line_end = len(text)
+    return line_no, line_start, line_end
+
+
 def scan_text(path: Path, text: str, *, allowed: list[Finding] | None = None) -> list[Finding]:
     """Scans `text` and returns the un-allowed findings.
 
@@ -325,18 +505,14 @@ def scan_text(path: Path, text: str, *, allowed: list[Finding] | None = None) ->
     reviewed, narrow exceptions rather than silently dropping them.
     """
     masked = mask_comments_and_strings(text)
-    skip_spans = find_test_skip_spans(masked)
+    span_sets = find_test_skip_spans(masked)
     findings: list[Finding] = []
     for pattern, label in [*FORBIDDEN_PATTERNS, *SATURATING_PATTERNS]:
         is_saturating = (pattern, label) in SATURATING_PATTERNS
         for match in pattern.finditer(masked):
-            if in_any_span(match.start(), skip_spans):
+            if in_any_span(match.start(), span_sets.skip):
                 continue
-            line_no = text.count("\n", 0, match.start()) + 1
-            line_start = text.rfind("\n", 0, match.start()) + 1
-            line_end = text.find("\n", match.start())
-            if line_end == -1:
-                line_end = len(text)
+            line_no, line_start, line_end = _line_bounds(text, match.start())
             snippet = text[line_start:line_end].strip()
             finding = Finding(path, line_no, label, snippet)
             # The marker may sit on the flagged line itself, or on one of the
@@ -356,6 +532,20 @@ def scan_text(path: Path, text: str, *, allowed: list[Finding] | None = None) ->
                     allowed.append(finding)
                 continue
             findings.append(finding)
+    # Indexing/slicing: only inside a production-adjacent `#[cfg(test)]`
+    # test-seam span (see `INDEXING_PATTERN`'s comment) — never over
+    # ordinary production code, where clippy's own lint already applies.
+    for match in INDEXING_PATTERN.finditer(masked):
+        if not in_any_span(match.start(), span_sets.cfg_test_scope):
+            continue
+        if in_any_span(match.start(), span_sets.skip):
+            continue
+        target = match.group("target")
+        if target in _INDEXING_EXCLUDED_KEYWORDS:
+            continue
+        line_no, line_start, line_end = _line_bounds(text, match.start())
+        snippet = text[line_start:line_end].strip()
+        findings.append(Finding(path, line_no, "indexing/slicing (v[...])", snippet))
     findings.sort(key=lambda f: f.line)
     return findings
 
