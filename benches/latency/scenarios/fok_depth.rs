@@ -249,6 +249,7 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
         thread::spawn(move || {
             let generator = UuidGenerator::new(Uuid::nil());
             let mut next = CONTENTION_DEPTH;
+            let mut expected: u64 = 0;
             ready.wait();
             while !stop.load(Ordering::Relaxed) {
                 let result = take(&level, 1, matcher_tif, &generator);
@@ -257,6 +258,15 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
                     Ok(Quantity::new(1)),
                     "matcher fills 1"
                 );
+                // Strict FIFO: the matcher consumes makers 0, 1, 2, ... in
+                // admission order, never a writer-owned order at the tail.
+                let maker = result.trades().as_vec().first().map(|t| t.maker_order_id());
+                assert_eq!(
+                    maker,
+                    Some(Id::from_u64(expected)),
+                    "matcher must consume the front maker (call {expected})"
+                );
+                expected += 1;
                 level
                     .add_order(standard(next))
                     .expect("matcher replacement add must succeed");
@@ -285,7 +295,8 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
         let elapsed = t0.elapsed();
         assert!(
             matches!(cancelled, Ok(Some(_))),
-            "writer cancel must find its own order"
+            "writer cancel must find its own order {id}: {cancelled:?} (count {})",
+            level.order_count()
         );
         cancel_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
     }
