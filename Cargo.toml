@@ -65,7 +65,8 @@ proptest = { version = "1", default-features = false, features = ["std", "bit-se
 bincode = { version = "2.0", default-features = false, features = ["serde", "std"] }
 # loom is a dev-only model checker, gated behind `--cfg loom`. It is NOT a
 # runtime dependency. It models the cancel-vs-partial-fill linearization (issue
-# #81); see `tests/loom/cancel_match.rs`. loom cannot instrument dashmap /
+# #81; `tests/loom/cancel_match.rs`) and the single-writer statistics seqlock
+# (issue #153; `tests/loom/stats_seqlock.rs`). loom cannot instrument dashmap /
 # crossbeam-skiplist (they are not loom-aware), so the loom test models the
 # per-entry-lock PROTOCOL with loom's own primitives rather than the real queue.
 [target.'cfg(loom)'.dev-dependencies]
@@ -74,6 +75,10 @@ loom = "0.7"
 [[test]]
 name = "loom_cancel_match"
 path = "tests/loom/cancel_match.rs"
+
+[[test]]
+name = "loom_stats_seqlock"
+path = "tests/loom/stats_seqlock.rs"
 
 [[test]]
 name = "tests"
