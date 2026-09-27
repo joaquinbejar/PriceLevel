@@ -897,6 +897,35 @@ assert_eq!(stats.first_arrival_time(), now.as_u64());
 assert_eq!(stats.time_since_last_execution(&FixedClock(now))?, None);
 ```
 
+### Migration Guide (text parsers reject unbalanced brackets)
+
+The text (`FromStr`) parsers now use checked access and a bounded nesting
+counter. Text written by `Display` parses exactly as before, and so does
+almost every malformed input. Two contracts tightened:
+
+| Input | Before | Now |
+|-------|--------|-----|
+| `TradeList` / `MatchResult` `trades=` text with an unbalanced `[` / `]` inside an ignored trade field (e.g. `Trades:[Trade:...;x=]]`) | accepted | [`PriceLevelError::InvalidFormat`] |
+| `PriceLevel` text with an unbalanced `(` / `)` / `[` inside the `orders=[...]` section, in an ignored order field | accepted | [`PriceLevelError::ParseError`] |
+| `TradeList`, `MatchResult` or `PriceLevel` text nesting brackets more than 128 deep (list bracket included) | scanned with an unchecked signed counter | [`PriceLevelError::ParseError`] (`nesting depth exceeds the limit of 128`) |
+
+Segmentation is unchanged, and an element that fails to parse is still
+reported before a bracket imbalance, so errors for other malformed input
+are the same. A parser that cannot grow its output vector reports
+[`PriceLevelError::InvalidOperation`] instead of aborting.
+
+```rust
+use pricelevel::{PriceLevelError, TradeList};
+use std::str::FromStr;
+
+let trade = "Trade:trade_id=1;taker_order_id=2;maker_order_id=3;price=4;quantity=5;taker_side=BUY;timestamp=6";
+assert!(TradeList::from_str(&format!("Trades:[{trade};note=[ok]]")).is_ok());
+assert!(matches!(
+    TradeList::from_str(&format!("Trades:[{trade};note=]]")),
+    Err(PriceLevelError::InvalidFormat)
+));
+```
+
 
  ## Setup Instructions
 

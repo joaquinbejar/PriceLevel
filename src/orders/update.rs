@@ -1,5 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, Side};
+use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{Price, Quantity};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -63,28 +64,22 @@ impl FromStr for OrderUpdate {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 {
-            return Err(PriceLevelError::InvalidFormat);
-        }
+        // Exactly one `:` separates the update tag from the field list.
+        let (update_type, fields_str) =
+            split_exactly_once(s, b':').ok_or(PriceLevelError::InvalidFormat)?;
 
-        let update_type = parts[0];
-        let fields_str = parts[1];
-
-        let mut fields = std::collections::HashMap::new();
-        for field_pair in fields_str.split(';') {
-            let kv: Vec<&str> = field_pair.split('=').collect();
-            if kv.len() == 2 {
-                fields.insert(kv[0], kv[1]);
-            }
-        }
-
-        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
-            match fields.get(field) {
-                Some(result) => Ok(*result),
-                None => Err(PriceLevelError::MissingField(field.to_string())),
-            }
-        };
+        // `key=value` pairs: a pair without exactly one `=` is ignored and a
+        // repeated key keeps its last value (see `utils::text::Fields`).
+        const FIELD_NAMES: [&str; 6] = [
+            "order_id",
+            "new_price",
+            "new_quantity",
+            "price",
+            "quantity",
+            "side",
+        ];
+        let fields = Fields::parse(fields_str, &FIELD_NAMES);
+        let get_field = |name: &str| fields.require(name);
 
         let parse_price = |field: &str, value: &str| -> Result<Price, PriceLevelError> {
             Price::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {

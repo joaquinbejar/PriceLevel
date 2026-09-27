@@ -69,6 +69,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as `0` (unstamped) instead of the restore instant. Packages written by the
     crate always carry the field, so v2, v3 and v4 wire compatibility and
     checksum validation are unchanged. `match_order` was already clock-free.
+- **Text parsers reject unbalanced brackets and bound nesting (#174).**
+  `TradeList::from_str` (and therefore the `trades=` section of
+  `MatchResult::from_str`) now returns `InvalidFormat` when a `[` / `]` inside
+  the list is unbalanced, and `PriceLevel::from_str` returns `ParseError` when
+  a `(` / `)` / `[` inside the `orders=[...]` section is unbalanced. Such text
+  was previously accepted only when the stray bracket sat in a field the
+  element parser ignores (an unknown key, or a pair with a second `=`); it is
+  never produced by `Display`. Segments are still split exactly as before and
+  a malformed element is still reported first, so every other input keeps its
+  previous outcome and error. Nesting deeper than 128 levels (the enclosing
+  list bracket included) in `TradeList`, `MatchResult` or `PriceLevel` text is
+  rejected with `ParseError` instead of growing an unchecked signed counter.
+  An accepted/rejected corpus captured from the previous parsers pins every
+  other outcome.
 - **New `PriceLevelError::EntropyUnavailable { message }` variant (#167)**,
   the conventional error for a failing `EntropySource`. Exhaustive matches on
   `PriceLevelError` need a new arm.
@@ -98,6 +112,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Checked access in every text parser and in `Id` byte conversion (#174,
+  #152).** The `FromStr` impls of `Hash32`, `TimeInForce`, `OrderType`,
+  `OrderUpdate`, `Trade`, `TradeList`, `MatchResult`, `PriceLevelSnapshot`,
+  `PriceLevelStatistics`, `OrderQueue`, `PriceLevel` and the internal
+  `OrderBookEntry` no longer index or slice: they use `split_once`, prefix /
+  suffix stripping and borrowed slices at ASCII delimiters, with checked,
+  bounded nesting counters. The temporary split vectors and per-parse
+  `HashMap`s are gone (field lookup keeps the last-wins / exactly-one-`=`
+  rules), and the remaining input-dependent growth reserves through
+  `try_reserve`, reporting failure as `InvalidOperation`. `TradeList::from_str`
+  parses each trade from a borrowed slice instead of copying it into a
+  temporary `String` (#152). `Id::as_bytes` (sequential) and `Id::from_u64`
+  build their fixed arrays from `to_be_bytes` without slicing or shifts; both
+  byte layouts are unchanged.
 - **No caller code under level guards or mid-bookkeeping (#172).**
   `PriceLevel` and `OrderQueue` `Debug` impls are now hand-written: they
   materialize the orders before writing, so a formatter destination no longer

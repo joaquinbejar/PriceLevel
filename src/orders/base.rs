@@ -117,15 +117,19 @@ impl Hash32 {
             });
         }
 
+        // Exactly 64 input bytes pair up with the 32 output bytes, so zipping
+        // the byte pairs with the output slots visits every slot once without
+        // an index.
         let mut bytes = [0u8; 32];
-        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
-            let hex_str = std::str::from_utf8(chunk).map_err(|_| PriceLevelError::ParseError {
-                message: "Invalid UTF-8 in hex string".to_string(),
-            })?;
-            bytes[i] =
-                u8::from_str_radix(hex_str, 16).map_err(|_| PriceLevelError::ParseError {
-                    message: format!("Invalid hex character in Hash32: {hex_str}"),
+        let (pairs, _) = s.as_bytes().as_chunks::<2>();
+        for (slot, pair) in bytes.iter_mut().zip(pairs) {
+            let hex_str =
+                std::str::from_utf8(pair.as_slice()).map_err(|_| PriceLevelError::ParseError {
+                    message: "Invalid UTF-8 in hex string".to_string(),
                 })?;
+            *slot = u8::from_str_radix(hex_str, 16).map_err(|_| PriceLevelError::ParseError {
+                message: format!("Invalid hex character in Hash32: {hex_str}"),
+            })?;
         }
 
         Ok(Self(bytes))

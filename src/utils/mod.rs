@@ -7,6 +7,7 @@
 mod entropy;
 mod id;
 mod logger;
+pub(crate) mod text;
 mod uuid;
 mod value;
 

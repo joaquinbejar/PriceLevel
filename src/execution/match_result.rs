@@ -3,6 +3,7 @@ use crate::execution::list::TradeList;
 use crate::execution::trade::Trade;
 use crate::orders::Id;
 use crate::utils::Quantity;
+use crate::utils::text::{MAX_TEXT_NESTING_DEPTH, NestingError, matching_close, try_push};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -600,177 +601,124 @@ impl fmt::Display for MatchResult {
     }
 }
 
+/// Parses the text written by `Display`:
+/// `MatchResult:order_id=..;remaining_quantity=..;is_complete=..;trades=Trades:[..];filled_order_ids=[..]`.
+///
+/// Fields may appear in any order; a repeated field keeps its last value.
+/// The `trades` and `filled_order_ids` values are bracketed sections located
+/// by balanced-bracket scanning, so they may contain `;` and nested brackets.
+/// Every slice is taken at an ASCII delimiter through checked access, so
+/// multibyte text in any field yields a typed error, never a panic.
+///
+/// # Errors
+///
+/// - [`PriceLevelError::InvalidFormat`] for a missing `MatchResult:` prefix,
+///   an unknown field name, a field without `=`, an unclosed bracketed
+///   section or trailing text after one.
+/// - [`PriceLevelError::ParseError`] if a bracketed section nests deeper than
+///   128 levels (its own bracket included).
+/// - [`PriceLevelError::MissingField`] for an absent field.
+/// - [`PriceLevelError::InvalidFieldValue`] for an unparsable value.
+/// - Errors from [`TradeList::from_str`], and the field-agreement errors of
+///   the same validation `Deserialize` applies.
 impl FromStr for MatchResult {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        fn find_next_field(s: &str, start_pos: usize) -> Result<(&str, usize), PriceLevelError> {
-            // Scan raw bytes for the ASCII ';' delimiter rather than advancing a
-            // `&str` slice one byte at a time. Every byte of a multibyte scalar
-            // is >= 0x80, so it can never equal `b';'` (0x3B): a byte comparison
-            // never mistakes an interior byte for the delimiter, and we only
-            // ever form a `&str` slice at a `;` position or the end of the
-            // string — both guaranteed char boundaries — so slicing cannot panic
-            // on malformed UTF-8. `start_pos` is always the boundary just after
-            // an ASCII `=`.
-            let bytes = s.as_bytes();
-            let mut pos = start_pos;
-
-            while let Some(&byte) = bytes.get(pos) {
-                if byte == b';' {
-                    let value = s
-                        .get(start_pos..pos)
-                        .ok_or(PriceLevelError::InvalidFormat)?;
-                    return Ok((value, pos + 1));
-                }
-                pos += 1;
-            }
-
-            // No ';' before the end: the value runs to the end of the string.
-            let value = s.get(start_pos..).ok_or(PriceLevelError::InvalidFormat)?;
-            Ok((value, bytes.len()))
+        /// Splits off a `[...]`-balanced section: `rest` starts at the bytes
+        /// after the section's opening `[`. Returns the section body (without
+        /// its closing `]`) and the text after the section, which must be
+        /// empty or start with the `;` field separator (consumed here).
+        fn bracketed_section(rest: &str) -> Result<(&str, &str), PriceLevelError> {
+            let close =
+                matching_close(rest, b'[', b']', MAX_TEXT_NESTING_DEPTH).map_err(|e| match e {
+                    NestingError::TooDeep { limit } => NestingError::too_deep_error(limit),
+                    NestingError::UnmatchedClose | NestingError::Unclosed => {
+                        PriceLevelError::InvalidFormat
+                    }
+                })?;
+            // `close` is the offset of an ASCII `]`, hence a char boundary.
+            let (body, after) = rest
+                .split_at_checked(close)
+                .ok_or(PriceLevelError::InvalidFormat)?;
+            let after = after
+                .strip_prefix(']')
+                .ok_or(PriceLevelError::InvalidFormat)?;
+            // After the closing `]` the only thing allowed is a `;` field
+            // separator or the end of the string; any other trailing content
+            // is malformed and rejected rather than silently ignored.
+            let next = match after.strip_prefix(';') {
+                Some(next) => next,
+                None if after.is_empty() => after,
+                None => return Err(PriceLevelError::InvalidFormat),
+            };
+            Ok((body, next))
         }
-        if !s.starts_with("MatchResult:") {
-            return Err(PriceLevelError::InvalidFormat);
+
+        /// A plain value runs to the next `;` (consumed) or the end.
+        fn plain_value(rest: &str) -> (&str, &str) {
+            rest.split_once(';').unwrap_or((rest, ""))
         }
+
+        let mut rest = s
+            .strip_prefix("MatchResult:")
+            .ok_or(PriceLevelError::InvalidFormat)?;
 
         let mut order_id_str = None;
         let mut remaining_quantity_str = None;
         let mut is_complete_str = None;
         let mut trades_str = None;
-        let mut filled_order_ids_str = None;
+        let mut filled_order_ids_content = None;
 
-        // Scan over the raw bytes. Every structural delimiter in the format
-        // (`=`, `;`, `[`, `]`) and every literal prefix (`Trades:[`) is ASCII,
-        // so a byte comparison locates them without ever splitting a multibyte
-        // scalar, and every `&str` slice below is taken at an ASCII delimiter
-        // position (or the string end) — all guaranteed char boundaries — so a
-        // field carrying malformed / multibyte text yields a deterministic
-        // `Err`, never a slice-on-non-boundary panic.
-        let bytes = s.as_bytes();
-        let mut pos = "MatchResult:".len();
-
-        while pos < bytes.len() {
-            let field_end = match bytes
-                .get(pos..)
-                .and_then(|rest| rest.iter().position(|&b| b == b'='))
-            {
-                Some(idx) => pos + idx,
-                None => return Err(PriceLevelError::InvalidFormat),
-            };
-
-            let field_name = s
-                .get(pos..field_end)
-                .ok_or(PriceLevelError::InvalidFormat)?;
-            pos = field_end + 1;
+        // Every structural delimiter (`=`, `;`, `[`, `]`) and literal prefix
+        // (`Trades:[`) is ASCII, so each split below happens at a char
+        // boundary and a field carrying malformed / multibyte text yields a
+        // deterministic `Err`.
+        while !rest.is_empty() {
+            let (field_name, after_eq) =
+                rest.split_once('=').ok_or(PriceLevelError::InvalidFormat)?;
             match field_name {
                 "order_id" => {
-                    let (value, next_pos) = find_next_field(s, pos)?;
+                    let (value, next) = plain_value(after_eq);
                     order_id_str = Some(value);
-                    pos = next_pos;
+                    rest = next;
                 }
                 "remaining_quantity" => {
-                    let (value, next_pos) = find_next_field(s, pos)?;
+                    let (value, next) = plain_value(after_eq);
                     remaining_quantity_str = Some(value);
-                    pos = next_pos;
+                    rest = next;
                 }
                 "is_complete" => {
-                    let (value, next_pos) = find_next_field(s, pos)?;
+                    let (value, next) = plain_value(after_eq);
                     is_complete_str = Some(value);
-                    pos = next_pos;
+                    rest = next;
                 }
                 "trades" => {
-                    if !bytes
-                        .get(pos..)
-                        .is_some_and(|rest| rest.starts_with(b"Trades:["))
-                    {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
-
-                    let mut bracket_depth = 1;
-                    let mut i = pos + "Trades:[".len();
-
-                    while bracket_depth > 0 {
-                        match bytes.get(i) {
-                            Some(b']') => {
-                                bracket_depth -= 1;
-                                if bracket_depth == 0 {
-                                    break;
-                                }
-                                i += 1;
-                            }
-                            Some(b'[') => {
-                                bracket_depth += 1;
-                                i += 1;
-                            }
-                            Some(_) => {
-                                i += 1;
-                            }
-                            None => break,
-                        }
-                    }
-
-                    if bracket_depth > 0 {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
-
-                    // `i` is the byte index of the closing ASCII `]`, so the
-                    // inclusive slice ends on a char boundary.
-                    trades_str = Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
-                    pos = i + 1;
-                    if bytes.get(pos) == Some(&b';') {
-                        pos += 1;
-                    } else if pos < bytes.len() {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
+                    let body = after_eq
+                        .strip_prefix("Trades:[")
+                        .ok_or(PriceLevelError::InvalidFormat)?;
+                    let (content, next) = bracketed_section(body)?;
+                    // Re-borrow the full `Trades:[...]` text for
+                    // `TradeList::from_str`: it spans from the start of the
+                    // value to just past the closing `]`.
+                    let full_len = "Trades:[]"
+                        .len()
+                        .checked_add(content.len())
+                        .ok_or(PriceLevelError::InvalidFormat)?;
+                    trades_str = Some(
+                        after_eq
+                            .get(..full_len)
+                            .ok_or(PriceLevelError::InvalidFormat)?,
+                    );
+                    rest = next;
                 }
                 "filled_order_ids" => {
-                    if bytes.get(pos) != Some(&b'[') {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
-
-                    let mut bracket_depth = 1;
-                    let mut i = pos + 1;
-
-                    while bracket_depth > 0 {
-                        match bytes.get(i) {
-                            Some(b']') => {
-                                bracket_depth -= 1;
-                                if bracket_depth == 0 {
-                                    break;
-                                }
-                                i += 1;
-                            }
-                            Some(b'[') => {
-                                bracket_depth += 1;
-                                i += 1;
-                            }
-                            Some(_) => {
-                                i += 1;
-                            }
-                            None => break,
-                        }
-                    }
-
-                    if bracket_depth > 0 {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
-
-                    // `i` is the byte index of the closing ASCII `]`, so the
-                    // inclusive slice ends on a char boundary.
-                    filled_order_ids_str =
-                        Some(s.get(pos..=i).ok_or(PriceLevelError::InvalidFormat)?);
-
-                    pos = i + 1;
-                    // Symmetric with the `trades` branch: after the closing `]`
-                    // the only thing allowed is a `;` field separator or the end
-                    // of the string. Any other trailing content is malformed and
-                    // rejected rather than silently ignored.
-                    if bytes.get(pos) == Some(&b';') {
-                        pos += 1;
-                    } else if pos < bytes.len() {
-                        return Err(PriceLevelError::InvalidFormat);
-                    }
+                    let body = after_eq
+                        .strip_prefix('[')
+                        .ok_or(PriceLevelError::InvalidFormat)?;
+                    let (content, next) = bracketed_section(body)?;
+                    filled_order_ids_content = Some(content);
+                    rest = next;
                 }
                 _ => return Err(PriceLevelError::InvalidFormat),
             }
@@ -784,7 +732,7 @@ impl FromStr for MatchResult {
             .ok_or_else(|| PriceLevelError::MissingField("is_complete".to_string()))?;
         let trades_str =
             trades_str.ok_or_else(|| PriceLevelError::MissingField("trades".to_string()))?;
-        let filled_order_ids_str = filled_order_ids_str
+        let filled_order_ids_content = filled_order_ids_content
             .ok_or_else(|| PriceLevelError::MissingField("filled_order_ids".to_string()))?;
 
         let order_id =
@@ -810,25 +758,16 @@ impl FromStr for MatchResult {
 
         let trades = TradeList::from_str(trades_str)?;
 
-        let filled_order_ids = if filled_order_ids_str == "[]" {
-            Vec::new()
-        } else {
-            let content = &filled_order_ids_str[1..filled_order_ids_str.len() - 1];
-
-            if content.is_empty() {
-                Vec::new()
-            } else {
-                content
-                    .split(',')
-                    .map(|id_str| {
-                        Id::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
-                            field: "filled_order_ids".to_string(),
-                            value: id_str.to_string(),
-                        })
-                    })
-                    .collect::<Result<Vec<Id>, PriceLevelError>>()?
+        let mut filled_order_ids = Vec::new();
+        if !filled_order_ids_content.is_empty() {
+            for id_str in filled_order_ids_content.split(',') {
+                let id = Id::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
+                    field: "filled_order_ids".to_string(),
+                    value: id_str.to_string(),
+                })?;
+                try_push(&mut filled_order_ids, id)?;
             }
-        };
+        }
 
         // The text format predates the explicit outcome signal and does not
         // carry it, so re-derive the benign classification from the parsed

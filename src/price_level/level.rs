@@ -6,6 +6,10 @@ use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
+use crate::utils::text::{
+    MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
+    try_reserve_str,
+};
 use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -2497,50 +2501,75 @@ impl Serialize for PriceLevel {
     }
 }
 
+/// Parses the text written by `Display`:
+/// `PriceLevel:price=..;...;orders=[<order>,<order>,...]`.
+///
+/// Only `price` (required) and `orders` (optional) are read; other
+/// `key=value` pairs are ignored and a repeated key keeps its last value.
+/// The orders section runs from the first `orders=[` to the next `]`; it is
+/// split at top-level `,` (not nested in `(...)` / `[...]`) and each order
+/// is parsed from a borrowed slice and admitted in text order.
+///
+/// # Errors
+///
+/// [`PriceLevelError::ParseError`] for a missing prefix, an unclosed orders
+/// bracket, a missing / invalid price, an unparsable order, unbalanced
+/// `(` / `)` / `[` inside the orders section, or nesting deeper than 128
+/// levels; [`PriceLevelError::InvalidOperation`] if a temporary buffer cannot
+/// be allocated; and any admission error from [`PriceLevel::add_order`].
 impl FromStr for PriceLevel {
     type Err = PriceLevelError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use std::borrow::Cow;
 
-        if !s.starts_with("PriceLevel:") {
-            return Err(PriceLevelError::ParseError {
+        let content = s
+            .strip_prefix("PriceLevel:")
+            .ok_or_else(|| PriceLevelError::ParseError {
                 message: "Invalid format: missing 'PriceLevel:' prefix".to_string(),
-            });
-        }
+            })?;
 
-        let content = &s["PriceLevel:".len()..];
-
-        let mut parts = std::collections::HashMap::new();
+        let mut price_str = None;
+        let mut orders_str = None;
         let remaining_content: Cow<str>;
 
-        if let Some(orders_start) = content.find("orders=[") {
-            let orders_end =
-                content[orders_start..]
-                    .find(']')
+        if let Some((before_orders, from_orders)) = content.split_once("orders=[") {
+            let (orders, after_orders) =
+                from_orders
+                    .split_once(']')
                     .ok_or_else(|| PriceLevelError::ParseError {
                         message: "Invalid format: unclosed orders bracket".to_string(),
-                    })?
-                    + orders_start;
+                    })?;
+            orders_str = Some(orders);
 
-            let orders_str = &content[orders_start + "orders=[".len()..orders_end];
-            parts.insert("orders", orders_str);
-
-            let before_orders = &content[..orders_start];
-            let after_orders = &content[orders_end + 1..];
-            remaining_content = Cow::Owned([before_orders, after_orders].join(""));
+            // The text around the orders section is re-joined before the
+            // `key=value` scan (a pair may straddle the section), reserving
+            // through the fallible allocator API.
+            let joined_len = before_orders
+                .len()
+                .checked_add(after_orders.len())
+                .ok_or_else(|| PriceLevelError::InvalidOperation {
+                    message: "price level text length overflow".to_string(),
+                })?;
+            let mut joined = String::new();
+            try_reserve_str(&mut joined, joined_len)?;
+            joined.push_str(before_orders);
+            joined.push_str(after_orders);
+            remaining_content = Cow::Owned(joined);
         } else {
             remaining_content = Cow::Borrowed(content);
         }
 
         for part in remaining_content.split(';').filter(|s| !s.is_empty()) {
-            let mut iter = part.splitn(2, '=');
-            if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
-                parts.insert(key, value);
+            if let Some((key, value)) = part.split_once('=') {
+                match key {
+                    "price" => price_str = Some(value),
+                    "orders" => orders_str = Some(value),
+                    _ => {}
+                }
             }
         }
 
-        let price = parts
-            .get("price")
+        let price = price_str
             .and_then(|v| v.parse::<u128>().ok())
             .ok_or_else(|| PriceLevelError::ParseError {
                 message: "Missing or invalid price".to_string(),
@@ -2548,33 +2577,36 @@ impl FromStr for PriceLevel {
 
         let price_level = PriceLevel::new(price);
 
-        if let Some(orders_part) = parts.get("orders")
+        if let Some(orders_part) = orders_str
             && !orders_part.is_empty()
         {
-            let mut bracket_level = 0;
-            let mut last_split = 0;
-
-            for (i, c) in orders_part.char_indices() {
-                match c {
-                    '(' | '[' => bracket_level += 1,
-                    ')' | ']' => bracket_level -= 1,
-                    ',' if bracket_level == 0 => {
-                        let order_str = &orders_part[last_split..i];
-                        let order = OrderType::<()>::from_str(order_str).map_err(|e| {
-                            PriceLevelError::ParseError {
-                                message: format!("Order parse error: {e}"),
-                            }
-                        })?;
-                        price_level.add_order(order)?;
-                        last_split = i + 1;
+            let segments = TopLevelSplit::new(
+                orders_part,
+                b',',
+                b"([",
+                b")]",
+                MAX_TEXT_NESTING_DEPTH_INSIDE_LIST,
+            );
+            for segment in segments {
+                let segment = segment.map_err(|e| match e {
+                    NestingError::TooDeep { .. } => {
+                        NestingError::too_deep_error(MAX_TEXT_NESTING_DEPTH)
                     }
-                    _ => {}
+                    NestingError::UnmatchedClose => PriceLevelError::ParseError {
+                        message: "Invalid format: unmatched closing delimiter in orders"
+                            .to_string(),
+                    },
+                    NestingError::Unclosed => PriceLevelError::ParseError {
+                        message: "Invalid format: unclosed delimiter in orders".to_string(),
+                    },
+                })?;
+                // A separator-terminated segment is parsed even when empty
+                // (and rejected); an empty final segment (trailing `,`) is
+                // skipped.
+                if segment.is_last && segment.text.is_empty() {
+                    continue;
                 }
-            }
-
-            let order_str = &orders_part[last_split..];
-            if !order_str.is_empty() {
-                let order = OrderType::<()>::from_str(order_str).map_err(|e| {
+                let order = OrderType::<()>::from_str(segment.text).map_err(|e| {
                     PriceLevelError::ParseError {
                         message: format!("Order parse error: {e}"),
                     }
