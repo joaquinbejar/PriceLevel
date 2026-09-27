@@ -633,7 +633,6 @@ mod tests {
         // Under the old remove-then-insert order the maker vanished from the
         // index between the two ops and a scan could miss it.
         use crate::price_level::order_queue::{FrontAction, FrontOutcome, UpdateDecision};
-        use std::collections::HashSet;
         use std::sync::Arc as StdArc;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::thread;
@@ -661,7 +660,7 @@ mod tests {
         };
 
         for _ in 0..200_000 {
-            let mut set_aside = HashSet::new();
+            let mut set_aside = crate::price_level::order_queue::ParkedSeqs::new();
             // A no-op probe: whatever the front is, park it (leaves it resting)
             // and report we found one. The maker always rests, so this must be
             // `Matched`, never `Empty`.

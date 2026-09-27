@@ -13,12 +13,13 @@ mod tests {
     use crate::errors::{CapacityResource, PriceLevelError};
     use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
-    use crate::price_level::level::{PriceLevel, set_sweep_start_hook};
-    use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, snapshot_hook};
+    use crate::price_level::level::{PriceLevel, count_park, set_sweep_start_hook};
+    use crate::price_level::order_queue::{
+        FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, disable_park_inline_slot, snapshot_hook,
+    };
     use crate::price_level::{PriceLevelData, PriceLevelSnapshot, PriceLevelSnapshotPackage};
     use crate::utils::alloc::test_seam;
     use crate::utils::{Price, Quantity, TimestampMs};
-    use std::collections::HashSet;
     use std::str::FromStr;
     use std::sync::Arc;
     use uuid::Uuid;
@@ -358,8 +359,11 @@ mod tests {
     fn a_refused_park_after_a_fill_keeps_the_committed_prefix() {
         let level = Arc::new(level_with(vec![standard(1, 5)]));
         let _hook = admit_taker_id_at_sweep_start(&level, 4);
-        // The taker-id order is admitted behind maker 1 at sweep start.
+        // The taker-id order is admitted behind maker 1 at sweep start. The
+        // inline slot is disabled so the single park reaches the spill set's
+        // (refused) reservation.
         let result = {
+            let _spill = disable_park_inline_slot();
             let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
             take(&level, 20, TimeInForce::Gtc)
         };
@@ -393,6 +397,7 @@ mod tests {
             admit.add_order(standard(7, 6)).expect("admit maker");
         }));
         let result = {
+            let _spill = disable_park_inline_slot();
             let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
             take(&level, 3, TimeInForce::Ioc)
         };
@@ -429,27 +434,164 @@ mod tests {
     }
 
     #[test]
-    fn match_front_park_refusal_is_a_no_op() {
+    fn a_single_live_park_never_allocates() {
+        // Item 7 of the #164 review: the only park that fires today (one
+        // order sharing the taker id) uses the inline slot, so even a refusing
+        // allocator cannot stop the sweep there.
+        let level = Arc::new(level_with(vec![standard(1, 5)]));
+        let admit = Arc::clone(&level);
+        let _hook = set_sweep_start_hook(Box::new(move || {
+            admit.add_order(standard(TAKER, 4)).expect("admit taker id");
+            admit.add_order(standard(7, 6)).expect("admit maker");
+        }));
+        let result = {
+            let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+            let r = take(&level, 20, TimeInForce::Ioc);
+            assert_eq!(test_seam::injected(), 0, "no reservation attempted");
+            r
+        };
+        assert!(result.error().is_none());
+        let makers: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(makers, vec![Id::from_u64(1), Id::from_u64(7)]);
+        assert_eq!(state(&level).ids, vec![Id::from_u64(TAKER)]);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn match_front_park_refusal_is_a_no_op_and_carries_the_original_error() {
         let queue = OrderQueue::new();
         queue.try_push(Arc::new(standard(1, 5))).expect("push");
-        let mut set_aside: HashSet<u64> = HashSet::new();
-        let outcome = {
-            let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
-            queue.match_front(&mut set_aside, |_, _| (FrontAction::SetAside, ()))
-        };
-        assert!(matches!(outcome, FrontOutcome::ParkRefused { .. }));
-        assert!(set_aside.is_empty());
-        let orders = queue.to_vec().expect("materialize");
-        assert_eq!(ids(&orders), vec![Id::from_u64(1)]);
-        assert_eq!(orders[0].visible_quantity().as_u64(), 5);
-
-        // A pre-reserved set never reaches the (refused) reservation.
-        set_aside.reserve(4);
+        queue.try_push(Arc::new(standard(2, 6))).expect("push");
+        let mut set_aside = ParkedSeqs::new();
         let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
-        let outcome = queue.match_front(&mut set_aside, |_, _| (FrontAction::SetAside, ()));
-        assert!(matches!(outcome, FrontOutcome::Matched { .. }));
+
+        // First park: inline slot, no reservation.
+        let first = queue.match_front(&mut set_aside, |_, _| (FrontAction::SetAside, ()));
+        assert!(matches!(first, FrontOutcome::Matched { .. }));
         assert_eq!(set_aside.len(), 1);
         assert_eq!(test_seam::injected(), 0);
+
+        // Second live park: the spill set must grow and is refused. The
+        // queue's own typed error is carried, not a fabricated one.
+        let second = queue.match_front(&mut set_aside, |_, _| (FrontAction::SetAside, ()));
+        match second {
+            FrontOutcome::ParkRefused { error, .. } => assert_eq!(
+                error,
+                PriceLevelError::CapacityExceeded {
+                    resource: CapacityResource::SweepScratch,
+                    additional: 1,
+                }
+            ),
+            other => panic!("expected ParkRefused, got {other:?}"),
+        }
+        assert_eq!(test_seam::injected(), 1);
+        assert_eq!(set_aside.len(), 1, "the refused sequence is not parked");
+        let orders = queue.to_vec().expect("materialize");
+        assert_eq!(ids(&orders), vec![Id::from_u64(1), Id::from_u64(2)]);
+        assert_eq!(orders[0].visible_quantity().as_u64(), 5);
+        assert_eq!(orders[1].visible_quantity().as_u64(), 6);
+        drop(_fail);
+
+        // A pre-reserved set never reaches the (refused) reservation.
+        let mut reserved = ParkedSeqs::new();
+        reserved.try_reserve(2).expect("reserve");
+        let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+        for _ in 0..2 {
+            let outcome = queue.match_front(&mut reserved, |_, _| (FrontAction::SetAside, ()));
+            assert!(matches!(outcome, FrontOutcome::Matched { .. }));
+        }
+        assert_eq!(reserved.len(), 2);
+        assert!(!reserved.is_empty());
+        assert_eq!(test_seam::injected(), 0);
+    }
+
+    #[test]
+    fn park_set_reservation_accounts_for_the_inline_slot() {
+        let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+        let mut set = ParkedSeqs::new();
+        // Zero or one predicted park needs no allocation.
+        set.try_reserve(0).expect("zero");
+        set.try_reserve(1).expect("inline covers one");
+        assert_eq!(test_seam::injected(), 0);
+        // Two need a spill slot: refused, set unchanged.
+        match set.try_reserve(2) {
+            Err(PriceLevelError::CapacityExceeded {
+                resource: CapacityResource::SweepScratch,
+                additional: 1,
+            }) => {}
+            other => panic!("expected a SweepScratch refusal, got {other:?}"),
+        }
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn dry_run_park_count_overflow_is_a_typed_error() {
+        // Review item 5: an overflowing park count no longer breaks silently
+        // (which under-reported the fill); the dry run records this error.
+        assert_eq!(count_park(0), Ok(1));
+        assert_eq!(
+            count_park(usize::MAX),
+            Err(PriceLevelError::CapacityExceeded {
+                resource: CapacityResource::SweepScratch,
+                additional: 1,
+            })
+        );
+    }
+
+    /// Records `(level, message)` of every event dispatched on this thread.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.0
+                .lock()
+                .expect("capture lock")
+                .push((*event.metadata().level(), message.0));
+        }
+    }
+
+    #[test]
+    fn fill_or_kill_dry_run_refusal_is_logged_at_error() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let level = sample_level();
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::registry().with(captured.clone());
+        let result = tracing::subscriber::with_default(subscriber, || {
+            let _fail = test_seam::fail_after(CapacityResource::OrderSnapshot, 0);
+            take(&level, 10, TimeInForce::Fok)
+        });
+        assert!(result.was_killed());
+        let events = captured.0.lock().expect("capture lock");
+        assert!(
+            events.iter().any(|(lvl, msg)| *lvl == tracing::Level::ERROR
+                && msg.contains("dry-run working snapshot could not be reserved")),
+            "{events:?}"
+        );
     }
 
     // ------------------------------------------------------------------

@@ -1007,11 +1007,22 @@
 //! - [`PriceLevel::match_order`] still returns [`MatchResult`]. When a step
 //!   fails, the sweep stops and [`MatchResult::error`] is `Some`; the trades,
 //!   filled ids and remaining quantity describe exactly what the level
-//!   committed, and the level's counters agree with its queue. A fill-or-kill
-//!   taker reserves its exact storage before touching any maker: on failure it
-//!   is [`MatchOutcome::Killed`] with the error set and the level unchanged.
-//!   Callers that used to treat every result as a natural end should check
-//!   `result.error()` before resting a remainder.
+//!   committed. The stop causes are: maker arithmetic (#169), the
+//!   resting-order count (#163), result growth (#170), trade-id exhaustion
+//!   (#168), FIFO sequence exhaustion (#165), a parked-sequence set that
+//!   cannot grow (#164), and, after a committed step, a failed count release
+//!   (#163) or a refused post-lock replenish counter transition (#128
+//!   fallback, #164). For every cause except the last two the level's
+//!   counters agree with its queue; the last two **poison the level**
+//!   (counters known to disagree): later mutators return `InvalidOperation`,
+//!   matching is refused, and the caller must treat the level as failed and
+//!   reconstruct it from a snapshot. See the `match_order` failure contract.
+//!   A fill-or-kill taker checks or reserves everything before touching any
+//!   maker: on failure it is [`MatchOutcome::Killed`] with the error set and
+//!   the level unchanged. Callers that used to treat every result as a
+//!   natural end **must** check `result.error()` before resting a remainder:
+//!   a stopped sweep's remainder is not "no more liquidity", and resting it
+//!   after a self-trade race can duplicate an id at the level.
 //! - [`PriceLevel::matchable_quantity`] now replays the resting queue in
 //!   insertion-sequence (sweep) order rather than `(timestamp, sequence)`
 //!   order, the order `match_order` actually consumes it. This is a correctness
@@ -1242,13 +1253,19 @@
 //!   [`PriceLevel::snapshot_orders`]) sort in place with an unstable sort on
 //!   the unique `(timestamp, sequence)` key: same order as before, no hidden
 //!   stable-sort scratch buffer.
-//! - **Matching.** A parked maker (self-trade skip) whose sequence cannot be
-//!   recorded stops a non-fill-or-kill sweep with the committed prefix and
-//!   [`MatchResult::error`] (`SweepScratch`). A fill-or-kill taker reserves
-//!   its dry-run working copy and its park set before the first mutation; a
-//!   refusal kills it with the level untouched and the error set.
+//! - **Matching.** The sweep's parked-sequence set holds its first live key
+//!   inline (no allocation; the self-trade skip, the only park that fires
+//!   today, has at most one live key) and grows fallibly beyond it. A park
+//!   that cannot be recorded stops a non-fill-or-kill sweep with the
+//!   committed prefix and [`MatchResult::error`] carrying the original
+//!   `SweepScratch` error. A fill-or-kill taker reserves its dry-run working
+//!   copy and its park set before the first mutation; a refusal kills it with
+//!   the level untouched, the error set and an `ERROR` event.
 //!   [`PriceLevel::matchable_quantity`] returns `Err` only when its working
 //!   copy cannot be reserved (a silent `0` would under-report depth).
+//!   Callers **must** check `result.error()` before resting a taker's
+//!   remainder: a stopped sweep's remainder is not "no more liquidity", and
+//!   resting it after a self-trade race can duplicate an id at the level.
 //! - **Snapshots.** [`PriceLevel::snapshot`] returns the capacity error at
 //!   once (no recollection). The checksum payload is streamed into SHA-256
 //!   (no payload buffer; checksums are byte-identical), the hex string and
@@ -1263,9 +1280,12 @@
 //! - **Text parsers.** A refused parser buffer is now `CapacityExceeded`
 //!   (resource `Text`) instead of an `InvalidOperation` whose message was
 //!   allocated after the failure.
-//! - **Poisoning.** The defensive post-lock replenish counter branch (#128)
-//!   no longer ignores a refused counter transition: it poisons the level and
-//!   stops the sweep with `InvalidOperation`, like the #163 failed rollback.
+//! - **Poisoning.** The defensive post-lock replenish counter branch (#128,
+//!   unreachable today) no longer ignores a refused counter transition: it
+//!   logs at `ERROR`, poisons the level and stops the sweep with
+//!   `InvalidOperation`, like the #163 failed rollback. The result still
+//!   reports the committed trades exactly, but the level's counters are known
+//!   to disagree with its queue: treat the level as failed.
 //! - **Not covered.** `DashMap` / `SkipMap` node insertion and `Arc::new` have
 //!   no stable fallible API; an allocator failure there aborts the process
 //!   (not a Rust panic). See `doc/panic-boundaries.md`.

@@ -255,11 +255,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `From<OrderQueue> for Vec<Arc<OrderType<()>>>` become `TryFrom`.
   - The timestamp-order view sorts in place (unstable sort on a unique key);
     no stable-sort scratch buffer.
-  - The sweep's park set grows fallibly: a refusal stops a
-    non-fill-or-kill sweep with the committed prefix and
-    `MatchResult::error`; fill-or-kill reserves its dry-run copy and park set
-    before the first mutation and is killed with the level untouched on a
-    refusal.
+  - The sweep's park set holds its first live key inline (no allocation;
+    the self-trade skip has at most one) and grows fallibly beyond it: a
+    refusal stops a non-fill-or-kill sweep with the committed prefix and
+    `MatchResult::error` carrying the original error; fill-or-kill reserves
+    its dry-run copy and park set before the first mutation and is killed
+    (logged at `ERROR`) with the level untouched on a refusal. Callers must
+    check `result.error()` before resting a remainder.
   - Snapshot restore reserves its duplicate-id set fallibly; the checksum
     payload is streamed into SHA-256 (checksums unchanged); package JSON,
     the hex checksum and decoded order vectors / checksum strings grow
@@ -269,8 +271,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rejects the marker.
   - Text-parser buffer refusals are `CapacityExceeded { resource: Text }`
     (were `InvalidOperation`).
-  - The defensive post-lock replenish counter branch poisons the level on a
-    refused transition instead of ignoring it.
+  - The defensive post-lock replenish counter branch (unreachable since
+    #128) logs at `ERROR`, poisons the level and stops the sweep on a refused
+    transition instead of ignoring it; the level must then be treated as
+    failed.
 
 ### Added
 

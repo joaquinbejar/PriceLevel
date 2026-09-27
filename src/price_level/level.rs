@@ -5,7 +5,7 @@ use crate::errors::{CapacityResource, ExhaustedCounter, PriceLevelError};
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{
-    FrontAction, FrontOutcome, OrderQueue, RemoveOutcome, UpdateDecision,
+    FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, RemoveOutcome, UpdateDecision,
 };
 use crate::price_level::snapshot::{BorrowedOrders, SnapshotAggregates, deserialize_plain_orders};
 use crate::price_level::statistics::OrderEventDrop;
@@ -89,6 +89,22 @@ fn topology_underflow(price: u128) -> PriceLevelError {
             "price level {price} topology count underflow: a removal found a zero resting-order count"
         ),
     }
+}
+
+/// Counts one more parked maker for the fill-or-kill park-set preflight
+/// (issue #164).
+///
+/// # Errors
+///
+/// [`PriceLevelError::CapacityExceeded`] (resource
+/// [`CapacityResource::SweepScratch`]) if the count does not fit `usize`: the
+/// real sweep could not record that park either, so the dry run stops there
+/// with the error instead of silently under-reporting the fill.
+#[inline]
+pub(crate) fn count_park(parks: usize) -> Result<usize, PriceLevelError> {
+    parks
+        .checked_add(1)
+        .ok_or_else(|| PriceLevelError::capacity_exceeded(CapacityResource::SweepScratch, 1))
 }
 
 /// Error for a post-lock replenish counter transition that could not be
@@ -1921,10 +1937,13 @@ impl PriceLevel {
             // or fill-or-kill would predict depth the sweep will not take.
             if order.id() == taker_id {
                 // The sweep parks the skipped maker's sequence (issue #164).
-                parks = match parks.checked_add(1) {
-                    Some(count) => count,
-                    None => break,
-                };
+                match count_park(parks) {
+                    Ok(count) => parks = count,
+                    Err(err) => {
+                        dry.error = Some(err);
+                        break;
+                    }
+                }
                 dry.parks = parks;
                 continue;
             }
@@ -1957,10 +1976,13 @@ impl PriceLevel {
                 && updated_order.is_some()
             {
                 // The sweep parks the no-progress maker (issue #164).
-                parks = match parks.checked_add(1) {
-                    Some(count) => count,
-                    None => break,
-                };
+                match count_park(parks) {
+                    Ok(count) => parks = count,
+                    Err(err) => {
+                        dry.error = Some(err);
+                        break;
+                    }
+                }
                 dry.parks = parks;
                 continue;
             }
@@ -2125,20 +2147,50 @@ impl PriceLevel {
     /// # Failure contract (#164)
     ///
     /// This method never returns a bare error and never drops a committed
-    /// fill. If a fallible step fails (growing the result's trade / filled-id
-    /// storage, or reserving a trade id from an exhausted
-    /// [`UuidGenerator`] (#168); later issues plug counter exhaustion and
-    /// arithmetic failures into the same slot), the sweep stops
-    /// and the returned result carries the typed failure in
-    /// [`MatchResult::error`](crate::execution::MatchResult::error):
+    /// fill. When a fallible step fails the sweep stops and the returned
+    /// result carries the typed failure in
+    /// [`MatchResult::error`](crate::execution::MatchResult::error). The stop
+    /// causes are (numbered for reference, not in check order):
+    ///
+    /// 1. the maker's matching arithmetic ([`OrderType::match_against`],
+    ///    #169);
+    /// 2. the resting-order count refusing a full consume
+    ///    ([`PriceLevelError::InvalidOperation`], #163);
+    /// 3. growing the result's trade / filled-id storage
+    ///    ([`PriceLevelError::CapacityExceeded`], resource `Trades` /
+    ///    `FilledOrderIds`, #170; reserved before the step);
+    /// 4. reserving a trade id from an exhausted [`UuidGenerator`]
+    ///    (`CapacityExceeded`, resource `IdSequence`, #168);
+    /// 5. no FIFO sequence left to re-sequence a replenished maker
+    ///    ([`PriceLevelError::CounterExhausted`], #165);
+    /// 6. recording a parked maker (self-trade skip): the parked-sequence set
+    ///    cannot grow (`CapacityExceeded`, resource `SweepScratch`, #164; the
+    ///    first live park uses an inline slot and never allocates, so this is
+    ///    not reached by the self-trade skip today);
+    /// 7. after a committed step, a resting-order count release that fails
+    ///    (#163) or the defensive post-lock replenish counter transition being
+    ///    refused (#128 fallback, #164; unreachable today): both
+    ///    **poison the level** ([`PriceLevelError::InvalidOperation`]).
+    ///
+    /// A replenishment whose drawn tranche would overflow the level's visible
+    /// counter also stops the sweep, with the maker untouched, but sets no
+    /// error: that liquidity is simply unreachable until headroom frees up.
+    ///
+    /// Callers **must** check `result.error()` before resting a taker's
+    /// remainder: a stopped sweep's remainder is not "no more liquidity", and
+    /// resting it after a self-trade race can duplicate an id at this level.
     ///
     /// - **Non-fill-or-kill takers.** The storage for each step is reserved
     ///   *before* the step's maker mutation is committed, so a growth failure
     ///   stops the sweep between two makers: the result holds every committed
     ///   trade (a strict FIFO prefix of the unconstrained sweep), the filled
     ///   ids of the makers that prefix removed, and the taker's true remaining
-    ///   quantity; the queue, `visible` / `hidden` counters, order count,
-    ///   side topology and statistics agree with exactly those trades. If
+    ///   quantity; for causes 1 to 6 the queue, `visible` / `hidden` counters,
+    ///   order count, side topology and statistics agree with exactly those
+    ///   trades. For cause 7 the result is still exact, but the counters are
+    ///   known to disagree with the queue: the level is poisoned (later
+    ///   mutators return `InvalidOperation` and matching is refused) and the
+    ///   caller must treat it as failed and reconstruct it from a snapshot. If
     ///   recording fails *after* a commit (ruled out by construction: the slot
     ///   is pre-reserved and the fill is validated by the sweep), the step's
     ///   level bookkeeping is still completed, `remaining_quantity` reflects the
@@ -2152,10 +2204,13 @@ impl PriceLevel {
     ///   true remainder, consistent level, error set. Every later call against
     ///   crossable depth with that generator stops at its first fill with no
     ///   trades.
-    /// - **Fill-or-kill takers.** The dry run under the exclusive guard counts
-    ///   the exact number of trades the sweep will emit; that storage and
-    ///   exactly that many trade ids (all or nothing) are reserved before the
-    ///   first maker is touched. A reservation failure kills the taker
+    /// - **Fill-or-kill takers.** The dry run under the exclusive guard
+    ///   materializes the queue (fallibly) and counts the exact number of
+    ///   trades, replenishments and parks the sweep will perform; the dry
+    ///   run's own stop error (causes 1 and 2), the FIFO sequence headroom,
+    ///   the result storage, the park set and exactly that many trade ids (all
+    ///   or nothing) are checked or reserved before the first maker is
+    ///   touched. A failure there kills the taker
     ///   ([`MatchResult::was_killed`]) with no trades, the full remaining
     ///   quantity, the level unchanged, and the error set; a successful
     ///   reservation leaves the sweep no fallible growth and no id
@@ -2164,8 +2219,9 @@ impl PriceLevel {
     /// Resource failures are reported as the allocation-free
     /// [`PriceLevelError::CapacityExceeded`] (resource
     /// [`CapacityResource::IdSequence`]
-    /// for trade-id exhaustion)
-    /// and logged at `ERROR` (after the fill-or-kill guard is released).
+    /// for trade-id exhaustion). Every stop and every fill-or-kill kill with
+    /// an error is logged at `ERROR`, after the fill-or-kill guard is released
+    /// and outside every queue lock.
     ///
     /// # Concurrency
     ///
@@ -2409,7 +2465,7 @@ impl PriceLevel {
         // The sweep's parked-sequence set (see the no-progress guard below).
         // Declared here so fill-or-kill can reserve it during its preflight;
         // `HashSet::new` does not allocate.
-        let mut set_aside: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut set_aside = ParkedSeqs::new();
         let fok_guard = if is_fok {
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
@@ -2422,10 +2478,16 @@ impl PriceLevel {
                 Err(err) => {
                     // The dry run's working snapshot could not be reserved
                     // (issue #164): no prediction, so kill before any
-                    // mutation with the typed error. Nothing is logged: the
-                    // failure is an allocation refusal and the result
-                    // carries it.
+                    // mutation with the typed error. Guard released before
+                    // logging, as for the sibling kills (issue #172).
                     drop(guard);
+                    tracing::error!(
+                        taker_order_id = %taker_order_id,
+                        incoming_quantity,
+                        price = self.price,
+                        error = %err,
+                        "fill-or-kill taker killed: dry-run working snapshot could not be reserved; level untouched"
+                    );
                     let mut result =
                         MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
                     result.mark_killed(incoming_quantity);
@@ -2510,15 +2572,23 @@ impl PriceLevel {
             }
             // Every maker the sweep parks (self-trade skip, no-progress guard)
             // inserts one sequence into `set_aside` (issue #164). Under the
-            // exclusive guard the dry run's count is exact, so reserve it now:
-            // the sweep's park then never has to grow the set, and a refusal
+            // exclusive guard the dry run's count is exact, so reserve it now
+            // (the first park uses the set's inline slot, so a single
+            // predicted park reserves nothing): the sweep's park then never
+            // has to grow the set, and a refusal
             // kills the taker here with the level untouched instead of
             // stopping the sweep part-way. With no park predicted (the normal
             // case) this reserves nothing and does not allocate.
-            if let Err(err) =
-                try_reserve_set(&mut set_aside, dry.parks, CapacityResource::SweepScratch)
-            {
+            if let Err(err) = set_aside.try_reserve(dry.parks) {
                 drop(guard);
+                tracing::error!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    parks = dry.parks,
+                    price = self.price,
+                    error = %err,
+                    "fill-or-kill taker killed: park set could not be reserved; level untouched"
+                );
                 let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
                 result.mark_killed(incoming_quantity);
                 result.set_error(err);
@@ -3023,28 +3093,25 @@ impl PriceLevel {
             // A refused park (issue #164) is only material for a step that
             // would continue the sweep past the parked maker; a terminal step
             // stops anyway and keeps its own error.
-            let (step, park_refused) = match outcome {
+            let (step, mut park_error) = match outcome {
                 FrontOutcome::Empty => break,
-                FrontOutcome::Matched { result } => (result, false),
-                FrontOutcome::ParkRefused { result } => (result, true),
+                FrontOutcome::Matched { result } => (result, None),
+                FrontOutcome::ParkRefused { result, error } => (result, Some(error)),
             };
             {
                 {
                     let data = match step {
                         StepResult::SetAside { .. } | StepResult::SelfTradeSkipped { .. }
-                            if park_refused =>
+                            if park_error.is_some() =>
                         {
                             // The maker was left untouched (a `SetAside` no-op)
                             // but its sequence could not be parked: continuing
                             // would re-select it. Stop with the committed
-                            // prefix; queue, counters and result agree.
-                            sweep_error = Some((
-                                PriceLevelError::capacity_exceeded(
-                                    CapacityResource::SweepScratch,
-                                    1,
-                                ),
-                                None,
-                            ));
+                            // prefix and the queue's original typed error;
+                            // queue, counters and result agree.
+                            if let Some(error) = park_error.take() {
+                                sweep_error = Some((error, None));
+                            }
                             break;
                         }
                         StepResult::SetAside { maker_id, seq } => {
@@ -3272,8 +3339,11 @@ impl PriceLevel {
                         // place by `match_front`), so only the counters move.
                         // As of issue #128 the replenish path commits this
                         // transition under the entry lock (`counters_committed`),
-                        // so this post-lock branch is now unreachable for it and
-                        // kept only as a defensive no-op.
+                        // so this post-lock branch is unreachable today. It is
+                        // kept as a defensive fallback that applies the
+                        // transition when it fits and, when it does not, logs
+                        // at ERROR, poisons the level and stops the sweep
+                        // (below); it is not a no-op.
                         //
                         // Both transitions are checked (issue #165): unlike the
                         // proven committed deltas elsewhere in the sweep, this
@@ -3288,7 +3358,9 @@ impl PriceLevel {
                         // could not follow no longer describe the queue. The
                         // level is poisoned and the sweep stops with the
                         // committed prefix (this fill included) and a typed
-                        // error, logged with the sweep stop below.
+                        // error. The ERROR event below runs after this step's
+                        // counter bookkeeping and outside every lock (the
+                        // entry lock was released by `match_front`).
                         let hidden_moved = self
                             .hidden_quantity
                             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
@@ -3314,6 +3386,14 @@ impl PriceLevel {
                         }
                         if !visible_moved {
                             self.trip_poison();
+                            tracing::error!(
+                                price = self.price,
+                                taker_order_id = %taker_order_id,
+                                maker_order_id = %data.maker_id,
+                                hidden_reduced = data.hidden_reduced,
+                                hidden_moved,
+                                "post-lock replenish counter transition refused; level poisoned — reconstruct it from a snapshot"
+                            );
                             if sweep_error.is_none() {
                                 sweep_error = Some((replenish_counter_failure(self.price), None));
                             }
@@ -3371,7 +3451,7 @@ impl PriceLevel {
                     trades = result.trades().len(),
                     remaining,
                     error = %err,
-                    "match sweep stopped early before mutating the next maker; committed fills reported"
+                    "match sweep stopped early; committed fills reported"
                 ),
             }
             result.set_error(err);

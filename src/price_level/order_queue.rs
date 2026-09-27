@@ -197,10 +197,149 @@ pub(crate) enum UpdateDecision {
     ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
 }
 
-/// The outcome of [`OrderQueue::remove_if`] (issue #163).
 /// Committed `(stored_seq, order)` pairs collected for a materialization.
 type SeqPairs = Vec<(u64, Arc<OrderType<()>>)>;
 
+// Test-only switch that disables the inline slot of `ParkedSeqs` (issue
+// #164), so a test can drive the spill set's fallible reservation with a
+// single park. Production builds compile none of this.
+#[cfg(test)]
+thread_local! {
+    static PARK_INLINE_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Restores the inline slot when dropped (test seam, issue #164).
+#[cfg(test)]
+pub(crate) struct ParkInlineGuard(bool);
+
+#[cfg(test)]
+impl Drop for ParkInlineGuard {
+    fn drop(&mut self) {
+        PARK_INLINE_DISABLED.with(|cell| cell.set(self.0));
+    }
+}
+
+/// Disables the inline slot of every `ParkedSeqs` on this thread until the
+/// guard drops (test seam, issue #164).
+#[cfg(test)]
+pub(crate) fn disable_park_inline_slot() -> ParkInlineGuard {
+    ParkInlineGuard(PARK_INLINE_DISABLED.with(|cell| cell.replace(true)))
+}
+
+#[cfg(test)]
+fn park_inline_disabled() -> bool {
+    PARK_INLINE_DISABLED.with(std::cell::Cell::get)
+}
+
+/// The insertion sequences of the makers one match sweep has parked (issue
+/// #164; see [`OrderQueue::match_front`]).
+///
+/// The first live park is held in an inline slot, which never allocates; only
+/// further live parks spill into a `HashSet`, growing fallibly. Orders are
+/// id-keyed, so the only park that fires today (the self-trade skip of the
+/// one order sharing the taker id) has at most one LIVE key at a time: a
+/// stale key left by a cancel / readmission race is pruned (#155) when the
+/// scan reaches it, which happens before the newer, higher sequence is
+/// reached. The spill, and with it the allocation-failure stop cause, is
+/// therefore not reached in practice; it remains the fallible path for any
+/// future multi-park shape.
+#[derive(Debug, Default)]
+pub(crate) struct ParkedSeqs {
+    inline: Option<u64>,
+    spill: HashSet<u64>,
+}
+
+impl ParkedSeqs {
+    /// An empty set; allocates nothing.
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// `true` if `seq` is parked.
+    #[inline]
+    #[must_use]
+    pub(crate) fn contains(&self, seq: u64) -> bool {
+        self.inline == Some(seq) || (!self.spill.is_empty() && self.spill.contains(&seq))
+    }
+
+    /// Unparks `seq` (no-op if absent). Never allocates.
+    #[inline]
+    pub(crate) fn remove(&mut self, seq: u64) {
+        if self.inline == Some(seq) {
+            self.inline = None;
+        } else if !self.spill.is_empty() {
+            self.spill.remove(&seq);
+        }
+    }
+
+    /// Number of parked sequences (test inspection).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.spill.len() + usize::from(self.inline.is_some())
+    }
+
+    /// `true` if nothing is parked (test inspection).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inline.is_none() && self.spill.is_empty()
+    }
+
+    #[inline]
+    fn inline_available(&self) -> bool {
+        #[cfg(test)]
+        if park_inline_disabled() {
+            return false;
+        }
+        self.inline.is_none()
+    }
+
+    /// Reserves room so the next `additional` parks of new sequences do not
+    /// allocate (the fill-or-kill preflight).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SweepScratch`]); the set is unchanged.
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        let spill = if self.inline_available() {
+            additional.checked_sub(1)
+        } else {
+            Some(additional)
+        };
+        match spill {
+            Some(n) if n > 0 => try_reserve_set(&mut self.spill, n, CapacityResource::SweepScratch),
+            _ => Ok(()),
+        }
+    }
+
+    /// Parks `seq`. Uses the inline slot when free; otherwise grows the spill
+    /// set fallibly (only when it is full).
+    ///
+    /// # Errors
+    ///
+    /// The original [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SweepScratch`]) of the refused reservation; `seq`
+    /// is not parked and the set is unchanged.
+    pub(crate) fn try_insert(&mut self, seq: u64) -> Result<(), PriceLevelError> {
+        if self.contains(seq) {
+            return Ok(());
+        }
+        if self.inline_available() {
+            self.inline = Some(seq);
+            return Ok(());
+        }
+        if self.spill.len() >= self.spill.capacity() {
+            try_reserve_set(&mut self.spill, 1, CapacityResource::SweepScratch)?;
+        }
+        self.spill.insert(seq);
+        Ok(())
+    }
+}
+
+/// The outcome of [`OrderQueue::remove_if`] (issue #163).
 #[derive(Debug)]
 pub(crate) enum RemoveOutcome {
     /// The id is not resident; nothing was checked or changed.
@@ -227,8 +366,9 @@ pub(crate) enum FrontOutcome<R> {
     /// Nothing was committed (`SetAside` never mutates the queue) and the
     /// sequence was NOT parked, so re-running the sweep step would re-select
     /// the same maker: the caller must stop. Carries the closure's result so a
-    /// terminal step (which stops anyway) keeps its own error.
-    ParkRefused { result: R },
+    /// terminal step (which stops anyway) keeps its own error, and the
+    /// original typed reservation error.
+    ParkRefused { result: R, error: PriceLevelError },
     /// The queue is empty (no front candidate that is not already set aside).
     /// The sweep is done.
     Empty,
@@ -538,11 +678,7 @@ impl OrderQueue {
     /// [`FrontAction::ReplaceAtTail`] re-prioritisation swaps the value and
     /// re-sequences it in place rather than removing-then-re-pushing — so the
     /// lost-cancel window is closed for every action, not just the partial fill.
-    pub(crate) fn match_front<F, R>(
-        &self,
-        set_aside: &mut HashSet<u64>,
-        decide: F,
-    ) -> FrontOutcome<R>
+    pub(crate) fn match_front<F, R>(&self, set_aside: &mut ParkedSeqs, decide: F) -> FrontOutcome<R>
     where
         F: FnOnce(u64, &OrderType<()>) -> (FrontAction, R),
     {
@@ -569,7 +705,7 @@ impl OrderQueue {
                 #[cfg(test)]
                 record_front_scan_visit();
                 let seq = *entry.key();
-                if !set_aside.contains(&seq) {
+                if !set_aside.contains(seq) {
                     front = Some((seq, *entry.value()));
                     break;
                 }
@@ -579,7 +715,7 @@ impl OrderQueue {
                     .is_some_and(|slot| slot.value().0 == seq);
                 if !live {
                     self.index.remove(&seq);
-                    set_aside.remove(&seq);
+                    set_aside.remove(seq);
                 }
             }
             let Some((seq, order_id)) = front else {
@@ -712,20 +848,17 @@ impl OrderQueue {
                     // possibly-allocating scratch-set insert and the evicted
                     // order's drop now run unlocked.
                     //
-                    // The park grows fallibly (issue #164): a full set reserves
-                    // one slot first, and a refused reservation reports
-                    // `ParkRefused` with the step still a no-op. A set the
+                    // The park never allocates for the first live key (inline
+                    // slot) and grows fallibly beyond it (issue #164): a
+                    // refused reservation reports `ParkRefused` with the
+                    // original error and the step still a no-op. A set the
                     // caller pre-reserved (fill-or-kill) never reaches the
                     // reservation.
                     drop(evicted);
-                    if let Some(seq) = park_seq {
-                        if set_aside.len() >= set_aside.capacity()
-                            && try_reserve_set(set_aside, 1, CapacityResource::SweepScratch)
-                                .is_err()
-                        {
-                            return FrontOutcome::ParkRefused { result };
-                        }
-                        set_aside.insert(seq);
+                    if let Some(seq) = park_seq
+                        && let Err(error) = set_aside.try_insert(seq)
+                    {
+                        return FrontOutcome::ParkRefused { result, error };
                     }
 
                     return FrontOutcome::Matched { result };
@@ -1057,6 +1190,13 @@ impl OrderQueue {
     /// The queue is only read.
     pub fn snapshot_vec(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
         let mut pairs = self.collect_pairs()?;
+        // Determinism invariant: every collected pair carries a distinct live
+        // sequence (one map entry per id; tail sequences come from the checked
+        // `try_reserve_seq` and are never reused; an in-place update keeps
+        // the order's own sequence). The `(timestamp, seq)` keys are therefore
+        // unique, so the unstable sort has no ties to order arbitrarily. A
+        // change that could store two live orders under one sequence must
+        // revisit this sort.
         pairs.sort_unstable_by_key(|(seq, o)| (o.timestamp(), *seq));
         let mut out = Vec::new();
         try_reserve_exact_vec(&mut out, pairs.len(), CapacityResource::OrderSnapshot)?;
@@ -1164,10 +1304,13 @@ impl OrderQueue {
         // re-sequencing can never surface an order twice or at a mixed
         // priority; see `snapshot_by_seq` for the full rationale.
         let mut pairs = self.collect_pairs()?;
-        // Unstable sort is deterministic here because sequences are unique
-        // across live orders (the tail-appending paths take distinct seqs from
-        // the checked `try_reserve_seq`; an in-place update keeps the order's
-        // own seq). It sorts in place: no scratch allocation.
+        // Determinism invariant: the unstable sort is deterministic only
+        // because sequences are unique across live orders (one map entry per
+        // id; the tail-appending paths take distinct seqs from the checked
+        // `try_reserve_seq`, never reused; an in-place update keeps the
+        // order's own seq), so there are no ties. A change that could store
+        // two live orders under one sequence must revisit this sort. It sorts
+        // in place: no scratch allocation.
         pairs.sort_unstable_by_key(|(seq, _)| *seq);
         // Reserve room for every pair WITHOUT clearing first: `try_reserve`
         // guarantees `capacity >= len + additional`, so reserving
