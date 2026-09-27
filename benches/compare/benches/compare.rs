@@ -29,25 +29,26 @@ fn group_name(base: &str) -> String {
     format!("{base}/{VERSION_LABEL}")
 }
 
-/// Uniform, deliberately short group configuration so the full ~35-scenario
-/// suite finishes in a reasonable wall-clock window on a shared,
-/// non-dedicated host (see `BENCHMARKS.md`'s methodology section for why:
-/// Criterion's own defaults, 100 samples / 3s warm-up / 5s measurement per
-/// benchmark, would make a 2-version x 2-round interleaved run take hours).
-/// `sample_size(10)` is Criterion's own minimum. Point estimates from a
-/// short run are noisier than Criterion's defaults would give — this is
-/// exactly why `BENCHMARKS.md`'s comparison protocol treats any case where
-/// two interleaved rounds disagree in sign or differ by more than 10% as
-/// noise, not as a real regression or speedup.
-fn fast(g: &mut BenchmarkGroup<'_, WallTime>) {
-    g.sample_size(10);
-    g.warm_up_time(Duration::from_millis(300));
-    g.measurement_time(Duration::from_millis(700));
+/// Uniform group configuration set EXPLICITLY to Criterion's own documented
+/// defaults (100 samples, 3s warm-up, 5s measurement) rather than left
+/// implicit, so this file is self-documenting about exactly what ran and a
+/// future Criterion version changing its defaults can't silently change
+/// this suite's rigor out from under `BENCHMARKS.md`'s numbers. An earlier
+/// revision of this file used a short `sample_size(10)` / sub-second
+/// configuration to fit a time-boxed session; per review, that traded away
+/// too much statistical rigor for wall-clock time on a host with no time
+/// budget, so this now runs the full default suite (see `BENCHMARKS.md`'s
+/// methodology section for the resulting run time and the interleaved-round
+/// / noise-flagging protocol that still applies on top of these numbers).
+fn thorough(g: &mut BenchmarkGroup<'_, WallTime>) {
+    g.sample_size(100);
+    g.warm_up_time(Duration::from_secs(3));
+    g.measurement_time(Duration::from_secs(5));
 }
 
 fn bench_add_batches(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("add_orders_batch_100"));
-    fast(&mut g);
+    thorough(&mut g);
     g.bench_function("standard", |b| b.iter(|| w::add_standard_batch(100)));
     g.bench_function("iceberg", |b| b.iter(|| w::add_iceberg_batch(100)));
     g.bench_function("reserve", |b| b.iter(|| w::add_reserve_batch(100)));
@@ -56,7 +57,7 @@ fn bench_add_batches(c: &mut Criterion) {
 
 fn bench_isolated_updates(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("isolated_updates"));
-    fast(&mut g);
+    thorough(&mut g);
     let depth = 350u64;
 
     g.bench_function("cancel", |b| {
@@ -106,7 +107,7 @@ const TAKER: fn(u64) -> pl::Id = pl::Id::sequential;
 
 fn bench_matching(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("matching"));
-    fast(&mut g);
+    thorough(&mut g);
     let id_gen = w::trade_id_generator();
 
     g.bench_function("standard_full", |b| {
@@ -282,7 +283,7 @@ fn bench_matching(c: &mut Criterion) {
 
 fn bench_fok_depth(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("fok_depth"));
-    fast(&mut g);
+    thorough(&mut g);
     let id_gen = w::trade_id_generator();
 
     for depth in [1u64, 100, 10_000] {
@@ -345,7 +346,7 @@ fn bench_fok_depth(c: &mut Criterion) {
 
 fn bench_iter_orders(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("iter_orders"));
-    fast(&mut g);
+    thorough(&mut g);
     for depth in [100u64, 10_000] {
         g.bench_function(format!("depth_{depth}"), |b| {
             b.iter_batched_ref(
@@ -360,7 +361,7 @@ fn bench_iter_orders(c: &mut Criterion) {
 
 fn bench_snapshot(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("snapshot"));
-    fast(&mut g);
+    thorough(&mut g);
 
     for depth in [100u64, 10_000] {
         let fixture = || w::iter_orders_fixture(depth);
@@ -402,7 +403,7 @@ fn bench_snapshot(c: &mut Criterion) {
 
 fn bench_match_result_analytics(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("match_result_analytics"));
-    fast(&mut g);
+    thorough(&mut g);
     for n in [256usize, 4096] {
         let result = w::match_result_with_trades(n);
         g.bench_function(format!("n_{n}"), |b| {
@@ -418,7 +419,7 @@ fn bench_match_result_analytics(c: &mut Criterion) {
 
 fn bench_trade_list_parse(c: &mut Criterion) {
     let mut g = c.benchmark_group(group_name("trade_list_parse"));
-    fast(&mut g);
+    thorough(&mut g);
     for n in [32usize, 1024] {
         let text = w::trade_list_text(n);
         g.bench_function(format!("n_{n}"), |b| {
