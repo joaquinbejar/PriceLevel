@@ -6,6 +6,7 @@ use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
 use crate::price_level::snapshot::SnapshotAggregates;
+use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
@@ -762,18 +763,18 @@ impl PriceLevel {
     /// Record an order-event statistic after a committed mutation (issue
     /// #165). The statistics refuse to wrap an exhausted counter and mark
     /// themselves degraded; the committed mutation stands. Returns the error
-    /// only when this call is the one that newly degraded the statistics, so
-    /// the caller logs the anomaly once (after all of its bookkeeping), not
-    /// once per event.
+    /// only when this call's own degraded-flag CAS performed the
+    /// `false -> true` transition, so across any number of concurrent
+    /// admissions / cancels exactly one caller logs the anomaly (after all of
+    /// its bookkeeping), not one per event.
     #[inline]
     fn record_order_event(
         &self,
-        record: fn(&PriceLevelStatistics) -> Result<(), PriceLevelError>,
+        record: fn(&PriceLevelStatistics) -> Result<(), OrderEventDrop>,
     ) -> Option<PriceLevelError> {
-        let was_degraded = self.stats.stats_degraded();
         match record(&self.stats) {
             Ok(()) => None,
-            Err(err) if !was_degraded => Some(err),
+            Err(drop) if drop.degraded_now => Some(drop.error),
             Err(_) => None,
         }
     }
@@ -1166,7 +1167,9 @@ impl PriceLevel {
         // stands even if the advisory `orders_added` counter is exhausted: the
         // statistics refuse to wrap it and mark themselves degraded (issue
         // #165), and the first such drop is logged after all bookkeeping.
-        if let Some(err) = self.record_order_event(PriceLevelStatistics::record_order_added) {
+        if let Some(err) =
+            self.record_order_event(PriceLevelStatistics::record_order_added_reporting)
+        {
             self.warn_order_event_dropped(&err);
         }
 
@@ -2975,11 +2978,13 @@ impl PriceLevel {
 
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
-                            *stats_drop =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         } else {
-                            let _ =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         }
                     }
 
@@ -3167,11 +3172,13 @@ impl PriceLevel {
 
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
-                            *stats_drop =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         } else {
-                            let _ =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         }
                     }
                     Ok(order)
@@ -3214,10 +3221,13 @@ impl PriceLevel {
 
                     // Update statistics (checked, issue #165).
                     if stats_drop.is_none() {
-                        *stats_drop =
-                            self.record_order_event(PriceLevelStatistics::record_order_removed);
+                        *stats_drop = self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        );
                     } else {
-                        let _ = self.record_order_event(PriceLevelStatistics::record_order_removed);
+                        let _ = self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        );
                     }
                 }
 
@@ -3255,11 +3265,13 @@ impl PriceLevel {
 
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
-                            *stats_drop =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         } else {
-                            let _ =
-                                self.record_order_event(PriceLevelStatistics::record_order_removed);
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
                         }
                     }
 

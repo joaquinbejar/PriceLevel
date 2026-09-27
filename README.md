@@ -1122,9 +1122,14 @@ assert!(matches!(
 
 ### Migration Guide (internal counters refuse to wrap — breaking)
 
-Monotonic internal counters no longer wrap at their maximum (#165). None of
-the limits is reachable at a practical operation rate, but each now has a
-typed, allocation-free outcome instead of a silent wrap to zero.
+Monotonic internal counters no longer wrap at their maximum (#165); each
+now has a typed, allocation-free outcome instead of a silent wrap to zero.
+The 64-bit counters (the FIFO sequence, the epochs and the statistics
+seqlock sequence) are out of reach at any practical operation rate. The
+`usize` statistics counters `orders_added` / `orders_removed` are not on
+32-bit targets: they reach `usize::MAX` after about 4.29 billion events
+(roughly 12 hours at 100k events/s), after which the statistics are marked
+degraded while admissions and cancels continue.
 
 | v0.9 | v0.10 |
 |------|-------|

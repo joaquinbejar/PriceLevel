@@ -222,7 +222,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `impl From<Vec<Arc<OrderType<()>>>> for OrderQueue`, which silently
     dropped orders it could not insert, is replaced by `TryFrom`, which
     returns the first `DuplicateOrderId` / `CounterExhausted`.
-  None of these limits is reachable at a practical operation rate; they are
+  The 64-bit limits (FIFO sequence, epochs, statistics seqlock sequence) are
+  out of reach at any practical operation rate. The `usize` counters
+  `orders_added` / `orders_removed` are reachable on 32-bit targets (about
+  4.29 billion events, roughly 12 hours at 100k events/s); there the
+  statistics become degraded while trading continues. All limits are
   exercised through internal near-limit fixtures. No hot-path allocation was
   added.
 

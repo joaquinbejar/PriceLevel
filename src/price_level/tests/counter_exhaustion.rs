@@ -173,6 +173,45 @@ mod tests {
         assert_eq!(stats.quantity_executed(), 0);
     }
 
+    /// Concurrent drops at `usize::MAX`: exactly one caller is told it
+    /// transitioned the degraded flag, so the engine logs exactly once.
+    #[test]
+    fn concurrent_order_event_drops_report_exactly_one_transition() {
+        const THREADS: usize = 8;
+        for _ in 0..50 {
+            let stats = Arc::new(PriceLevelStatistics::new());
+            stats.test_seed_order_events(usize::MAX, usize::MAX);
+            let barrier = Arc::new(std::sync::Barrier::new(THREADS));
+            let handles: Vec<_> = (0..THREADS)
+                .map(|i| {
+                    let stats = Arc::clone(&stats);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        let outcome = if i % 2 == 0 {
+                            stats.record_order_added_reporting()
+                        } else {
+                            stats.record_order_removed_reporting()
+                        };
+                        match outcome {
+                            Ok(()) => panic!("counter at MAX must refuse"),
+                            Err(drop) => drop.degraded_now,
+                        }
+                    })
+                })
+                .collect();
+            let transitions = handles
+                .into_iter()
+                .map(|h| h.join().expect("thread"))
+                .filter(|degraded_now| *degraded_now)
+                .count();
+            assert_eq!(transitions, 1);
+            assert!(stats.stats_degraded());
+            assert_eq!(stats.orders_added(), usize::MAX);
+            assert_eq!(stats.orders_removed(), usize::MAX);
+        }
+    }
+
     #[test]
     fn order_event_counters_reach_max_then_refuse() {
         let stats = PriceLevelStatistics::new();

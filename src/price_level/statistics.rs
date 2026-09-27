@@ -244,6 +244,16 @@ impl Drop for WriteSeqGuard<'_> {
     }
 }
 
+/// An order-event statistic that could not be recorded (issue #165).
+#[derive(Debug)]
+pub(crate) struct OrderEventDrop {
+    /// The typed exhaustion error.
+    pub(crate) error: PriceLevelError,
+    /// `true` only for the single call whose degraded-flag CAS moved it
+    /// `false -> true`; every concurrent or later drop sees `false`.
+    pub(crate) degraded_now: bool,
+}
+
 /// A consistent point-in-time copy of every statistics field, read under the
 /// seqlock (issue #129). Plain values, no atomics — so `Clone` / serialize
 /// materialize a coherent set rather than a torn mix of counters.
@@ -486,6 +496,7 @@ impl PriceLevelStatistics {
     /// flag is set because the count now under-counts admissions.
     pub fn record_order_added(&self) -> Result<(), PriceLevelError> {
         self.record_order_event(&self.orders_added, ExhaustedCounter::OrdersAdded)
+            .map_err(|drop| drop.error)
     }
 
     /// Record an order being removed without execution.
@@ -503,25 +514,45 @@ impl PriceLevelStatistics {
     /// flag is set because the count now under-counts removals.
     pub fn record_order_removed(&self) -> Result<(), PriceLevelError> {
         self.record_order_event(&self.orders_removed, ExhaustedCounter::OrdersRemoved)
+            .map_err(|drop| drop.error)
+    }
+
+    /// [`record_order_added`](Self::record_order_added) that also reports
+    /// whether THIS call is the one that set the degraded flag (issue #165).
+    /// Used by the engine to log a drop exactly once across threads.
+    #[inline]
+    pub(crate) fn record_order_added_reporting(&self) -> Result<(), OrderEventDrop> {
+        self.record_order_event(&self.orders_added, ExhaustedCounter::OrdersAdded)
+    }
+
+    /// [`record_order_removed`](Self::record_order_removed) that also reports
+    /// whether THIS call is the one that set the degraded flag (issue #165).
+    #[inline]
+    pub(crate) fn record_order_removed_reporting(&self) -> Result<(), OrderEventDrop> {
+        self.record_order_event(&self.orders_removed, ExhaustedCounter::OrdersRemoved)
     }
 
     /// Checked `+= 1` on an order-event counter (issue #165). Multi-writer
     /// safe: a `Relaxed` CAS loop that refuses to pass `usize::MAX`, then, on
-    /// refusal, a CAS on the degraded flag. Allocation-free on both paths.
+    /// refusal, a CAS on the degraded flag whose outcome identifies the one
+    /// call that transitioned it. Allocation-free on both paths.
     #[inline]
     fn record_order_event(
         &self,
         counter: &AtomicUsize,
         kind: ExhaustedCounter,
-    ) -> Result<(), PriceLevelError> {
+    ) -> Result<(), OrderEventDrop> {
         if counter
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
             .is_ok()
         {
             return Ok(());
         }
-        self.mark_degraded();
-        Err(PriceLevelError::counter_exhausted(kind))
+        let degraded_now = self.mark_degraded();
+        Err(OrderEventDrop {
+            error: PriceLevelError::counter_exhausted(kind),
+            degraded_now,
+        })
     }
 
     /// Record an order execution.
