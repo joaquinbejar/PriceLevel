@@ -11,7 +11,7 @@
 #[cfg(test)]
 mod tests {
     use crate::UuidGenerator;
-    use crate::errors::{ExhaustedCounter, PriceLevelError};
+    use crate::errors::{CapacityResource, ExhaustedCounter, PriceLevelError};
     use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
     use crate::price_level::level::PriceLevel;
@@ -595,5 +595,178 @@ mod tests {
         restored
             .add_order(standard(2, 1))
             .expect("fresh epochs admit");
+    }
+
+    // ------------------------------------------------------------------
+    // Step pre-mutation check order with #168 (trade ids) and #169
+    // (match_against errors): match_against error, then trade id, then FIFO
+    // sequence, then visible headroom.
+    // ------------------------------------------------------------------
+
+    /// A generator with exactly `left` trade ids still issuable (restored
+    /// through its public serde form, as in the #168 tests).
+    fn generator_with(left: u64) -> UuidGenerator {
+        let counter = UuidGenerator::EXHAUSTED - left;
+        let json = format!(
+            r#"{{"namespace":"6ba7b810-9dad-11d1-80b4-00c04fd430c8","counter":{counter}}}"#
+        );
+        let generator: UuidGenerator = serde_json::from_str(&json).expect("generator");
+        assert_eq!(generator.remaining(), left);
+        generator
+    }
+
+    fn take_with(
+        level: &PriceLevel,
+        quantity: u64,
+        tif: TimeInForce,
+        generator: &UuidGenerator,
+    ) -> MatchResult {
+        level.match_order(
+            quantity,
+            Id::from_u64(999),
+            tif,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            generator,
+        )
+    }
+
+    /// The #169 reserve whose partial fill overflows `match_against`.
+    fn overflowing_reserve(id: u64) -> OrderType<()> {
+        OrderType::ReserveOrder {
+            id: Id::from_u64(id),
+            price: Price::new(PRICE),
+            visible_quantity: Quantity::new(u64::MAX),
+            hidden_quantity: Quantity::new(u64::MAX),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1_616_823_000_000 + id),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(u64::MAX),
+            replenish_amount: std::num::NonZeroU64::new(u64::MAX),
+            auto_replenish: true,
+            extra_fields: (),
+        }
+    }
+
+    fn id_exhausted(result: &MatchResult) -> bool {
+        matches!(
+            result.error(),
+            Some(PriceLevelError::CapacityExceeded {
+                resource: CapacityResource::IdSequence,
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn trade_id_exhaustion_is_reported_before_sequence_exhaustion() {
+        // Maker 1 fills with the last id; the replenishing iceberg then has
+        // neither a trade id nor a FIFO sequence: the id check comes first.
+        let level = level_with(vec![standard(1, 5), iceberg(2, 10, 100), standard(3, 7)]);
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let iceberg_seq = level.test_queue().test_seq_of(Id::from_u64(2));
+        let generator = generator_with(1);
+
+        let result = take_with(&level, 15, TimeInForce::Gtc, &generator);
+        assert!(id_exhausted(&result), "got {:?}", result.error());
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.remaining_quantity().as_u64(), 10);
+        assert_eq!(level.test_queue().test_seq_of(Id::from_u64(2)), iceberg_seq);
+        assert_eq!(level.test_queue().test_next_seq(), u64::MAX);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn sequence_exhaustion_with_ids_available_skips_the_reserved_id() {
+        let level = level_with(vec![standard(1, 5), iceberg(2, 10, 100)]);
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let generator = generator_with(5);
+
+        let result = take_with(&level, 15, TimeInForce::Gtc, &generator);
+        assert_eq!(
+            result.error(),
+            Some(&exhausted(ExhaustedCounter::QueueSequence))
+        );
+        assert_eq!(result.trades().len(), 1);
+        // One id for maker 1's trade, one reserved for the stopped step and
+        // skipped (never reissued).
+        assert_eq!(generator.remaining(), 3);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn match_against_error_is_reported_before_sequence_and_id_exhaustion() {
+        let level = PriceLevel::new(PRICE);
+        level.add_order(standard(1, 5)).expect("admit");
+        level
+            .test_rest_unadmitted(overflowing_reserve(2))
+            .expect("rest failing maker");
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let visible = level.visible_quantity();
+
+        // One id, for maker 1 only; the failing maker needs neither an id nor
+        // a sequence because `match_against` fails first.
+        let generator = generator_with(1);
+        let result = take_with(&level, 10, TimeInForce::Gtc, &generator);
+        assert!(
+            matches!(
+                result.error(),
+                Some(PriceLevelError::InvalidOperation { .. })
+            ),
+            "got {:?}",
+            result.error()
+        );
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(generator.remaining(), 0);
+        assert_eq!(level.visible_quantity(), visible - 5);
+    }
+
+    #[test]
+    fn fill_or_kill_preflight_orders_error_then_sequence_then_ids() {
+        // A dry-run match_against error wins over sequence exhaustion.
+        let level = PriceLevel::new(PRICE);
+        level.add_order(standard(1, 5)).expect("admit");
+        level
+            .test_rest_unadmitted(overflowing_reserve(2))
+            .expect("rest failing maker");
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let result = take_with(&level, 10, TimeInForce::Fok, &generator_with(0));
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert!(matches!(
+            result.error(),
+            Some(PriceLevelError::InvalidOperation { .. })
+        ));
+
+        // Sequence headroom is checked before the trade-id block.
+        let level = level_with(vec![standard(1, 5), iceberg(2, 10, 100), standard(3, 7)]);
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let before = state(&level);
+        let result = take_with(&level, 15, TimeInForce::Fok, &generator_with(0));
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert_eq!(
+            result.error(),
+            Some(&exhausted(ExhaustedCounter::QueueSequence))
+        );
+        assert_eq!(state(&level), before);
+
+        // With one sequence left the replenishment fits; the id block (2
+        // trades) is then the binding limit.
+        level.test_queue().test_seed_next_seq(u64::MAX - 1);
+        let before = state(&level);
+        let result = take_with(&level, 15, TimeInForce::Fok, &generator_with(1));
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert!(id_exhausted(&result), "got {:?}", result.error());
+        assert_eq!(state(&level), before);
+
+        // Enough of both: fills completely, using the last sequence.
+        let result = take_with(&level, 15, TimeInForce::Fok, &generator_with(2));
+        assert!(result.error().is_none());
+        assert!(result.is_complete());
+        assert_eq!(
+            level.test_queue().test_seq_of(Id::from_u64(2)),
+            Some(u64::MAX - 1)
+        );
+        assert_counters_match_queue(&level);
     }
 }

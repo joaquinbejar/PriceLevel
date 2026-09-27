@@ -209,6 +209,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     prefix and the error in `MatchResult::error` (#164 contract); a
     fill-or-kill taker whose dry run needs more replenishments than sequences
     remain is killed before any maker is touched.
+  - Stop-cause precedence within one sweep step is fixed: `match_against`
+    error (#169), then trade id (#168), then FIFO sequence, then visible
+    headroom; every check runs before the step commits. Fill-or-kill checks,
+    before touching any maker: dry-run arithmetic error, depth, sequence
+    headroom, result storage, then the trade-id block.
   - The topology and mutation epochs are checked and stop at `u64::MAX`,
     which readers treat as "changed, unknown". `add_order`, `update_order`
     and `match_order` are refused before mutating once an epoch is within

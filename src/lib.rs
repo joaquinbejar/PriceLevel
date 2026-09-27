@@ -1145,6 +1145,15 @@
 //!   finds no sequence, reporting the committed prefix and the error in
 //!   [`MatchResult::error`] (fill-or-kill is killed before any maker is
 //!   touched).
+//! - **Stop-cause precedence in one sweep step.** Before a step commits
+//!   anything, the sweep checks, in this fixed order: the maker's
+//!   `match_against` arithmetic (`InvalidOperation`, #169), the trade id
+//!   (`CapacityExceeded { resource: IdSequence }`, #168), the FIFO sequence
+//!   for a replenishment (`CounterExhausted { counter: QueueSequence }`), and
+//!   the level's visible headroom. The first failure stops the sweep with the
+//!   committed prefix. A fill-or-kill taker checks the same causes up front:
+//!   dry-run arithmetic error, depth, sequence headroom, result storage, then
+//!   the trade-id block.
 //! - **Epochs** stop at `u64::MAX`, which readers treat as unknown; mutations
 //!   and sweeps are refused before they start once an epoch is within `2^32`
 //!   of it. A post-only taker that cannot linearize its depth scan is
