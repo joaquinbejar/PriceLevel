@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::text::{Echo, uppercases_to};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -48,22 +49,30 @@ impl OrderStatus {
     }
 }
 
+/// Case-insensitive: accepts exactly the inputs whose `str::to_uppercase` is
+/// one of the `Display` forms, matched without allocating (see
+/// `utils::text::uppercases_to`; this includes Unicode folds such as
+/// `ﬁlled`). The error message echoes at most a bounded prefix of the input.
 impl FromStr for OrderStatus {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "NEW" => Ok(OrderStatus::New),
-            "ACTIVE" => Ok(OrderStatus::Active),
-            "PARTIALLYFILLED" => Ok(OrderStatus::PartiallyFilled),
-            "FILLED" => Ok(OrderStatus::Filled),
-            "CANCELED" => Ok(OrderStatus::Canceled),
-            "REJECTED" => Ok(OrderStatus::Rejected),
-            "EXPIRED" => Ok(OrderStatus::Expired),
-            _ => Err(PriceLevelError::ParseError {
-                message: format!("Invalid OrderStatus: {s}"),
-            }),
-        }
+        const FORMS: [(&str, OrderStatus); 7] = [
+            ("NEW", OrderStatus::New),
+            ("ACTIVE", OrderStatus::Active),
+            ("PARTIALLYFILLED", OrderStatus::PartiallyFilled),
+            ("FILLED", OrderStatus::Filled),
+            ("CANCELED", OrderStatus::Canceled),
+            ("REJECTED", OrderStatus::Rejected),
+            ("EXPIRED", OrderStatus::Expired),
+        ];
+        FORMS
+            .iter()
+            .find(|(upper, _)| uppercases_to(s, upper))
+            .map(|&(_, status)| status)
+            .ok_or_else(|| PriceLevelError::ParseError {
+                message: format!("Invalid OrderStatus: {}", Echo(s)),
+            })
     }
 }
 

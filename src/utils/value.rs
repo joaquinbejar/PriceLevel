@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::text::echo;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -95,7 +96,7 @@ impl FromStr for Price {
             .map(Self)
             .map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "price".to_string(),
-                value: s.to_string(),
+                value: echo(s),
             })
     }
 }
@@ -191,7 +192,7 @@ impl FromStr for Quantity {
             .map(Self)
             .map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "quantity".to_string(),
-                value: s.to_string(),
+                value: echo(s),
             })
     }
 }
@@ -289,7 +290,7 @@ impl FromStr for TimestampMs {
             .map(Self)
             .map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "timestamp".to_string(),
-                value: s.to_string(),
+                value: echo(s),
             })
     }
 }

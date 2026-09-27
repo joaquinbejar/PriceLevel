@@ -1,6 +1,7 @@
 use crate::errors::PriceLevelError;
 use crate::utils::TimestampMs;
 use crate::utils::entropy::{EntropySource, UnixClock};
+use crate::utils::text::Echo;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::io::Write as _;
@@ -71,7 +72,7 @@ impl FromStr for Id {
         s.parse::<u64>()
             .map(Self::Sequential)
             .map_err(|_| PriceLevelError::ParseError {
-                message: format!("Failed to parse Id as ULID, UUID, or u64: {s}"),
+                message: format!("Failed to parse Id as ULID, UUID, or u64: {}", Echo(s)),
             })
     }
 }

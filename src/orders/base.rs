@@ -2,6 +2,7 @@
 
 use crate::errors::PriceLevelError;
 use crate::utils::encode::{HASH32_HEX_LEN, encode_hash32_hex};
+use crate::utils::text::uppercases_to;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -44,16 +45,22 @@ impl Side {
     }
 }
 
+/// Case-insensitive: accepts exactly the inputs whose `str::to_uppercase`
+/// is `BUY` or `SELL`, matched without allocating (see
+/// `utils::text::uppercases_to`; this includes the Unicode folds such as
+/// `ſell`).
 impl FromStr for Side {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "BUY" => Ok(Side::Buy),
-            "SELL" => Ok(Side::Sell),
-            _ => Err(PriceLevelError::ParseError {
+        if uppercases_to(s, "BUY") {
+            Ok(Side::Buy)
+        } else if uppercases_to(s, "SELL") {
+            Ok(Side::Sell)
+        } else {
+            Err(PriceLevelError::ParseError {
                 message: "Failed to parse Side".to_string(),
-            }),
+            })
         }
     }
 }

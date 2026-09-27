@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::text::echo;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -30,9 +31,7 @@ impl FromStr for PegReferenceType {
             "BestAsk" | "BESTASK" | "bestask" => Ok(PegReferenceType::BestAsk),
             "MidPrice" | "MIDPRICE" | "midprice" => Ok(PegReferenceType::MidPrice),
             "LastTrade" | "LASTTRADE" | "lasttrade" => Ok(PegReferenceType::LastTrade),
-            _ => Err(PriceLevelError::ParseError {
-                message: s.to_string(),
-            }),
+            _ => Err(PriceLevelError::ParseError { message: echo(s) }),
         }
     }
 }

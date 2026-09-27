@@ -48,6 +48,106 @@ pub(crate) fn split_exactly_once(s: &str, sep: u8) -> Option<(&str, &str)> {
     }
 }
 
+/// Returns `true` when `s.to_uppercase() == upper`, without allocating.
+///
+/// `str::to_uppercase` is the concatenation of every scalar's full Unicode
+/// uppercase mapping (`char::to_uppercase`; unlike lowercasing it has no
+/// context-sensitive rule), so streaming that mapping and comparing it with
+/// `upper` accepts exactly the inputs the former
+/// `match s.to_uppercase().as_str()` accepted. That includes the handful of
+/// non-ASCII scalars whose uppercase form is ASCII: `ſ` (U+017F) → `S`,
+/// dotless `ı` (U+0131) → `I`, `ß` → `SS` and the Latin ligatures
+/// `ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ`. The comparison stops at the first mismatch or as soon as
+/// the stream outruns `upper`, so the work is bounded by `upper.len()`, not by
+/// the input length.
+#[inline]
+#[must_use]
+pub(crate) fn uppercases_to(s: &str, upper: &str) -> bool {
+    s.chars().flat_map(char::to_uppercase).eq(upper.chars())
+}
+
+/// Maximum number of input scalars an error message echoes back.
+pub(crate) const MAX_ECHOED_INPUT_CHARS: usize = 128;
+
+/// A bounded, allocation-free `Display` view of untrusted input for error
+/// messages.
+///
+/// Inputs of at most [`MAX_ECHOED_INPUT_CHARS`] scalars are written verbatim.
+/// Longer inputs are cut at the char boundary after the first
+/// [`MAX_ECHOED_INPUT_CHARS`] scalars (found through checked access) and
+/// followed by `... (<n> bytes total)`, so an error message built from it is
+/// bounded in size no matter how large the input is.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Echo<'a>(pub(crate) &'a str);
+
+impl std::fmt::Display for Echo<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cut = self
+            .0
+            .char_indices()
+            .nth(MAX_ECHOED_INPUT_CHARS)
+            .map(|(pos, _)| pos);
+        match cut.and_then(|pos| self.0.get(..pos)) {
+            Some(prefix) => write!(f, "{prefix}... ({} bytes total)", self.0.len()),
+            None => f.write_str(self.0),
+        }
+    }
+}
+
+/// The bounded echo of `s` ([`Echo`]) as an owned `String` of at most
+/// [`MAX_ECHOED_INPUT_CHARS`] scalars plus a fixed-size suffix.
+#[inline]
+#[must_use]
+pub(crate) fn echo(s: &str) -> String {
+    Echo(s).to_string()
+}
+
+#[cfg(test)]
+mod bounded_text_tests {
+    use super::{MAX_ECHOED_INPUT_CHARS, echo, uppercases_to};
+    use proptest::prelude::*;
+
+    #[test]
+    fn test_echo_short_input_is_verbatim() {
+        assert_eq!(echo(""), "");
+        assert_eq!(echo("abc"), "abc");
+        let exact = "é".repeat(MAX_ECHOED_INPUT_CHARS);
+        assert_eq!(echo(&exact), exact);
+    }
+
+    #[test]
+    fn test_echo_long_input_is_truncated_at_char_boundary() {
+        let long = "é".repeat(MAX_ECHOED_INPUT_CHARS + 1);
+        let expected = format!(
+            "{}... ({} bytes total)",
+            "é".repeat(MAX_ECHOED_INPUT_CHARS),
+            long.len()
+        );
+        assert_eq!(echo(&long), expected);
+        let huge = "x".repeat(1 << 20);
+        assert!(echo(&huge).len() < 2 * MAX_ECHOED_INPUT_CHARS);
+    }
+
+    #[test]
+    fn test_uppercases_to_matches_non_ascii_folds() {
+        assert!(uppercases_to("ſell", "SELL"));
+        assert!(uppercases_to("ﬁlled", "FILLED"));
+        assert!(uppercases_to("ıoc", "IOC"));
+        assert!(!uppercases_to("sel", "SELL"));
+        assert!(!uppercases_to("sells", "SELL"));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_uppercases_to_equals_to_uppercase(
+            s in prop_oneof![".{0,8}", "[sSſıiﬁﬂﬀßeEllL]{0,6}"],
+            upper in prop_oneof![Just("SELL"), Just("SS"), Just("FILLED"), Just("IOC"), Just("")],
+        ) {
+            prop_assert_eq!(uppercases_to(&s, upper), s.to_uppercase() == upper);
+        }
+    }
+}
+
 /// The values of a fixed set of known keys, read in one pass over a
 /// `;`-separated list of `key=value` pairs.
 ///

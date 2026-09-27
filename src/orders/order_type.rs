@@ -2,7 +2,7 @@
 
 use crate::errors::PriceLevelError;
 use crate::orders::{Hash32, Id, PegReferenceType, Side, TimeInForce};
-use crate::utils::text::{Fields, split_exactly_once};
+use crate::utils::text::{Fields, echo, split_exactly_once};
 use crate::utils::{Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -13,7 +13,7 @@ fn user_id_from_str(value: &str) -> Result<Hash32, PriceLevelError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
     Hash32::from_hex(value).map_err(|_| PriceLevelError::InvalidFieldValue {
         field: "user_id".to_string(),
-        value: value.to_string(),
+        value: echo(value),
     })
 }
 
@@ -1369,21 +1369,21 @@ impl<T: Default> FromStr for OrderType<T> {
         let parse_quantity = |field: &str, value: &str| -> Result<Quantity, PriceLevelError> {
             Quantity::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: field.to_string(),
-                value: value.to_string(),
+                value: echo(value),
             })
         };
 
         let parse_price = |field: &str, value: &str| -> Result<Price, PriceLevelError> {
             Price::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: field.to_string(),
-                value: value.to_string(),
+                value: echo(value),
             })
         };
 
         let parse_timestamp = |field: &str, value: &str| -> Result<TimestampMs, PriceLevelError> {
             TimestampMs::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: field.to_string(),
-                value: value.to_string(),
+                value: echo(value),
             })
         };
 
@@ -1392,7 +1392,7 @@ impl<T: Default> FromStr for OrderType<T> {
                 .parse::<i64>()
                 .map_err(|_| PriceLevelError::InvalidFieldValue {
                     field: field.to_string(),
-                    value: value.to_string(),
+                    value: echo(value),
                 })
         };
 
@@ -1400,7 +1400,7 @@ impl<T: Default> FromStr for OrderType<T> {
         let id_str = get_field("id")?;
         let id = Id::from_str(id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
             field: "id".to_string(),
-            value: id_str.to_string(),
+            value: echo(id_str),
         })?;
 
         let price_str = get_field("price")?;
@@ -1512,7 +1512,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     _ => {
                         return Err(PriceLevelError::InvalidFieldValue {
                             field: "reference_price_type".to_string(),
-                            value: reference_price_type_str.to_string(),
+                            value: echo(reference_price_type_str),
                         });
                     }
                 };
@@ -1566,7 +1566,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     let value = replenish_amount_str.parse::<NonZeroU64>().map_err(|_| {
                         PriceLevelError::InvalidFieldValue {
                             field: "replenish_amount".to_string(),
-                            value: replenish_amount_str.to_string(),
+                            value: echo(replenish_amount_str),
                         }
                     })?;
                     Some(value)
@@ -1578,7 +1578,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     _ => {
                         return Err(PriceLevelError::InvalidFieldValue {
                             field: "auto_replenish".to_string(),
-                            value: auto_replenish_str.to_string(),
+                            value: echo(auto_replenish_str),
                         });
                     }
                 };
@@ -1598,7 +1598,7 @@ impl<T: Default> FromStr for OrderType<T> {
                     extra_fields: T::default(),
                 })
             }
-            _ => Err(PriceLevelError::UnknownOrderType(order_type.to_string())),
+            _ => Err(PriceLevelError::UnknownOrderType(echo(order_type))),
         }
     }
 }
@@ -1619,13 +1619,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "Standard:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
-                    id,
-                    price,
-                    quantity,
-                    format!("{side:?}").to_uppercase(),
-                    user_id,
-                    timestamp,
-                    time_in_force
+                    id, price, quantity, side, user_id, timestamp, time_in_force
                 )
             }
             OrderType::IcebergOrder {
@@ -1646,7 +1640,7 @@ impl<T> fmt::Display for OrderType<T> {
                     price,
                     visible_quantity,
                     hidden_quantity,
-                    format!("{side:?}").to_uppercase(),
+                    side,
                     user_id,
                     timestamp,
                     time_in_force
@@ -1665,13 +1659,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "PostOnly:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
-                    id,
-                    price,
-                    quantity,
-                    format!("{side:?}").to_uppercase(),
-                    user_id,
-                    timestamp,
-                    time_in_force
+                    id, price, quantity, side, user_id, timestamp, time_in_force
                 )
             }
             OrderType::TrailingStop {
@@ -1692,7 +1680,7 @@ impl<T> fmt::Display for OrderType<T> {
                     id,
                     price,
                     quantity,
-                    format!("{side:?}").to_uppercase(),
+                    side,
                     user_id,
                     timestamp,
                     time_in_force,
@@ -1718,7 +1706,7 @@ impl<T> fmt::Display for OrderType<T> {
                     id,
                     price,
                     quantity,
-                    format!("{side:?}").to_uppercase(),
+                    side,
                     user_id,
                     timestamp,
                     time_in_force,
@@ -1739,13 +1727,7 @@ impl<T> fmt::Display for OrderType<T> {
                 write!(
                     f,
                     "MarketToLimit:id={};price={};quantity={};side={};user_id={};timestamp={};time_in_force={}",
-                    id,
-                    price,
-                    quantity,
-                    format!("{side:?}").to_uppercase(),
-                    user_id,
-                    timestamp,
-                    time_in_force
+                    id, price, quantity, side, user_id, timestamp, time_in_force
                 )
             }
             OrderType::ReserveOrder {
@@ -1764,19 +1746,22 @@ impl<T> fmt::Display for OrderType<T> {
             } => {
                 write!(
                     f,
-                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};user_id={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount={};auto_replenish={}",
+                    "ReserveOrder:id={};price={};visible_quantity={};hidden_quantity={};side={};user_id={};timestamp={};time_in_force={};replenish_threshold={};replenish_amount=",
                     id,
                     price,
                     visible_quantity,
                     hidden_quantity,
-                    format!("{side:?}").to_uppercase(),
+                    side,
                     user_id,
                     timestamp,
                     time_in_force,
                     replenish_threshold,
-                    replenish_amount.map_or("None".to_string(), |v| v.to_string()),
-                    auto_replenish
-                )
+                )?;
+                match replenish_amount {
+                    Some(amount) => write!(f, "{amount}")?,
+                    None => f.write_str("None")?,
+                }
+                write!(f, ";auto_replenish={auto_replenish}")
             }
         }
     }

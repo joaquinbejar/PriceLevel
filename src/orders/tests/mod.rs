@@ -1,4 +1,5 @@
 mod base;
+mod hardening;
 mod order_type;
 mod pegged;
 mod status;
