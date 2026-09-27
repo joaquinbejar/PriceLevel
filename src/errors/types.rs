@@ -50,6 +50,54 @@ impl Display for CapacityResource {
     }
 }
 
+/// The internal counter a [`PriceLevelError::CounterExhausted`] failure could
+/// not advance (issue #165).
+///
+/// Every counter listed here is monotonic and checked: it refuses to move
+/// past its limit instead of wrapping to zero. The tag is fixed-size and
+/// `Copy`, so reporting an exhaustion never allocates, including from inside
+/// a match sweep. New counters add variants, so the enum is
+/// `#[non_exhaustive]`: match it with a wildcard arm.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExhaustedCounter {
+    /// `PriceLevelStatistics::orders_added` is at `usize::MAX`.
+    OrdersAdded,
+    /// `PriceLevelStatistics::orders_removed` is at `usize::MAX`.
+    OrdersRemoved,
+    /// The order queue's FIFO insertion sequence has no fresh value left.
+    QueueSequence,
+    /// The price level's side-topology epoch has no headroom left.
+    TopologyEpoch,
+    /// The price level's mutation epoch has no headroom left.
+    MutationEpoch,
+    /// The statistics seqlock sequence cannot open another write section.
+    StatisticsSequence,
+}
+
+impl ExhaustedCounter {
+    /// Static, allocation-free name of the counter.
+    #[must_use]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OrdersAdded => "orders added",
+            Self::OrdersRemoved => "orders removed",
+            Self::QueueSequence => "queue sequence",
+            Self::TopologyEpoch => "topology epoch",
+            Self::MutationEpoch => "mutation epoch",
+            Self::StatisticsSequence => "statistics sequence",
+        }
+    }
+}
+
+impl Display for ExhaustedCounter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Represents errors that can occur when processing price levels in trading operations.
 ///
 /// This enum encapsulates various error conditions that might arise during order book
@@ -178,6 +226,19 @@ pub enum PriceLevelError {
         /// The number of additional elements that were requested.
         additional: usize,
     },
+
+    /// Error raised when a monotonic internal counter has reached its limit
+    /// and advancing it would wrap (issue #165).
+    ///
+    /// The counter is left at its current value; the operation that needed a
+    /// fresh value is refused (or, for an advisory statistics counter whose
+    /// operation already committed, its contribution is dropped and the
+    /// statistics are marked degraded). The payload is fixed-size, so the
+    /// error is built without allocating.
+    CounterExhausted {
+        /// The counter that could not advance.
+        counter: ExhaustedCounter,
+    },
 }
 
 impl PriceLevelError {
@@ -191,6 +252,15 @@ impl PriceLevelError {
             resource,
             additional,
         }
+    }
+
+    /// Builds a [`PriceLevelError::CounterExhausted`]. Cold: only reached when
+    /// a monotonic counter has no value left.
+    #[cold]
+    #[inline(never)]
+    #[must_use]
+    pub(crate) fn counter_exhausted(counter: ExhaustedCounter) -> Self {
+        Self::CounterExhausted { counter }
     }
 
     /// Clones the error without an infallible allocation: every `String`
@@ -245,6 +315,7 @@ impl PriceLevelError {
                 resource: *resource,
                 additional: *additional,
             },
+            Self::CounterExhausted { counter } => Self::CounterExhausted { counter: *counter },
         })
     }
 }
@@ -287,6 +358,12 @@ impl Display for PriceLevelError {
                 f,
                 "Capacity exceeded: could not reserve {additional} more {resource} entries"
             ),
+            PriceLevelError::CounterExhausted { counter } => {
+                write!(
+                    f,
+                    "Counter exhausted: {counter} cannot advance without wrapping"
+                )
+            }
         }
     }
 }
@@ -330,6 +407,12 @@ impl Debug for PriceLevelError {
                 f,
                 "Capacity exceeded: could not reserve {additional} more {resource} entries"
             ),
+            PriceLevelError::CounterExhausted { counter } => {
+                write!(
+                    f,
+                    "Counter exhausted: {counter} cannot advance without wrapping"
+                )
+            }
         }
     }
 }

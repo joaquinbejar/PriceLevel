@@ -145,4 +145,32 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_counter_exhausted_display_debug_clone_serde() {
+        use crate::errors::ExhaustedCounter;
+        let error = PriceLevelError::CounterExhausted {
+            counter: ExhaustedCounter::QueueSequence,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Counter exhausted: queue sequence cannot advance without wrapping"
+        );
+        assert_eq!(format!("{error:?}"), error.to_string());
+        assert_eq!(error.try_clone(), Ok(error.clone()));
+        let json = serde_json::to_string(&error).expect("serialize");
+        assert_eq!(json, r#"{"CounterExhausted":{"counter":"queue_sequence"}}"#);
+        let back: PriceLevelError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, error);
+        for counter in [
+            ExhaustedCounter::OrdersAdded,
+            ExhaustedCounter::OrdersRemoved,
+            ExhaustedCounter::QueueSequence,
+            ExhaustedCounter::TopologyEpoch,
+            ExhaustedCounter::MutationEpoch,
+            ExhaustedCounter::StatisticsSequence,
+        ] {
+            assert_eq!(counter.to_string(), counter.as_str());
+        }
+    }
 }

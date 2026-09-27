@@ -1125,7 +1125,7 @@ mod execution;
 
 pub mod prelude;
 
-pub use errors::{CapacityResource, PriceLevelError};
+pub use errors::{CapacityResource, ExhaustedCounter, PriceLevelError};
 pub use execution::{MatchOutcome, MatchResult, TakerKind, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
