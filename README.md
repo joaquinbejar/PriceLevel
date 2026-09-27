@@ -1096,8 +1096,12 @@ deserializing a generator near the end of its range.
   front: if the generator cannot supply them, it is
   [`MatchOutcome::Killed`] with the error set, the level is unchanged and no
   id is consumed.
-- Trade ids are consumed only by steps that emit a trade, so a trade stream
-  for a fixed input stays gap-free and deterministic. A value reserved for a
+- Trade ids are consumed only by steps that emit a trade. For a generator
+  used sequentially by one level (no other caller drawing from it) and with
+  no abandoned reservation, the trade-id stream for a fixed input is
+  therefore gap-free and deterministic; a generator shared across levels or
+  direct callers interleaves its values by scheduling and guarantees only
+  uniqueness. A value reserved for a
   step that then aborts on a visible-counter overflow, or a fill-or-kill id
   left unused, is skipped and never re-issued.
 

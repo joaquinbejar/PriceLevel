@@ -137,9 +137,10 @@ impl UuidGenerator {
     #[inline]
     pub fn remaining(&self) -> u64 {
         // `Relaxed`: an advisory point-in-time read; it publishes nothing.
-        // `counter <= EXHAUSTED` always holds, so the subtraction cannot fail;
-        // `unwrap_or(0)` is only the checked form of that fact.
-        Self::EXHAUSTED.saturating_sub(self.counter.load(Ordering::Relaxed))
+        // `EXHAUSTED` is `u64::MAX`, so `EXHAUSTED - counter` is exactly the
+        // bitwise complement of `counter`: an exact, non-saturating form that
+        // cannot underflow for any `u64`.
+        !self.counter.load(Ordering::Relaxed)
     }
 
     /// Generates the next UUID in sequence.

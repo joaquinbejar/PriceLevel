@@ -43,7 +43,9 @@ pub fn register_benchmarks(c: &mut Criterion) {
         ("sweep_100_trades_fok", TimeInForce::Fok),
     ] {
         group.bench_function(name, |b| {
-            b.iter_batched(
+            // `iter_batched_ref`: the level and generator are dropped outside
+            // the timed callback, so fixture teardown is not measured.
+            b.iter_batched_ref(
                 || (level(), UuidGenerator::new(namespace)),
                 |(level, generator)| {
                     black_box(level.match_order(
@@ -52,7 +54,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                         tif,
                         TakerKind::Standard,
                         TimestampMs::new(1_716_000_000_000),
-                        &generator,
+                        generator,
                     ))
                 },
                 BatchSize::SmallInput,
