@@ -90,6 +90,18 @@ pub enum PriceLevelError {
         /// The checksum that was computed from the provided payload
         actual: String,
     },
+
+    /// Error raised when a caller-supplied
+    /// [`EntropySource`](crate::EntropySource) cannot produce random bytes
+    /// (for example an OS entropy call failing, or an RNG failing to seed or
+    /// reseed).
+    ///
+    /// Random [`Id`](crate::Id) constructors propagate it unchanged; no
+    /// identifier is produced and no fallback value is substituted.
+    EntropyUnavailable {
+        /// Descriptive message with the entropy failure details
+        message: String,
+    },
 }
 impl Display for PriceLevelError {
     // Error formatting is off the hot match path: keep it out of line and hint
@@ -119,6 +131,9 @@ impl Display for PriceLevelError {
             }
             PriceLevelError::ChecksumMismatch { expected, actual } => {
                 write!(f, "Checksum mismatch: expected {expected}, got {actual}")
+            }
+            PriceLevelError::EntropyUnavailable { message } => {
+                write!(f, "Entropy unavailable: {message}")
             }
         }
     }
@@ -152,6 +167,9 @@ impl Debug for PriceLevelError {
             }
             PriceLevelError::ChecksumMismatch { expected, actual } => {
                 write!(f, "Checksum mismatch: expected {expected}, got {actual}")
+            }
+            PriceLevelError::EntropyUnavailable { message } => {
+                write!(f, "Entropy unavailable: {message}")
             }
         }
     }
