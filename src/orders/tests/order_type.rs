@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::errors::PriceLevelError;
+    use crate::orders::order_type::{quantity_add, quantity_sub};
     use crate::orders::time_in_force::TimeInForce;
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side};
     use crate::utils::{Price, Quantity, TimestampMs};
@@ -362,7 +364,7 @@ mod tests {
     fn test_refresh_iceberg() {
         // Test iceberg order refresh
         let order = create_iceberg_order();
-        let (refreshed, used) = order.refresh_iceberg(nz(2));
+        let (refreshed, used) = order.refresh_iceberg(nz(2)).expect("refresh must succeed");
 
         if let OrderType::<()>::IcebergOrder {
             visible_quantity,
@@ -379,7 +381,7 @@ mod tests {
 
         // Test reserve order refresh
         let order = create_reserve_order();
-        let (refreshed, used) = order.refresh_iceberg(nz(3));
+        let (refreshed, used) = order.refresh_iceberg(nz(3)).expect("refresh must succeed");
 
         if let OrderType::<()>::ReserveOrder {
             visible_quantity,
@@ -396,7 +398,7 @@ mod tests {
 
         // Test non-iceberg order (should not refresh)
         let order = create_standard_order();
-        let (refreshed, used) = order.refresh_iceberg(nz(2));
+        let (refreshed, used) = order.refresh_iceberg(nz(2)).expect("refresh must succeed");
 
         if let OrderType::<()>::Standard { quantity, .. } = refreshed {
             assert_eq!(quantity, Quantity::new(5)); // Should remain unchanged
@@ -428,7 +430,8 @@ mod tests {
 
         // Consume the full visible portion (2). The order must replenish a
         // tranche of size 1 from the hidden quantity.
-        let (consumed, updated, hidden_reduced, remaining) = order.match_against(2);
+        let (consumed, updated, hidden_reduced, remaining) =
+            order.match_against(2).expect("match must succeed");
         assert_eq!(consumed, 2);
         assert_eq!(hidden_reduced, 1);
         assert_eq!(remaining, 0);
@@ -448,18 +451,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_match_against_reserve_replenish_overflow_sentinel_no_progress() {
-        // Defense-in-depth sentinel for a state `PriceLevel::add_order` /
-        // `refresh_aggregates` now REJECT at admission: a reserve whose own
-        // visible + hidden overflows `u64`. Such an order can never rest at a
-        // level, but `match_against` is a pure function that can still be handed
-        // one directly (as here), so it must not panic in debug / wrap in
-        // release when the replenish add `new_visible + replenish_qty` overflows.
-        // It must make NO progress: consumed 0, remaining untouched, maker handed
-        // back byte-identical, no hidden drawn — the no-progress sentinel the
-        // sweep and the fill-or-kill dry run both detect.
-        let order = OrderType::<()>::ReserveOrder {
+    /// The issue #169 reserve: visible = hidden = threshold = `u64::MAX`,
+    /// `auto_replenish`, replenish `u64::MAX`.
+    fn overflowing_reserve(replenish_amount: Option<NonZeroU64>) -> OrderType<()> {
+        OrderType::<()>::ReserveOrder {
             id: Id::from_u64(200),
             price: Price::new(10000),
             visible_quantity: Quantity::new(u64::MAX),
@@ -470,32 +465,285 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             // Any partial fill leaves visible below threshold -> replenish.
             replenish_threshold: Quantity::new(u64::MAX),
-            replenish_amount: Some(nz(u64::MAX)),
+            replenish_amount,
+            auto_replenish: true,
+            extra_fields: (),
+        }
+    }
+
+    #[test]
+    fn test_match_against_reserve_replenish_overflow_is_typed_error() {
+        // Issue #169: a reserve whose own visible + hidden overflows `u64` is
+        // rejected at level admission, but `match_against` is public and can be
+        // handed one directly. The partial-fill replenish add
+        // `new_visible + replenish_qty` = (MAX - 1) + MAX overflows; it must be
+        // a typed `InvalidOperation`, not the former unchanged-order
+        // "no progress" success sentinel, and the input order stays unchanged.
+        let order = overflowing_reserve(Some(nz(u64::MAX)));
+        let before = order;
+
+        match order.match_against(1) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("overflow"), "message: {message}");
+                assert!(
+                    message.contains("reserve partial-fill replenishment"),
+                    "message: {message}"
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(order, before, "input order must be unchanged on error");
+
+        // The default replenish (80) does not overflow here: (MAX - 1) + 80
+        // still overflows, so the same typed error surfaces.
+        let order = overflowing_reserve(None);
+        assert!(matches!(
+            order.match_against(1),
+            Err(PriceLevelError::InvalidOperation { .. })
+        ));
+    }
+
+    #[test]
+    fn test_order_quantity_helpers_report_typed_errors() {
+        // Every checked subtraction in `refresh_iceberg` / `match_against` is
+        // bounded by a preceding comparison or `min`, so no crafted order can
+        // reach its failure branch through the public API; the shared helpers
+        // that implement those branches are exercised directly instead.
+        assert_eq!(quantity_sub(5, 3, "ctx").expect("in range"), 2);
+        assert_eq!(quantity_sub(0, 0, "ctx").expect("in range"), 0);
+        assert_eq!(
+            quantity_sub(u64::MAX, u64::MAX, "ctx").expect("in range"),
+            0
+        );
+        assert_eq!(
+            quantity_add(u64::MAX - 1, 1, "ctx").expect("in range"),
+            u64::MAX
+        );
+
+        match quantity_sub(0, 1, "iceberg refresh hidden quantity") {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert_eq!(
+                    message,
+                    "iceberg refresh hidden quantity: quantity underflow (0 - 1)"
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+        match quantity_add(
+            u64::MAX,
+            1,
+            "reserve partial-fill replenishment visible quantity",
+        ) {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert_eq!(
+                    message,
+                    format!(
+                        "reserve partial-fill replenishment visible quantity: quantity overflow ({} + 1)",
+                        u64::MAX
+                    )
+                );
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+    }
+
+    /// Builds every order variant with the given visible / hidden quantities
+    /// (hidden is ignored by the single-tranche variants) and reserve
+    /// replenish size.
+    fn all_variants(visible: u64, hidden: u64, replenish: NonZeroU64) -> Vec<OrderType<()>> {
+        vec![
+            create_standard_order().with_reduced_quantity(visible),
+            create_post_only_order().with_reduced_quantity(visible),
+            create_trailing_stop_order().with_reduced_quantity(visible),
+            create_pegged_order().with_reduced_quantity(visible),
+            create_market_to_limit_order().with_reduced_quantity(visible),
+            OrderType::<()>::IcebergOrder {
+                id: Id::from_u64(300),
+                price: Price::new(10000),
+                visible_quantity: Quantity::new(visible),
+                hidden_quantity: Quantity::new(hidden),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1616823000000),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            },
+            OrderType::<()>::ReserveOrder {
+                id: Id::from_u64(301),
+                price: Price::new(10000),
+                visible_quantity: Quantity::new(visible),
+                hidden_quantity: Quantity::new(hidden),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1616823000000),
+                time_in_force: TimeInForce::Gtc,
+                replenish_threshold: Quantity::new(visible),
+                replenish_amount: Some(replenish),
+                auto_replenish: true,
+                extra_fields: (),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_match_against_boundary_conservation_all_variants() {
+        // Issue #169 acceptance: boundary cases 0, 1, MAX for maker visible /
+        // hidden and taker quantity, with nonzero replenish sizes 1, 80
+        // (default) and MAX, preserve consumed / remaining / visible / hidden
+        // conservation. The only admissible error is the reserve replenish add
+        // overflow, and only when the order's own visible + hidden exceeds
+        // `u64::MAX` (an order a level never admits).
+        let bounds = [0u64, 1, u64::MAX];
+        let replenish_sizes = [nz(1), crate::DEFAULT_RESERVE_REPLENISH_AMOUNT, nz(u64::MAX)];
+        for &visible in &bounds {
+            for &hidden in &bounds {
+                for &replenish in &replenish_sizes {
+                    for order in all_variants(visible, hidden, replenish) {
+                        for &incoming in &bounds {
+                            let is_multi = matches!(
+                                order,
+                                OrderType::IcebergOrder { .. } | OrderType::ReserveOrder { .. }
+                            );
+                            let v = u128::from(order.visible_quantity().as_u64());
+                            let h = u128::from(order.hidden_quantity().as_u64());
+                            let before = order;
+                            let ctx = format!("{order:?} incoming={incoming}");
+                            match order.match_against(incoming) {
+                                Ok((consumed, updated, hidden_reduced, remaining)) => {
+                                    assert_eq!(
+                                        u128::from(consumed) + u128::from(remaining),
+                                        u128::from(incoming),
+                                        "consumed + remaining == incoming: {ctx}"
+                                    );
+                                    assert!(
+                                        u128::from(consumed) <= v,
+                                        "consumed <= visible: {ctx}"
+                                    );
+                                    match updated {
+                                        Some(next) => {
+                                            let nv = u128::from(next.visible_quantity().as_u64());
+                                            let nh = u128::from(next.hidden_quantity().as_u64());
+                                            assert_eq!(
+                                                nv + nh + u128::from(consumed),
+                                                v + h,
+                                                "total conservation: {ctx}"
+                                            );
+                                            assert_eq!(
+                                                h - nh,
+                                                u128::from(hidden_reduced),
+                                                "hidden_reduced == hidden drawn: {ctx}"
+                                            );
+                                            assert_eq!(next.id(), order.id(), "{ctx}");
+                                        }
+                                        None => {
+                                            assert_eq!(u128::from(consumed), v, "full fill: {ctx}");
+                                            assert_eq!(hidden_reduced, 0, "{ctx}");
+                                        }
+                                    }
+                                    if !is_multi {
+                                        assert_eq!(hidden_reduced, 0, "{ctx}");
+                                    }
+                                }
+                                Err(PriceLevelError::InvalidOperation { .. }) => {
+                                    assert!(
+                                        matches!(order, OrderType::ReserveOrder { .. })
+                                            && v + h > u128::from(u64::MAX),
+                                        "unexpected error: {ctx}"
+                                    );
+                                }
+                                Err(other) => panic!("unexpected error {other:?}: {ctx}"),
+                            }
+                            assert_eq!(order, before, "input unchanged: {ctx}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_match_against_empty_partial_full_all_variants() {
+        // Every variant keeps its empty (incoming 0), partial and full-fill
+        // behaviour after the #169 error plumbing.
+        for order in all_variants(10, 0, nz(5)) {
+            let ctx = format!("{order:?}");
+            let (consumed, updated, hidden_reduced, remaining) =
+                order.match_against(0).expect("empty match");
+            assert_eq!((consumed, hidden_reduced, remaining), (0, 0, 0), "{ctx}");
+            assert_eq!(
+                updated.map(|o| o.visible_quantity()),
+                Some(Quantity::new(10)),
+                "{ctx}"
+            );
+
+            let (consumed, updated, hidden_reduced, remaining) =
+                order.match_against(4).expect("partial match");
+            assert_eq!((consumed, hidden_reduced, remaining), (4, 0, 0), "{ctx}");
+            assert_eq!(
+                updated.map(|o| o.visible_quantity()),
+                Some(Quantity::new(6)),
+                "{ctx}"
+            );
+
+            let (consumed, updated, hidden_reduced, remaining) =
+                order.match_against(15).expect("full match");
+            assert_eq!((consumed, hidden_reduced, remaining), (10, 0, 5), "{ctx}");
+            assert!(updated.is_none(), "{ctx}");
+        }
+    }
+
+    #[test]
+    fn test_iceberg_and_reserve_replenishment_unchanged() {
+        // Regression (issue #169): normal replenishment keeps its exact shape.
+        // Iceberg: full visible fill refreshes a tranche of the visible size.
+        let iceberg = create_iceberg_order(); // visible 1, hidden 4
+        let (consumed, updated, hidden_reduced, remaining) =
+            iceberg.match_against(3).expect("iceberg refresh");
+        assert_eq!((consumed, hidden_reduced, remaining), (1, 1, 2));
+        let updated = updated.expect("refreshed iceberg");
+        assert_eq!(updated.visible_quantity(), Quantity::new(1));
+        assert_eq!(updated.hidden_quantity(), Quantity::new(3));
+
+        // Reserve: a partial fill below threshold replenishes by the amount.
+        let reserve = OrderType::<()>::ReserveOrder {
+            id: Id::from_u64(302),
+            price: Price::new(10000),
+            visible_quantity: Quantity::new(10),
+            hidden_quantity: Quantity::new(100),
+            side: Side::Sell,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1616823000000),
+            time_in_force: TimeInForce::Gtc,
+            replenish_threshold: Quantity::new(5),
+            replenish_amount: Some(nz(20)),
             auto_replenish: true,
             extra_fields: (),
         };
+        let (consumed, updated, hidden_reduced, remaining) =
+            reserve.match_against(7).expect("reserve partial replenish");
+        assert_eq!((consumed, hidden_reduced, remaining), (7, 20, 0));
+        let updated = updated.expect("replenished reserve");
+        assert_eq!(updated.visible_quantity(), Quantity::new(23));
+        assert_eq!(updated.hidden_quantity(), Quantity::new(80));
 
-        // A one-unit taker triggers a partial fill: new_visible = u64::MAX - 1,
-        // replenish_qty = min(u64::MAX, u64::MAX) = u64::MAX, and their sum
-        // overflows u64 -> the sentinel fires.
-        let (consumed, updated, hidden_reduced, remaining) = order.match_against(1);
-        assert_eq!(consumed, 0, "overflowing replenish must consume nothing");
-        assert_eq!(
-            hidden_reduced, 0,
-            "overflowing replenish must draw no hidden"
-        );
-        assert_eq!(remaining, 1, "the taker's remaining must be untouched");
-        match updated {
-            Some(OrderType::<()>::ReserveOrder {
-                visible_quantity,
-                hidden_quantity,
-                ..
-            }) => {
-                assert_eq!(visible_quantity, Quantity::new(u64::MAX));
-                assert_eq!(hidden_quantity, Quantity::new(u64::MAX));
-            }
-            _ => panic!("Expected the maker handed back unchanged"),
-        }
+        // Reserve: a full visible fill draws a fresh tranche of the amount.
+        let (consumed, updated, hidden_reduced, remaining) =
+            reserve.match_against(12).expect("reserve full replenish");
+        assert_eq!((consumed, hidden_reduced, remaining), (10, 20, 2));
+        let updated = updated.expect("replenished reserve");
+        assert_eq!(updated.visible_quantity(), Quantity::new(20));
+        assert_eq!(updated.hidden_quantity(), Quantity::new(80));
+
+        // Default replenish amount is still 80.
+        assert_eq!(crate::DEFAULT_RESERVE_REPLENISH_AMOUNT.get(), 80);
+
+        // `refresh_iceberg` caps the draw at the hidden quantity (boundary).
+        let (refreshed, used) = iceberg
+            .refresh_iceberg(nz(u64::MAX))
+            .expect("refresh capped at hidden");
+        assert_eq!(used, 4);
+        assert_eq!(refreshed.visible_quantity(), Quantity::new(4));
+        assert_eq!(refreshed.hidden_quantity(), Quantity::new(0));
     }
 
     #[test]
@@ -877,7 +1125,9 @@ mod tests {
             extra_fields: (),
         };
 
-        let (refreshed, used) = standard_order.refresh_iceberg(nz(5));
+        let (refreshed, used) = standard_order
+            .refresh_iceberg(nz(5))
+            .expect("refresh must succeed");
 
         // Non-iceberg orders should remain unchanged and return 0 used
         assert_eq!(used, 0);
@@ -904,7 +1154,8 @@ mod tests {
             extra_fields: (),
         };
 
-        let (consumed, updated, hidden_reduced, remaining) = order.match_against(5);
+        let (consumed, updated, hidden_reduced, remaining) =
+            order.match_against(5).expect("match must succeed");
 
         // Verify partial match
         assert_eq!(consumed, 5);
@@ -913,14 +1164,16 @@ mod tests {
         assert_eq!(remaining, 0);
 
         // Verify complete match
-        let (consumed, updated, hidden_reduced, remaining) = order.match_against(10);
+        let (consumed, updated, hidden_reduced, remaining) =
+            order.match_against(10).expect("match must succeed");
         assert_eq!(consumed, 10);
         assert!(updated.is_none()); // Fully consumed
         assert_eq!(hidden_reduced, 0);
         assert_eq!(remaining, 0);
 
         // Verify match with excess
-        let (consumed, updated, hidden_reduced, remaining) = order.match_against(15);
+        let (consumed, updated, hidden_reduced, remaining) =
+            order.match_against(15).expect("match must succeed");
         assert_eq!(consumed, 10);
         assert!(updated.is_none());
         assert_eq!(hidden_reduced, 0);
@@ -1727,7 +1980,8 @@ mod from_str_specific_tests {
         assert_eq!(order.extra_fields(), &PanicOnClone(7));
 
         // Full fill: no residual, so no payload clone and no panic.
-        let (consumed, residual, _, remaining) = order.match_against(10);
+        let (consumed, residual, _, remaining) =
+            order.match_against(10).expect("match must succeed");
         assert_eq!((consumed, remaining), (10, 0));
         assert!(residual.is_none());
 
