@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Per-level `value_executed` statistic widened to `u128` (#140).**
+  `PriceLevelStatistics::value_executed()` returns `u128` (was `u64`),
+  matching `MatchResult::executed_value` and `Trade::total_value`. With both
+  price and quantity fixed-point scaled, the `u64` accumulator overflowed under
+  ordinary volume (1845 executions at 1.0 @ 1.0 with a 1e8 scale, or a single
+  execution at a realistic price), after which the level's statistics were
+  permanently degraded. Trades were never affected. The accumulator is a
+  `portable_atomic::AtomicU128` (new dependency): lock-free on aarch64 and on
+  x86_64 with `cmpxchg16b`, lock-based fallback elsewhere. A `u128` overflow is
+  still rejected all-or-nothing.
+- **Snapshot format v4.** New packages are written at v4, since a payload may
+  carry a `value_executed` above `u64::MAX`. Pre-0.10 readers reject every v4
+  package: with a version mismatch when the value fits in `u64`, or with a
+  deserialization error (decoding runs before the version check) when it does
+  not.
+  v2, v3 and v4 packages all restore; legacy packages keep their original
+  checksum. Pinned by v2 (0.8.4) and v3 (0.9.2) fixtures stored verbatim.
+
 ## [0.9.2] - 2026-09-18
 
 ### Changed

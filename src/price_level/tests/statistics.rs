@@ -433,7 +433,7 @@ mod tests {
     fn seed_stats(
         orders_executed: usize,
         quantity_executed: u64,
-        value_executed: u64,
+        value_executed: u128,
         sum_waiting_time: u64,
     ) -> PriceLevelStatistics {
         let text = format!(
@@ -462,11 +462,11 @@ mod tests {
         }
         // value_executed overflow: orders + quantity rolled back.
         {
-            let stats = seed_stats(0, 0, u64::MAX - 5, 0);
+            let stats = seed_stats(0, 0, u128::MAX - 5, 0);
             assert!(stats.record_execution(1, 10, 0, 1_000).is_err());
             assert_eq!(stats.orders_executed(), 0);
             assert_eq!(stats.quantity_executed(), 0, "quantity rolled back");
-            assert_eq!(stats.value_executed(), u64::MAX - 5, "value unchanged");
+            assert_eq!(stats.value_executed(), u128::MAX - 5, "value unchanged");
             assert!(stats.stats_degraded());
         }
         // sum_waiting_time overflow: orders + quantity + value rolled back.
@@ -479,10 +479,14 @@ mod tests {
             assert_eq!(stats.sum_waiting_time(), u64::MAX - 5, "sum unchanged");
             assert!(stats.stats_degraded());
         }
-        // value multiplication exceeds u64 storage (validation, before mutation).
+        // value multiplication overflows u128 (validation, before mutation).
         {
             let stats = seed_stats(0, 0, 0, 0);
-            assert!(stats.record_execution(u64::MAX, 2, 0, 1_000).is_err());
+            assert!(
+                stats
+                    .record_execution(u64::MAX, u128::MAX, 0, 1_000)
+                    .is_err()
+            );
             assert_eq!(stats.orders_executed(), 0);
             assert_eq!(stats.quantity_executed(), 0);
             assert_eq!(stats.value_executed(), 0);
@@ -532,7 +536,7 @@ mod tests {
         let seed = u64::MAX - K * Q;
 
         for _ in 0..50 {
-            let stats = Arc::new(seed_stats(0, seed, seed, 0));
+            let stats = Arc::new(seed_stats(0, seed, u128::from(seed), 0));
             // Barrier so all N records race from the same instant.
             let barrier = Arc::new(Barrier::new(N));
             let mut handles = Vec::with_capacity(N);
@@ -552,7 +556,7 @@ mod tests {
             assert_eq!(successes, K, "exactly K records must fit the headroom");
             assert_eq!(stats.orders_executed() as u64, K);
             assert_eq!(
-                stats.quantity_executed(),
+                u128::from(stats.quantity_executed()),
                 stats.value_executed(),
                 "quantity and value advance in lockstep (each success adds to both)"
             );
@@ -587,7 +591,11 @@ mod tests {
 
         // A degraded statistics DOES emit the field, and it round-trips.
         let degraded = seed_stats(0, 0, 0, 0);
-        assert!(degraded.record_execution(u64::MAX, 2, 0, 1_000).is_err()); // value overflow
+        assert!(
+            degraded
+                .record_execution(u64::MAX, u128::MAX, 0, 1_000)
+                .is_err()
+        ); // value overflow
         assert!(degraded.stats_degraded());
         let degraded_json = serde_json::to_string(&degraded).expect("serialize degraded");
         assert!(
@@ -733,7 +741,7 @@ mod tests {
                     let q = copy.quantity_executed();
                     assert_eq!(
                         copy.value_executed(),
-                        q * 100,
+                        u128::from(q) * 100,
                         "clone must not tear value vs quantity"
                     );
                     assert_eq!(
@@ -750,6 +758,228 @@ mod tests {
 
         assert_eq!(stats.orders_executed() as u64, N);
         assert_eq!(stats.quantity_executed(), N);
-        assert_eq!(stats.value_executed(), N * 100);
+        assert_eq!(stats.value_executed(), u128::from(N) * 100);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #140 — `value_executed` is a `u128` accumulator
+    // ------------------------------------------------------------------
+
+    /// Fixed-point scale applied to BOTH price and quantity in the issue's
+    /// reproduction, so every `quantity * price` product carries `SCALE^2`.
+    const SCALE: u64 = 100_000_000;
+
+    #[test]
+    fn test_record_execution_single_value_above_u64_max_is_recorded() {
+        // Issue #140 case A: 1.0 @ 49_995.0 with both operands scaled by 1e8.
+        // The product (~5e20) exceeds `u64::MAX` but not `u128`.
+        let stats = PriceLevelStatistics::new();
+        let price = 49_995 * u128::from(SCALE);
+        let expected = u128::from(SCALE) * price;
+        assert!(expected > u128::from(u64::MAX));
+
+        assert!(stats.record_execution(SCALE, price, 0, 1_000).is_ok());
+        assert_eq!(stats.value_executed(), expected);
+        assert_eq!(stats.orders_executed(), 1);
+        assert_eq!(stats.quantity_executed(), SCALE);
+        assert!(!stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_record_execution_running_total_crosses_u64_max_is_recorded() {
+        // Issue #140 case B: each 1.0 @ 1.0 execution fits in `u64`, but the
+        // running total crossed `u64::MAX` after 1845 of them before the fix.
+        const ROUNDS: u64 = 3_000;
+        let stats = PriceLevelStatistics::new();
+        let price = u128::from(SCALE);
+        for _ in 0..ROUNDS {
+            assert!(stats.record_execution(SCALE, price, 0, 1_000).is_ok());
+        }
+        let expected = u128::from(ROUNDS) * u128::from(SCALE) * price;
+        assert!(expected > u128::from(u64::MAX));
+        assert_eq!(stats.value_executed(), expected);
+        assert_eq!(stats.orders_executed() as u64, ROUNDS);
+        assert!(!stats.stats_degraded());
+        assert_eq!(stats.average_execution_price(), Some(SCALE as f64));
+    }
+
+    #[test]
+    fn test_record_execution_value_multiplication_overflow_is_all_or_nothing() {
+        // `quantity * price` itself overflows `u128`: rejected before any
+        // counter moves, and the drop is observable.
+        let stats = seed_stats(4, 40, 1_000, 7);
+        let err = stats.record_execution(2, u128::MAX, 0, 1_000);
+        assert!(matches!(
+            err,
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
+        ));
+        assert_eq!(stats.orders_executed(), 4);
+        assert_eq!(stats.quantity_executed(), 40);
+        assert_eq!(stats.value_executed(), 1_000);
+        assert_eq!(stats.sum_waiting_time(), 7);
+        assert_eq!(stats.last_execution_time(), 0);
+        assert!(stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_record_execution_value_accumulator_overflow_is_all_or_nothing() {
+        // The product fits in `u128`, but adding it to the running total does
+        // not: orders + quantity (already committed) are rolled back.
+        let seed = u128::MAX - 5;
+        let stats = seed_stats(4, 40, seed, 7);
+        let err = stats.record_execution(1, 6, 0, 1_000);
+        assert!(matches!(
+            err,
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
+        ));
+        assert_eq!(stats.orders_executed(), 4, "orders rolled back");
+        assert_eq!(stats.quantity_executed(), 40, "quantity rolled back");
+        assert_eq!(stats.value_executed(), seed, "value unchanged");
+        assert_eq!(stats.sum_waiting_time(), 7);
+        assert_eq!(stats.last_execution_time(), 0);
+        assert!(stats.stats_degraded());
+
+        // Exactly filling the accumulator is not an overflow.
+        let stats = seed_stats(0, 0, seed, 0);
+        assert!(stats.record_execution(1, 5, 0, 1_000).is_ok());
+        assert_eq!(stats.value_executed(), u128::MAX);
+        assert!(!stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_record_execution_rolls_back_value_above_u64_max_on_waiting_time_overflow() {
+        // `value_executed` successfully takes a contribution above `u64::MAX`,
+        // then the later `sum_waiting_time` add overflows: the whole
+        // contribution, including the wide value, must be subtracted back.
+        let value_seed = u128::from(u64::MAX) + 17;
+        let stats = seed_stats(2, 20, value_seed, u64::MAX - 5);
+        let price = 49_995 * u128::from(SCALE);
+        assert!(u128::from(SCALE) * price > u128::from(u64::MAX));
+
+        // Maker at t=1, execution at t=1_000: waiting time 999 overflows.
+        let err = stats.record_execution(SCALE, price, 1, 1_000);
+        assert!(matches!(
+            err,
+            Err(crate::errors::PriceLevelError::InvalidOperation { .. })
+        ));
+        assert_eq!(stats.orders_executed(), 2, "orders rolled back");
+        assert_eq!(stats.quantity_executed(), 20, "quantity rolled back");
+        assert_eq!(stats.value_executed(), value_seed, "wide value rolled back");
+        assert_eq!(stats.sum_waiting_time(), u64::MAX - 5, "sum unchanged");
+        assert_eq!(
+            stats.last_execution_time(),
+            0,
+            "last execution not advanced"
+        );
+        assert!(stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_value_executed_above_u64_max_round_trips_display_fromstr() {
+        let value = u128::from(u64::MAX) * 3 + 11;
+        let stats = seed_stats(1, 2, value, 3);
+        let text = stats.to_string();
+        assert!(text.contains(&format!("value_executed={value}")), "{text}");
+        let parsed = PriceLevelStatistics::from_str(&text).expect("parse wide value");
+        assert_eq!(parsed.value_executed(), value);
+        assert_eq!(parsed.to_string(), text);
+    }
+
+    #[test]
+    fn test_value_executed_above_u64_max_round_trips_serde_json() {
+        let value = u128::from(u64::MAX) * 3 + 11;
+        let stats = seed_stats(1, 2, value, 3);
+        let json = serde_json::to_string(&stats).expect("serialize");
+        assert!(
+            json.contains(&format!("\"value_executed\":{value}")),
+            "the wide value is a plain JSON integer: {json}"
+        );
+        let back: PriceLevelStatistics = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.value_executed(), value);
+        assert_eq!(serde_json::to_string(&back).expect("reserialize"), json);
+    }
+
+    #[test]
+    fn test_value_executed_legacy_u64_encodings_still_parse() {
+        // Text and JSON written before issue #140 carry a `u64` value; both
+        // decode unchanged into the `u128` accumulator.
+        let text = format!(
+            "PriceLevelStatistics:orders_added=0;orders_removed=0;orders_executed=1;\
+             quantity_executed=1;value_executed={};last_execution_time=0;\
+             first_arrival_time=0;sum_waiting_time=0",
+            u64::MAX
+        );
+        let parsed = PriceLevelStatistics::from_str(&text).expect("legacy text");
+        assert_eq!(parsed.value_executed(), u128::from(u64::MAX));
+
+        let json = format!(
+            "{{\"orders_added\":0,\"orders_removed\":0,\"orders_executed\":1,\
+             \"quantity_executed\":1,\"value_executed\":{},\"last_execution_time\":0,\
+             \"first_arrival_time\":0,\"sum_waiting_time\":0}}",
+            u64::MAX
+        );
+        let back: PriceLevelStatistics = serde_json::from_str(&json).expect("legacy json");
+        assert_eq!(back.value_executed(), u128::from(u64::MAX));
+        assert_eq!(
+            serde_json::to_string(&back).expect("reserialize"),
+            json,
+            "a legacy payload re-serializes byte-identically (checksum compat)"
+        );
+    }
+
+    #[test]
+    fn test_value_executed_rejects_out_of_range_text() {
+        let text = format!(
+            "PriceLevelStatistics:orders_added=0;orders_removed=0;orders_executed=0;\
+             quantity_executed=0;value_executed={}0;last_execution_time=0;\
+             first_arrival_time=0;sum_waiting_time=0",
+            u128::MAX
+        );
+        assert!(matches!(
+            PriceLevelStatistics::from_str(&text),
+            Err(crate::errors::PriceLevelError::InvalidFieldValue { .. })
+        ));
+    }
+
+    #[test]
+    fn test_concurrent_record_execution_crosses_u64_max_exactly() {
+        // Concurrent writers push `value_executed` across `u64::MAX`: every
+        // contribution lands exactly once (no lost CAS update, no truncation at
+        // the 64-bit boundary) and nothing degrades.
+        use std::sync::Barrier;
+
+        const THREADS: usize = 8;
+        const PER_THREAD: u64 = 2_000;
+        let price = u128::from(SCALE);
+        let per_record = u128::from(SCALE) * price;
+        let seed = u128::from(u64::MAX) - 5 * per_record;
+
+        let stats = Arc::new(seed_stats(0, 0, seed, 0));
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let stats = Arc::clone(&stats);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..PER_THREAD {
+                        stats
+                            .record_execution(SCALE, price, 0, 1_000)
+                            .expect("record");
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("thread panicked");
+        }
+
+        let records = THREADS as u64 * PER_THREAD;
+        let expected = seed + u128::from(records) * per_record;
+        assert!(expected > u128::from(u64::MAX));
+        assert_eq!(stats.value_executed(), expected);
+        assert_eq!(stats.orders_executed() as u64, records);
+        assert_eq!(stats.quantity_executed(), records * SCALE);
+        assert!(!stats.stats_degraded());
     }
 }

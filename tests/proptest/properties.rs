@@ -1,4 +1,5 @@
-//! The nine named price-level invariants, expressed as `proptest` properties
+//! The named price-level invariants (nine from issue #80, plus the issue #140
+//! scaled-notional property), expressed as `proptest` properties
 //! driving a single [`PriceLevel`](pricelevel::PriceLevel) through its public
 //! API (issue #80).
 //!
@@ -584,6 +585,74 @@ proptest! {
                 )));
             }
         }
+    }
+}
+
+/// Fixed-point scale applied to BOTH price and quantity by the issue #140
+/// property, so every `quantity * price` carries `SCALE^2`.
+const FIXED_POINT_SCALE: u64 = 100_000_000;
+
+proptest! {
+    #![proptest_config(config(64))]
+
+    // ---------------------------------------------------------------------
+    // 10. `value_executed` is the exact scaled notional (issue #140).
+    //
+    // With price and quantity both fixed-point scaled by 1e8, a level fully
+    // drains a book of makers. The recorded `value_executed` must equal the
+    // exact `sum(quantity * price)` of the emitted trades (and hence of
+    // `MatchResult::executed_value`), even when it exceeds `u64::MAX`, and the
+    // statistics must not degrade. Maker timestamps precede the taker's, so
+    // no other counter can reject the record: `value_executed` is the only
+    // counter under test.
+    // ---------------------------------------------------------------------
+    #[test]
+    fn prop_value_executed_exact_for_scaled_operands(
+        price_units in 1u64..=100_000u64,
+        qty_units in proptest::collection::vec(1u64..=1_000u64, 1..=40),
+    ) {
+        let price = u128::from(price_units) * u128::from(FIXED_POINT_SCALE);
+        let level = PriceLevel::new(price);
+        let mut total_qty: u64 = 0;
+        for (i, units) in qty_units.iter().enumerate() {
+            let quantity = units * FIXED_POINT_SCALE;
+            total_qty += quantity;
+            let order = OrderType::Standard {
+                id: Id::from_u64(i as u64 + 1),
+                price: Price::new(price),
+                quantity: Quantity::new(quantity),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_000 + i as u64),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            };
+            level
+                .add_order(order)
+                .map_err(|e| TestCaseError::fail(format!("add_order: {e}")))?;
+        }
+
+        let generator = trade_ids();
+        let result = level.match_order(
+            total_qty,
+            Id::from_u64(1_000_000),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(1_700_000_000_000),
+            &generator,
+        );
+        let executed_value = result
+            .executed_value()
+            .map_err(|e| TestCaseError::fail(format!("executed_value: {e}")))?;
+        let expected = u128::from(total_qty) * price;
+        prop_assert_eq!(executed_value, expected);
+
+        let stats = level.stats();
+        prop_assert!(!stats.stats_degraded(), "scaled volume must not degrade stats");
+        prop_assert_eq!(stats.value_executed(), expected);
+        prop_assert_eq!(stats.quantity_executed(), total_qty);
+        prop_assert_eq!(stats.orders_executed(), qty_units.len());
+        prop_assert_eq!(level.order_count(), 0);
     }
 }
 

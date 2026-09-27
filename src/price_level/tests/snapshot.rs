@@ -201,8 +201,8 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_v3_roundtrips_degraded_and_non_degraded() {
-        // Issue #129: new packages are v3 and round-trip BOTH a non-degraded
+    fn test_snapshot_v4_roundtrips_degraded_and_non_degraded() {
+        // Issues #129 / #140: new packages are v4 and round-trip BOTH a non-degraded
         // (8-field statistics) and a degraded (9-field statistics) payload.
         use crate::price_level::PriceLevelStatistics;
 
@@ -220,12 +220,12 @@ mod tests {
         .expect("snapshot");
         let package = PriceLevelSnapshotPackage::new(snap).expect("package");
         assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
-        assert_eq!(package.version(), 3);
+        assert_eq!(package.version(), 4);
         let json = package.to_json().expect("to_json");
         let restored = PriceLevelSnapshotPackage::from_json(&json)
             .expect("from_json")
             .into_snapshot()
-            .expect("v3 non-degraded must validate + restore");
+            .expect("v4 non-degraded must validate + restore");
         assert!(!restored.statistics().stats_degraded());
 
         // Degraded: force a dropped execution (maker in the future of execution).
@@ -239,19 +239,19 @@ mod tests {
         )
         .expect("snapshot");
         let package = PriceLevelSnapshotPackage::new(snap).expect("package");
-        assert_eq!(package.version(), 3);
+        assert_eq!(package.version(), 4);
         let json = package.to_json().expect("to_json");
         assert!(
             json.contains("stats_degraded"),
-            "a degraded v3 payload carries the 9th field"
+            "a degraded v4 payload carries the 9th field"
         );
         let restored = PriceLevelSnapshotPackage::from_json(&json)
             .expect("from_json")
             .into_snapshot()
-            .expect("v3 degraded must validate + restore");
+            .expect("v4 degraded must validate + restore");
         assert!(
             restored.statistics().stats_degraded(),
-            "the degraded flag round-trips through a v3 snapshot"
+            "the degraded flag round-trips through a v4 snapshot"
         );
     }
 
@@ -259,7 +259,7 @@ mod tests {
     fn test_snapshot_v2_legacy_package_restores() {
         // Issue #129: a legacy v2 package (8-field statistics, checksum over the
         // v2 bytes) must still validate + restore — checksum recomputation is
-        // version-agnostic, and `validate` accepts both v2 and v3.
+        // version-agnostic, and `validate` accepts v2, v3 and v4.
         let snap = PriceLevelSnapshot::with_orders(Price::new(77), create_sample_orders())
             .expect("snapshot");
         let package = PriceLevelSnapshotPackage::new(snap).expect("package");
@@ -586,6 +586,167 @@ mod tests {
         } else {
             panic!("Expected IcebergOrder");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #140 — v4 (`u128` `value_executed`) and legacy fixtures
+    // ------------------------------------------------------------------
+
+    /// v2 package written verbatim by the published `pricelevel` 0.8.4.
+    const FIXTURE_V2_0_8_4: &str = include_str!("fixtures/snapshot_v2_pricelevel_0_8_4.json");
+    /// v3 package (non-degraded) written verbatim by the published 0.9.2.
+    const FIXTURE_V3_0_9_2: &str = include_str!("fixtures/snapshot_v3_pricelevel_0_9_2.json");
+    /// v3 package written by 0.9.2 for a level degraded by issue #140 case A
+    /// (one `u64`-overflowing execution: 9-field statistics, value stuck at 0).
+    const FIXTURE_V3_DEGRADED_0_9_2: &str =
+        include_str!("fixtures/snapshot_v3_degraded_pricelevel_0_9_2.json");
+
+    /// Restore a legacy fixture, checking that its stored checksum (computed by
+    /// the old writer) validates against the new re-serialization.
+    fn restore_fixture(fixture: &str, version: u32, checksum: &str) -> PriceLevelSnapshot {
+        let package = PriceLevelSnapshotPackage::from_json(fixture.trim()).expect("fixture parses");
+        assert_eq!(package.version(), version);
+        assert_eq!(package.checksum(), checksum, "fixture checksum is pinned");
+        package
+            .into_snapshot()
+            .expect("legacy fixture must validate + restore")
+    }
+
+    #[test]
+    fn test_snapshot_fixture_v2_from_0_8_4_restores() {
+        let snapshot = restore_fixture(
+            FIXTURE_V2_0_8_4,
+            2,
+            "f1cb277735453e6778a1b53ef9badf8f3e9896e577b97fc0ecace724925342c6",
+        );
+        let stats = snapshot.statistics();
+        assert_eq!(stats.orders_executed(), 2);
+        assert_eq!(stats.quantity_executed(), 150);
+        assert_eq!(stats.value_executed(), 1_500_000);
+        assert!(!stats.stats_degraded());
+        assert_eq!(snapshot.order_count(), 2);
+    }
+
+    #[test]
+    fn test_snapshot_fixture_v3_from_0_9_2_restores() {
+        let snapshot = restore_fixture(
+            FIXTURE_V3_0_9_2,
+            3,
+            "a2af7207e6afe8ac17d4698ad7253427c36b26bc843a783a08d69ab691aceeb5",
+        );
+        let stats = snapshot.statistics();
+        assert_eq!(stats.value_executed(), 1_500_000);
+        assert!(!stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_snapshot_fixture_v3_degraded_from_0_9_2_restores() {
+        let snapshot = restore_fixture(
+            FIXTURE_V3_DEGRADED_0_9_2,
+            3,
+            "bb09e16ae1b5b929b25bf6e4ba6d2828ae3cd59186af8034b22657fca1cdbe74",
+        );
+        let stats = snapshot.statistics();
+        assert!(stats.stats_degraded(), "the 9th field round-trips");
+        assert_eq!(stats.value_executed(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_fixtures_restore_through_price_level() {
+        for fixture in [
+            FIXTURE_V2_0_8_4,
+            FIXTURE_V3_0_9_2,
+            FIXTURE_V3_DEGRADED_0_9_2,
+        ] {
+            let level = crate::price_level::PriceLevel::from_snapshot_json(fixture.trim())
+                .expect("legacy fixture restores a level");
+            // A restored level re-snapshots at the current version.
+            let package = level.snapshot_package().expect("re-snapshot");
+            assert_eq!(package.version(), SNAPSHOT_FORMAT_VERSION);
+        }
+    }
+
+    #[test]
+    fn test_snapshot_fixture_tampered_value_is_rejected() {
+        // Bumping the legacy value without re-signing must still fail the pinned
+        // checksum; widening did not loosen integrity.
+        let tampered =
+            FIXTURE_V3_0_9_2.replace("\"value_executed\":1500000", "\"value_executed\":1500001");
+        assert_ne!(tampered, FIXTURE_V3_0_9_2);
+        let package = PriceLevelSnapshotPackage::from_json(tampered.trim()).expect("parses");
+        assert!(matches!(
+            package.validate(),
+            Err(PriceLevelError::ChecksumMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn test_snapshot_v4_round_trips_value_above_u64_max() {
+        use crate::price_level::PriceLevelStatistics;
+
+        // Record a single execution whose value exceeds `u64::MAX` (issue #140
+        // case A) and persist it through the checksummed package.
+        let scale: u64 = 100_000_000;
+        let price = 49_995 * u128::from(scale);
+        let stats = PriceLevelStatistics::new();
+        stats
+            .record_execution(scale, price, 0, 1_000)
+            .expect("wide value records");
+        let expected = u128::from(scale) * price;
+        assert!(expected > u128::from(u64::MAX));
+        assert!(!stats.stats_degraded());
+
+        let snap = PriceLevelSnapshot::with_orders_and_stats(
+            Price::new(10),
+            create_sample_orders(),
+            stats,
+        )
+        .expect("snapshot");
+        let package = PriceLevelSnapshotPackage::new(snap).expect("package");
+        assert_eq!(package.version(), 4);
+        let json = package.to_json().expect("to_json");
+        assert!(
+            json.contains(&format!("\"value_executed\":{expected}")),
+            "{json}"
+        );
+
+        let restored = PriceLevelSnapshotPackage::from_json(&json)
+            .expect("from_json")
+            .into_snapshot()
+            .expect("v4 wide value must validate + restore");
+        assert_eq!(restored.statistics().value_executed(), expected);
+        assert!(!restored.statistics().stats_degraded());
+
+        // Tampering with the wide value is still caught by the checksum.
+        let tampered = json.replace(
+            &format!("\"value_executed\":{expected}"),
+            &format!("\"value_executed\":{}", expected + 1),
+        );
+        let package = PriceLevelSnapshotPackage::from_json(&tampered).expect("parses");
+        assert!(matches!(
+            package.validate(),
+            Err(PriceLevelError::ChecksumMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn test_snapshot_unsupported_future_version_is_rejected() {
+        let snap = PriceLevelSnapshot::with_orders(Price::new(77), create_sample_orders())
+            .expect("snapshot");
+        let json = PriceLevelSnapshotPackage::new(snap)
+            .expect("package")
+            .to_json()
+            .expect("to_json");
+        let mut value: Value = serde_json::from_str(&json).expect("parse");
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("version".to_string(), Value::Number(5u32.into()));
+        }
+        let v5 = serde_json::to_string(&value).expect("reserialize");
+        let package = PriceLevelSnapshotPackage::from_json(&v5).expect("from_json");
+        assert!(matches!(
+            package.validate(),
+            Err(PriceLevelError::InvalidOperation { .. })
+        ));
     }
 }
 

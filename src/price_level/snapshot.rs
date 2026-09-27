@@ -268,22 +268,33 @@ impl PriceLevelSnapshot {
 ///   [`PriceLevelSnapshotPackage::validate`] with a version mismatch.
 /// - **Version 2** (issue #63) persists per-level [`PriceLevelStatistics`] as an
 ///   8-field statistics payload (no `stats_degraded`).
-/// - **Version 3** (issue #129) is the current shape: it owns the optional 9th
-///   `stats_degraded` statistics field. A degraded level (which serializes that
-///   field) is a v3 payload, so it is no longer mislabelled v2 where an old
-///   8-field-only reader would choke on the unknown field.
+/// - **Version 3** (issue #129) owns the optional 9th `stats_degraded`
+///   statistics field. A degraded level (which serializes that field) is a v3
+///   payload, so it is not mislabelled v2 where an old 8-field-only reader would
+///   choke on the unknown field.
+/// - **Version 4** (issue #140) is the current shape: statistics
+///   `value_executed` is a `u128` (it was `u64`). A v4 payload may carry a value
+///   above `u64::MAX` that a v3 reader cannot represent, so new packages are
+///   labelled v4. A pre-0.10 reader rejects every v4 package, but not always
+///   by version: it deserializes the whole package before `validate` checks the
+///   version, so a v4 package whose value fits in `u64` fails with a version
+///   mismatch, while one whose value exceeds `u64::MAX` already fails to decode
+///   with a deserialization error. Either way the old reader returns an error
+///   and never restores wrong statistics.
 ///
-/// [`PriceLevelSnapshotPackage::validate`] accepts BOTH v2 (legacy, 8-field,
-/// `stats_degraded` defaults `false`) and v3, so old snapshots keep restoring;
-/// v1 is still rejected. Checksum recomputation is version-agnostic — a
-/// non-degraded level serializes 8 fields under either version, so a legacy v2
-/// package's SHA-256 still matches.
-pub const SNAPSHOT_FORMAT_VERSION: u32 = 3;
+/// [`PriceLevelSnapshotPackage::validate`] accepts v2 (legacy, 8-field,
+/// `stats_degraded` defaults `false`), v3 and v4, so old snapshots keep
+/// restoring; v1 is still rejected. Checksum recomputation is version-agnostic:
+/// the statistics field set and the JSON encoding of a `value_executed` that
+/// fits in `u64` are unchanged, so a legacy v2 / v3 package re-serializes to the
+/// same bytes and its SHA-256 still matches.
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 4;
 
 /// The set of snapshot format versions [`PriceLevelSnapshotPackage::validate`]
-/// accepts on restore: the current [`SNAPSHOT_FORMAT_VERSION`] (v3) and the
-/// legacy v2 (issue #129). v1 (statistics-less) is not accepted.
-const SUPPORTED_SNAPSHOT_VERSIONS: &[u32] = &[2, 3];
+/// accepts on restore: the current [`SNAPSHOT_FORMAT_VERSION`] (v4) and the
+/// legacy v2 (issue #129) and v3 (issue #140). v1 (statistics-less) is not
+/// accepted.
+const SUPPORTED_SNAPSHOT_VERSIONS: &[u32] = &[2, 3, 4];
 
 /// Serialized representation of a price level snapshot including checksum validation metadata.
 ///
@@ -371,8 +382,8 @@ impl PriceLevelSnapshotPackage {
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the package's format
-    /// version is not `SNAPSHOT_FORMAT_VERSION`, [`PriceLevelError::SerializationError`]
-    /// if the snapshot payload cannot be re-encoded to recompute the checksum,
+    /// version is not one of the supported versions (v2, v3, v4),
+    /// [`PriceLevelError::SerializationError`] if the snapshot payload cannot be re-encoded to recompute the checksum,
     /// and [`PriceLevelError::ChecksumMismatch`] if the recomputed SHA-256
     /// checksum does not match the stored one (tampered or corrupted snapshot).
     // Snapshot restoration / validation is a cold path: keep it out of line.

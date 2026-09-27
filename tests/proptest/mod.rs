@@ -3,8 +3,8 @@
    Email: jb@taunais.com
 ******************************************************************************/
 
-//! Property-test harness for the nine named single-price-level invariants
-//! (issue #80).
+//! Property-test harness for the named single-price-level invariants
+//! (issue #80), plus the issue #140 scaled-notional property.
 //!
 //! This is a dedicated integration-test target (`[[test]] name = "proptest"`)
 //! kept out of the unit `tests` target so the slower, generative matching
