@@ -1,0 +1,48 @@
+    Finished `bench` profile [optimized] target(s) in 0.03s
+     Running benches/compare.rs (target/release/deps/compare-1509f391af0f6f98)
+pricelevel-compare[0.10.0]: self-check passed
+test add_orders_batch_100/0.10.0/standard ... bench:      10,863 ns/iter (+/- 130)
+test add_orders_batch_100/0.10.0/iceberg ... bench:      10,519 ns/iter (+/- 46)
+test add_orders_batch_100/0.10.0/reserve ... bench:      10,725 ns/iter (+/- 163)
+
+test isolated_updates/0.10.0/cancel ... bench:       8,773 ns/iter (+/- 717)
+test isolated_updates/0.10.0/update_quantity_increase ... bench:       9,221 ns/iter (+/- 871)
+test isolated_updates/0.10.0/update_quantity_decrease ... bench:       8,917 ns/iter (+/- 843)
+test isolated_updates/0.10.0/replace_same_price ... bench:       9,791 ns/iter (+/- 956)
+test isolated_updates/0.10.0/replace_diff_price ... bench:       8,990 ns/iter (+/- 993)
+
+test matching/0.10.0/standard_full ... bench:         885 ns/iter (+/- 212)
+test matching/0.10.0/iceberg ... bench:         968 ns/iter (+/- 168)
+test matching/0.10.0/reserve ... bench:         902 ns/iter (+/- 183)
+test matching/0.10.0/mixed_100 ... bench:      24,036 ns/iter (+/- 431)
+test matching/0.10.0/sweep_100_makers ... bench:      20,118 ns/iter (+/- 516)
+test matching/0.10.0/partial_fill_reinsert ... bench:       1,142 ns/iter (+/- 140)
+test matching/0.10.0/partial_fill_churn_10x10 ... bench:       2,830 ns/iter (+/- 276)
+test matching/0.10.0/ioc_partial ... bench:       1,093 ns/iter (+/- 150)
+test matching/0.10.0/post_only_reject ... bench:       1,125 ns/iter (+/- 114)
+
+test fok_depth/0.10.0/success_depth_1 ... bench:       1,042 ns/iter (+/- 213)
+test fok_depth/0.10.0/success_depth_100 ... bench:       3,751 ns/iter (+/- 306)
+test fok_depth/0.10.0/success_depth_10000 ... bench:     215,807 ns/iter (+/- 25,482)
+test fok_depth/0.10.0/reject_depth_100 ... bench:       6,965 ns/iter (+/- 462)
+test fok_depth/0.10.0/reject_depth_10000 ... bench:     440,680 ns/iter (+/- 41,088)
+test fok_depth/0.10.0/replenish_depth_10000 ... bench:   2,070,595 ns/iter (+/- 29,306)
+
+test iter_orders/0.10.0/depth_100 ... bench:       2,934 ns/iter (+/- 545)
+test iter_orders/0.10.0/depth_10000 ... bench:     105,128 ns/iter (+/- 21,634)
+
+test snapshot/0.10.0/capture_depth_100 ... bench:       3,780 ns/iter (+/- 608)
+test snapshot/0.10.0/package_depth_100 ... bench:      21,224 ns/iter (+/- 661)
+test snapshot/0.10.0/to_json_depth_100 ... bench:      35,528 ns/iter (+/- 591)
+test snapshot/0.10.0/restore_depth_100 ... bench:      54,873 ns/iter (+/- 603)
+test snapshot/0.10.0/capture_depth_10000 ... bench:     187,898 ns/iter (+/- 22,897)
+test snapshot/0.10.0/package_depth_10000 ... bench:   1,876,729 ns/iter (+/- 21,906)
+test snapshot/0.10.0/to_json_depth_10000 ... bench:   3,231,356 ns/iter (+/- 37,761)
+test snapshot/0.10.0/restore_depth_10000 ... bench:   5,469,439 ns/iter (+/- 73,715)
+
+test match_result_analytics/0.10.0/n_256 ... bench:         498 ns/iter (+/- 5)
+test match_result_analytics/0.10.0/n_4096 ... bench:      10,762 ns/iter (+/- 170)
+
+test trade_list_parse/0.10.0/n_32 ... bench:      11,243 ns/iter (+/- 194)
+test trade_list_parse/0.10.0/n_1024 ... bench:     348,739 ns/iter (+/- 2,755)
+
