@@ -197,11 +197,11 @@ impl Id {
         }
         let mut random_bytes = [0_u8; ULID_RANDOM_BYTES];
         entropy.try_fill_bytes(&mut random_bytes)?;
-        // 10 bytes = 80 bits, so the fold never shifts a set bit past bit 79
-        // and `from_parts` discards nothing.
-        let random = random_bytes
-            .iter()
-            .fold(0_u128, |acc, byte| (acc << 8) | u128::from(*byte));
+        // The 80 random bits are the low ten bytes of a big-endian `u128`, so
+        // `from_parts` discards nothing.
+        let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9] = random_bytes;
+        let random =
+            u128::from_be_bytes([0, 0, 0, 0, 0, 0, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9]);
         Ok(Self::Ulid(Ulid::from_parts(timestamp_ms, random)))
     }
 
@@ -233,9 +233,10 @@ impl Id {
             Self::Uuid(uuid) => *uuid.as_bytes(),
             Self::Ulid(ulid) => ulid.to_bytes(),
             Self::Sequential(id) => {
-                let mut bytes = [0_u8; 16];
-                bytes[8..16].copy_from_slice(&id.to_be_bytes());
-                bytes
+                // Zero-leading padding: the big-endian value occupies the
+                // trailing eight bytes.
+                let [b0, b1, b2, b3, b4, b5, b6, b7] = id.to_be_bytes();
+                [0, 0, 0, 0, 0, 0, 0, 0, b0, b1, b2, b3, b4, b5, b6, b7]
             }
         }
     }
@@ -251,25 +252,12 @@ impl Id {
     /// This exists for backward compatibility.
     #[must_use]
     pub fn from_u64(id: u64) -> Self {
-        let bytes = [
-            ((id >> 56) & 0xFF) as u8,
-            ((id >> 48) & 0xFF) as u8,
-            ((id >> 40) & 0xFF) as u8,
-            ((id >> 32) & 0xFF) as u8,
-            ((id >> 24) & 0xFF) as u8,
-            ((id >> 16) & 0xFF) as u8,
-            ((id >> 8) & 0xFF) as u8,
-            (id & 0xFF) as u8,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ];
-        Self::Uuid(Uuid::from_bytes(bytes))
+        // The big-endian value occupies the leading eight UUID bytes; the
+        // trailing eight are zero.
+        let [b0, b1, b2, b3, b4, b5, b6, b7] = id.to_be_bytes();
+        Self::Uuid(Uuid::from_bytes([
+            b0, b1, b2, b3, b4, b5, b6, b7, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]))
     }
 
     /// Returns the u64 value when the id is sequential.
@@ -446,6 +434,33 @@ mod tests {
         assert_eq!(entropy.bytes_drawn, 10);
         assert_eq!(ulid.timestamp_ms(), 1_716_000_000_123);
         assert_eq!(ulid.random(), 0x0102_0304_0506_0708_090A_u128);
+    }
+
+    #[test]
+    fn test_as_bytes_sequential_is_zero_leading_big_endian() {
+        let id = Id::sequential(0x0102_0304_0506_0708);
+        assert_eq!(
+            id.as_bytes(),
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(Id::sequential(0).as_bytes(), [0; 16]);
+        let mut max = [0xFF_u8; 16];
+        max[..8].fill(0);
+        assert_eq!(Id::sequential(u64::MAX).as_bytes(), max);
+    }
+
+    #[test]
+    fn test_from_u64_encodes_value_in_leading_uuid_bytes() {
+        let id = Id::from_u64(0x0102_0304_0506_0708);
+        assert_eq!(
+            id.as_bytes(),
+            [1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert!(id.is_uuid());
+        assert_eq!(Id::from_u64(0), Id::nil());
+        let mut max = [0_u8; 16];
+        max[..8].fill(0xFF);
+        assert_eq!(Id::from_u64(u64::MAX).as_bytes(), max);
     }
 
     #[test]
