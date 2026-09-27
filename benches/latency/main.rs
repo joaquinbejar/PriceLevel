@@ -68,6 +68,9 @@ fn main() {
     );
     println!();
 
+    if !config.runs("alloc") {
+        return;
+    }
     println!("== Allocation measurements (separate pass, not timed) ==");
     let alloc_reports = alloc_measurements::run_all(&config);
     for alloc_report in &alloc_reports {

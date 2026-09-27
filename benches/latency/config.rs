@@ -52,6 +52,18 @@ const DEFAULT_CONTENTION_OPS: usize = 5_000;
 /// Debug-build default; see the module docs.
 const DEBUG_DEFAULT_CONTENTION_OPS: usize = 100;
 
+/// Default producer (add/cancel) thread count for the statistics-contention
+/// scenarios (issue #154).
+const DEFAULT_STATS_PRODUCERS: usize = 2;
+/// Default statistics-reader thread count for the statistics-contention
+/// scenarios (issue #154).
+const DEFAULT_STATS_READERS: usize = 2;
+/// Default matcher-thread operations measured per statistics-contention case
+/// (issue #154).
+const DEFAULT_STATS_OPS: usize = 20_000;
+/// Debug-build default; see the module docs.
+const DEBUG_DEFAULT_STATS_OPS: usize = 100;
+
 /// Default number of repetitions averaged per operation in the allocation
 /// measurement pass.
 const DEFAULT_ALLOC_REPS: usize = 2_000;
@@ -85,6 +97,15 @@ pub struct Config {
     pub contention_ops: usize,
     /// Repetitions per operation in the allocation-measurement pass.
     pub alloc_reps: usize,
+    /// Producer (add/cancel) threads per statistics-contention case (#154).
+    pub stats_producers: usize,
+    /// Statistics-reader threads per statistics-contention case (#154).
+    pub stats_readers: usize,
+    /// Matcher operations measured per statistics-contention case (#154).
+    pub stats_ops: usize,
+    /// Scenario categories to run (`PL_LATENCY_ONLY`, comma-separated, e.g.
+    /// `stats_contention`). `None` runs every category.
+    pub only: Option<Vec<String>>,
     /// Raw `LOGLEVEL` environment value, recorded in the manifest for parity
     /// with the rest of the crate's tooling even though this harness does
     /// not install a `tracing` subscriber.
@@ -111,6 +132,15 @@ fn env_bool(name: &str) -> bool {
 }
 
 impl Config {
+    /// `true` when `category` should run under `PL_LATENCY_ONLY` (always
+    /// `true` when the filter is unset).
+    #[must_use]
+    pub fn runs(&self, category: &str) -> bool {
+        self.only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|c| c == category))
+    }
+
     /// Reads every knob from the environment, falling back to the documented
     /// defaults above for anything unset or unparsable.
     #[must_use]
@@ -131,6 +161,11 @@ impl Config {
         } else {
             DEFAULT_CONTENTION_OPS
         };
+        let default_stats_ops = if debug {
+            DEBUG_DEFAULT_STATS_OPS
+        } else {
+            DEFAULT_STATS_OPS
+        };
         let default_alloc_reps = if debug {
             DEBUG_DEFAULT_ALLOC_REPS
         } else {
@@ -148,6 +183,15 @@ impl Config {
             ),
             contention_ops: env_usize("PL_LATENCY_CONTENTION_OPS", default_contention_ops),
             alloc_reps: env_usize("PL_LATENCY_ALLOC_REPS", default_alloc_reps),
+            stats_producers: env_usize("PL_LATENCY_STATS_PRODUCERS", DEFAULT_STATS_PRODUCERS),
+            stats_readers: env_usize("PL_LATENCY_STATS_READERS", DEFAULT_STATS_READERS),
+            stats_ops: env_usize("PL_LATENCY_STATS_OPS", default_stats_ops),
+            only: env::var("PL_LATENCY_ONLY").ok().map(|v| {
+                v.split(',')
+                    .map(|c| c.trim().to_string())
+                    .filter(|c| !c.is_empty())
+                    .collect()
+            }),
             loglevel: env::var("LOGLEVEL").ok(),
         }
     }

@@ -7,6 +7,7 @@ mod depth;
 mod isolated;
 mod matching;
 mod snapshot;
+mod stats_contention;
 mod tif;
 
 use crate::config::Config;
@@ -19,12 +20,27 @@ use crate::report::ScenarioReport;
 pub fn run_all(config: &Config) -> Vec<ScenarioReport> {
     let mut reports = Vec::new();
 
-    reports.extend(isolated::run(config));
-    reports.extend(matching::run(config));
-    reports.extend(tif::run(config));
-    reports.extend(snapshot::run(config));
-    reports.extend(depth::run(config));
-    reports.extend(contention::run(config));
+    if config.runs("isolated") {
+        reports.extend(isolated::run(config));
+    }
+    if config.runs("match") {
+        reports.extend(matching::run(config));
+    }
+    if config.runs("tif") {
+        reports.extend(tif::run(config));
+    }
+    if config.runs("snapshot") {
+        reports.extend(snapshot::run(config));
+    }
+    if config.runs("depth") {
+        reports.extend(depth::run(config));
+    }
+    if config.runs("contention") {
+        reports.extend(contention::run(config));
+    }
+    if config.runs("stats_contention") {
+        reports.extend(stats_contention::run(config));
+    }
 
     reports
 }
