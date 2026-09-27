@@ -26,33 +26,39 @@
 //! happens-before relation the level relies on still comes from the lock
 //! itself, so a stale or missed read can cost one more exclusive section of
 //! waiting but cannot break exclusion. The matcher never waits while holding
-//! the lock, and its wait is bounded, so the hand-off cannot deadlock and a
-//! stream of mutators cannot starve the matcher either.
+//! the lock, so the hand-off itself introduces no deadlock.
 //!
-//! # Bounds and assumptions
+//! # What this does and does not establish
 //!
-//! - **One matcher per level.** The bounds below assume the crate's supported
-//!   model: at most one thread runs `match_order` on a level at a time. With
-//!   `k` concurrent fill-or-kill matchers (unsupported) a mutator can wait
-//!   about `k` sections: while matcher A spends its budget, a matcher B
-//!   already queued in `write()` holds readers off on writer-preferring
-//!   `RwLock` implementations (the Linux futex lock, for one).
-//! - **At most two sections.** A blocked mutator waits for at most two
-//!   exclusive sections plus its own wake-up: between its failed `try_read`
-//!   and its announcement, the matcher can finish the section in progress,
-//!   read a zero counter and take one more. Every later request sees the
-//!   announcement.
-//! - **The budget counts rounds, not time.** It is 64 `spin_loop` hints and
-//!   256 `yield_now` calls. On an idle core a yield returns in about a
+//! The hand-off is a **bounded number of courtesy attempts** with measured
+//! latency improvements (`BENCH.md`), not a fairness guarantee:
+//!
+//! - It does **not** establish starvation freedom for either side. After the
+//!   budget the matcher calls `RwLock::write` even if a mutator is still
+//!   announced, and Rust leaves `RwLock` acquisition priority unspecified: a
+//!   reader-preferring implementation could keep the matcher waiting in
+//!   `write()` indefinitely, and a barging one can still delay a mutator
+//!   beyond any fixed number of sections. Total lock-acquisition delay, for
+//!   mutators and matcher alike, remains scheduler-dependent and unbounded.
+//! - The budget counts rounds, not time: 64 `spin_loop` hints and 256
+//!   `yield_now` calls. On an idle core a yield returns in about a
 //!   microsecond, but on an oversubscribed host each yield can cost a
-//!   scheduler time slice, so one hand-off can then take hundreds of
-//!   milliseconds. The matcher still always progresses: after the budget it
-//!   requests the exclusive side regardless. A mutator that cannot run for
-//!   the whole budget (for example, it is preempted) lets that section
-//!   proceed and waits for another.
-//! - **Section length is unchanged.** The hand-off bounds how many sections
-//!   a mutator waits for, not how long each lasts; a fill-or-kill that walks
-//!   a deep level holds the lock for `O(depth log depth)`.
+//!   scheduler time slice, so one hand-off can take hundreds of
+//!   milliseconds.
+//! - The hand-off changes how many sections a mutator typically waits for,
+//!   not how long each lasts: a fill-or-kill that walks a deep level holds
+//!   the lock for `O(depth log depth)`.
+//!
+//! **Typical case, not a guarantee.** With the supported one matcher per
+//! level, a writer-preferring or queue-fair lock, and a mutator that is
+//! scheduled within the budget, a blocked mutator waits for at most two
+//! exclusive sections plus its own wake-up: between its failed `try_read`
+//! and its announcement the matcher can finish the section in progress, read
+//! a zero counter and take one more; later requests see the announcement.
+//! With `k` concurrent fill-or-kill matchers (unsupported), a matcher B
+//! queued in `write()` holds readers off on writer-preferring locks (the
+//! Linux futex lock, for one) while matcher A spends its budget, so the
+//! typical wait grows to about `k` sections.
 
 // Every primitive comes through `fok_sync` so the loom model
 // (`tests/loom/fok_handoff.rs`) can compile this very file against loom's
@@ -128,9 +134,9 @@ fn handoff_yields() -> u32 {
     HANDOFF_YIELDS
 }
 
-/// The level's fill-or-kill reader-writer guard plus the bounded hand-off
-/// that keeps a looping fill-or-kill matcher from starving mutators (issue
-/// #206). See the module docs for the protocol.
+/// The level's fill-or-kill reader-writer guard plus a bounded hand-off to
+/// mutators blocked behind a looping fill-or-kill matcher (issue #206). See
+/// the module docs for the protocol and what it does not guarantee.
 pub(crate) struct FokGuard {
     lock: RwLock<()>,
     /// Mutators blocked on (or about to block on) the shared side. Bounded by

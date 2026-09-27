@@ -80,33 +80,35 @@ public methods:
   its dry-run and sweep, so admissions, updates and snapshots on that level
   block for that section (issue #112; bounded by #143). The other
   time-in-force paths skip this guard but still take the per-maker shard lock.
-- **Fill-or-kill fairness (issue #206).** `std::sync::RwLock` promises no
+- **Fill-or-kill hand-off (issue #206).** `std::sync::RwLock` promises no
   fairness, and a matcher looping `Fok` calls on one level retook the
   exclusive side before the mutators it had just woken could run. A mutator
   whose shared acquisition would block now announces itself on a per-level
   counter (`src/price_level/fok_guard.rs`); a `Fok` match that sees an
   announcement waits, holding no lock, until every announced mutator holds
   the shared side or a fixed budget (64 spin hints, then 256 `yield_now`
-  calls) runs out. With the supported one matcher per level, a blocked
-  mutator then waits for at most two fill-or-kill sections (the one in
-  progress, plus one if the matcher rechecks between the mutator's failed
-  `try_read` and its announcement) and its own scheduling delay, unless it
-  cannot run for the whole budget. With `k` concurrent `Fok` matchers
-  (unsupported) a queued matcher holds readers off on writer-preferring
-  locks, so the wait grows to about `k` sections. The budget counts rounds,
-  not time: under oversubscription each `yield_now` can cost a scheduler
-  slice, so a hand-off can take hundreds of milliseconds, but the `Fok`
-  match always proceeds once it is spent; the budget also bounds what a
-  `Fok` match can lose to a stream of mutators. The counter is a scheduling hint only: exclusion and
-  all-or-nothing still come from the lock alone. The protocol is model
-  checked by `tests/loom/fok_handoff.rs`, which compiles the production
-  `fok_guard.rs` against loom (single matcher; see that file for the
-  model's limits). A section is still the unit of wait: a
+  calls) runs out, and then calls `write()` regardless. This is a bounded
+  number of hand-off attempts with measured latency improvements, not a
+  fairness guarantee: it does not establish starvation freedom for either
+  side, because `RwLock` acquisition priority is unspecified in Rust, and
+  total lock-acquisition delay remains scheduler-dependent and unbounded.
+  The budget counts rounds, not time, so under oversubscription a hand-off
+  can take hundreds of milliseconds. Typical case only (one matcher per
+  level as supported, a writer-preferring or queue-fair lock, a mutator
+  scheduled within the budget): a blocked mutator waits for at most two
+  sections plus its wake-up, the one in progress and one more if the
+  matcher rechecks between the mutator's failed `try_read` and its
+  announcement; with `k` concurrent matchers (unsupported) about `k`. The
+  counter is a scheduling hint only: exclusion and all-or-nothing still come
+  from the lock alone. `tests/loom/fok_handoff.rs` model checks the
+  production `fok_guard.rs` against loom for exclusion, termination of the
+  hand-off loop and a conditional property (a drained hand-off admits the
+  announced mutator first); it does not prove starvation freedom (see that
+  file for the model's limits). A section is still the unit of wait: a
   `Fok` that must walk the level (a kill, or a fill deep into the queue)
   holds it for `O(depth log depth)`, so a caller that needs tight mutator
   latency on a deep level should not loop such takers on it from a hot
-  thread. Measurements: `BENCH.md`, "Writer starvation behind a looping FOK
-  matcher".
+  thread. Measurements: `BENCH.md`, "Bounded hand-off to waiting mutators".
 - **Side topology.** The resting side and count are pinned in one atomic word,
   so single-side coherence holds under arbitrary concurrent admissions and
   removals (issue #126).

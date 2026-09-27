@@ -670,8 +670,9 @@ fn update_counter_overflow() -> PriceLevelError {
 /// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
 /// the full argument (issue #112). A blocked mutator announces itself, and a
 /// fill-or-kill match yields to announced mutators for a bounded budget before
-/// it retakes the exclusive side, so a matcher looping fill-or-kill calls
-/// cannot starve them (issue #206; see `price_level::fok_guard`).
+/// it retakes the exclusive side (issue #206). That shortens mutator waits
+/// behind a looping fill-or-kill matcher in practice but is not a fairness
+/// guarantee; see `price_level::fok_guard`.
 ///
 /// # Topology
 ///

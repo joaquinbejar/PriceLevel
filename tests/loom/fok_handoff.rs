@@ -16,18 +16,23 @@
 //!
 //! - exclusion: no mutator is inside while the matcher holds the exclusive
 //!   side, and vice versa (the wrapper never bypasses the lock);
-//! - no deadlock and bounded matcher wait, including with a mutator that
-//!   announces and never arrives (loom fails a model that cannot finish);
+//! - no deadlock, and the hand-off loop terminates, including with a mutator
+//!   that announces and never arrives (loom fails a model that cannot
+//!   finish);
 //! - the announcement count returns to zero;
-//! - the hand-off guarantee: when the matcher saw an announced mutator and
-//!   the budget did not run out, that mutator's critical section completed
-//!   before the matcher's exclusive section began.
+//! - a conditional hand-off property: when the matcher saw an announced
+//!   mutator and the budget did not run out, that mutator's critical section
+//!   completed before the matcher's exclusive section began. Nothing here
+//!   proves starvation freedom: the property says nothing about schedules in
+//!   which the budget runs out, and none about lock acquisition order after
+//!   it.
 //!
 //! # Limits of the model
 //!
 //! - loom's `RwLock` is not writer-preferring, and loom explores schedules
-//!   rather than wake-up latency, so the model proves the hand-off's safety
-//!   and its drained-implies-admitted property, not the two-section bound or
+//!   rather than wake-up latency, so the model checks the hand-off's safety
+//!   and its drained-implies-admitted property, not the typical two-section
+//!   wait or
 //!   any timing.
 //! - One matcher. With several fill-or-kill matchers (unsupported) the
 //!   bound degrades to about one section per matcher; that is not modelled.

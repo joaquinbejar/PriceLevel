@@ -1,5 +1,5 @@
-//! Issue #206: a looping fill-or-kill matcher neither breaks FIFO nor
-//! starves the mutators waiting on the level's guard.
+//! Issue #206: a looping fill-or-kill matcher does not break FIFO, and its
+//! bounded hand-off admits blocked mutators ahead of its next section.
 //!
 //! The fill-or-kill guard hands the lock to announced mutators before it
 //! retakes the exclusive side (see `price_level::fok_guard`). These tests
@@ -18,7 +18,8 @@
 //! each announcement can overlap at most one (the one whose counter check
 //! preceded it). The mutator's full wait, counted from its failed
 //! `try_read`, can also include the section in progress at that moment,
-//! hence the documented bound of two.
+//! hence the typical two-section wait. None of this asserts wall-clock
+//! time or starvation freedom; the protocol does not guarantee either.
 
 #[cfg(test)]
 mod tests {
@@ -28,9 +29,10 @@ mod tests {
     use crate::price_level::fok_guard::{announce_tally, handoff_tally, override_handoff_yields};
     use crate::price_level::level::{PriceLevel, set_fok_locked_hook};
     use crate::utils::{Price, Quantity, TimestampMs};
+    use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -40,9 +42,15 @@ mod tests {
     const TAKER: u64 = u64::MAX;
     /// Writer ids, disjoint from every matcher maker id.
     const WRITER_BASE: u64 = 1_000_000_000;
-    /// A hand-off budget no test run exhausts, so the matcher waits until
-    /// every announced mutator holds the shared side.
-    const UNBOUNDED: u32 = u32::MAX;
+    /// A generous but finite hand-off budget: the matcher waits until every
+    /// announced mutator holds the shared side unless that mutator is not
+    /// scheduled for a million yields. Finite so that a broken withdrawal
+    /// fails the test instead of hanging it.
+    const GENEROUS: u32 = 1_000_000;
+    /// Deadline for every cross-thread handshake. A handshake that misses it
+    /// is reported as a failed assertion after every worker is released and
+    /// joined, never as a hang.
+    const HANDSHAKE: Duration = Duration::from_secs(20);
 
     fn standard(id: u64) -> OrderType<()> {
         OrderType::Standard {
@@ -86,11 +94,17 @@ mod tests {
         level.iter_orders().any(|order| order.id() == id)
     }
 
-    /// Spin (no sleep) until `condition` holds.
-    fn spin_until(mut condition: impl FnMut() -> bool) {
+    /// Spin (no sleep) until `condition` holds or [`HANDSHAKE`] elapses;
+    /// `true` when the condition held.
+    fn spin_until(mut condition: impl FnMut() -> bool) -> bool {
+        let started = Instant::now();
         while !condition() {
+            if started.elapsed() >= HANDSHAKE {
+                return false;
+            }
             std::hint::spin_loop();
         }
+        true
     }
 
     #[test]
@@ -157,27 +171,33 @@ mod tests {
             let level = Arc::clone(&level);
             let held = Arc::clone(&held);
             thread::spawn(move || {
-                spin_until(|| held.load(Ordering::SeqCst));
-                // Blocks: the first FOK holds the exclusive side.
+                let saw_hold = spin_until(|| held.load(Ordering::SeqCst));
+                // Blocks: the first FOK holds the exclusive side (unless the
+                // handshake failed, which the main thread reports).
                 level.add_order(standard(WRITER_BASE)).expect("writer add");
-                announce_tally()
+                (saw_hold, announce_tally())
             })
         };
 
         let generator = UuidGenerator::new(Uuid::nil());
-        let _budget = override_handoff_yields(UNBOUNDED);
+        let _budget = override_handoff_yields(GENEROUS);
         let observed = Rc::new(RefCell::new(Vec::new()));
+        let announced_in_time = Rc::new(Cell::new(false));
         let _hook = {
             let level = Arc::clone(&level);
             let held = Arc::clone(&held);
             let observed = Rc::clone(&observed);
+            let announced_in_time = Rc::clone(&announced_in_time);
             set_fok_locked_hook(Box::new(move || {
                 let call = observed.borrow().len();
                 if call == 0 {
                     // Hold the exclusive side until the writer has tried the
-                    // shared side, failed and announced itself.
+                    // shared side, failed and announced itself, or until the
+                    // deadline: on a miss the hook returns, the guard is
+                    // released and the writer can finish, so the failure is
+                    // reported below instead of hanging.
                     held.store(true, Ordering::SeqCst);
-                    spin_until(|| level.test_fok_waiting_mutators() == 1);
+                    announced_in_time.set(spin_until(|| level.test_fok_waiting_mutators() == 1));
                 }
                 observed.borrow_mut().push((
                     resting(&level, writer_id),
@@ -190,8 +210,13 @@ mod tests {
         let first = fok(&level, 1, &generator);
         // Back-to-back, exactly the barging pattern of issue #206.
         let second = fok(&level, 1, &generator);
-        let writer_announcements = writer.join().expect("writer");
+        let (saw_hold, writer_announcements) = writer.join().expect("writer");
 
+        assert!(saw_hold, "writer never saw the first FOK hold the guard");
+        assert!(
+            announced_in_time.get(),
+            "writer did not announce itself while the first FOK held the guard"
+        );
         assert_eq!(only_maker(&first), Id::from_u64(0));
         assert_eq!(only_maker(&second), Id::from_u64(1));
         assert_eq!(writer_announcements, 1, "the writer blocked once");
@@ -201,11 +226,15 @@ mod tests {
             "the second FOK took the exclusive side only after the waiting writer's admission"
         );
         // The writer may win the lock between the two calls on its own (no
-        // hand-off needed) or be waited for once; either way the budget is
-        // never exhausted and the state checks above hold.
+        // hand-off needed) or be waited for once. Running out of the
+        // generous budget means the writer was not scheduled for a million
+        // yields: reported as such.
         let (waited_after, exhausted_after) = handoff_tally();
         assert!(waited_after - waited <= 1, "at most one hand-off");
-        assert_eq!(exhausted_after, exhausted, "drained within budget");
+        assert_eq!(
+            exhausted_after, exhausted,
+            "writer not scheduled within the hand-off budget"
+        );
         assert!(resting(&level, writer_id));
         assert_eq!(level.order_count(), 7);
     }
@@ -229,22 +258,37 @@ mod tests {
         let level = Arc::new(level_of(DEPTH));
         let start = Arc::new(Barrier::new(2));
         let stop = Arc::new(AtomicBool::new(false));
-        let fok_done = Arc::new(AtomicU64::new(0));
+        // Set by the matcher's first FOK while it holds the exclusive side.
+        let held = Arc::new(AtomicBool::new(false));
 
         let matcher = {
             let level = Arc::clone(&level);
             let start = Arc::clone(&start);
             let stop = Arc::clone(&stop);
-            let fok_done = Arc::clone(&fok_done);
+            let held = Arc::clone(&held);
             thread::spawn(move || {
                 let generator = UuidGenerator::new(Uuid::nil());
-                let _budget = override_handoff_yields(UNBOUNDED);
+                let _budget = override_handoff_yields(GENEROUS);
                 // (front under the guard, mutators announced under the guard)
                 let seen: Observed = Rc::new(RefCell::new(Vec::new()));
+                let announced_in_time = Rc::new(Cell::new(false));
                 let _hook = {
                     let level = Arc::clone(&level);
                     let seen = Rc::clone(&seen);
+                    let announced_in_time = Rc::clone(&announced_in_time);
                     set_fok_locked_hook(Box::new(move || {
+                        if seen.borrow().is_empty() {
+                            // Handshake: the first FOK holds the exclusive
+                            // side until the writer's first add has blocked
+                            // and announced itself, so the run is guaranteed
+                            // at least one matcher step and one genuinely
+                            // blocked mutator whatever the scheduler does.
+                            // On a missed deadline the hook returns and the
+                            // failure is asserted after both threads finish.
+                            held.store(true, Ordering::SeqCst);
+                            announced_in_time
+                                .set(spin_until(|| level.test_fok_waiting_mutators() >= 1));
+                        }
                         seen.borrow_mut()
                             .push((level.test_front(), level.test_fok_waiting_mutators()));
                     }))
@@ -257,30 +301,32 @@ mod tests {
                     let consumed = only_maker(&result);
                     let (front, _) = *seen.borrow().last().expect("hook fired");
                     steps.push(FokStep { front, consumed });
-                    fok_done.fetch_add(1, Ordering::SeqCst);
                     level.add_order(standard(next)).expect("replacement");
                     next += 1;
                 }
+                // The first hook entry skips the announcement it waited
+                // for: that section overlaps it by construction.
                 let overlapped = seen.borrow().iter().filter(|(_, n)| *n > 0).count();
-                (steps, overlapped, handoff_tally().1)
+                (
+                    steps,
+                    overlapped,
+                    handoff_tally().1,
+                    announced_in_time.get(),
+                )
             })
         };
 
         start.wait();
         let announced_before = announce_tally();
-        let mut max_wait = Duration::ZERO;
-        let mut max_span: u64 = 0;
+        // The writer's first add below must meet the held guard.
+        let saw_hold = spin_until(|| held.load(Ordering::SeqCst));
         let mut cancelled_missing = Vec::new();
         for i in 0..WRITER_OPS {
             let id = WRITER_BASE + i;
-            let before = fok_done.load(Ordering::SeqCst);
-            let t0 = Instant::now();
             level.add_order(standard(id)).expect("writer add");
             let cancelled = level.update_order(OrderUpdate::Cancel {
                 order_id: Id::from_u64(id),
             });
-            max_wait = max_wait.max(t0.elapsed());
-            max_span = max_span.max(fok_done.load(Ordering::SeqCst) - before);
             match cancelled {
                 Ok(Some(_)) => {}
                 Ok(None) => cancelled_missing.push(Id::from_u64(id)),
@@ -289,11 +335,20 @@ mod tests {
         }
         let announcements = announce_tally() - announced_before;
         stop.store(true, Ordering::SeqCst);
-        let (steps, overlapped, exhausted) = matcher.join().expect("matcher");
+        let (steps, overlapped, exhausted, announced_in_time) = matcher.join().expect("matcher");
+
+        // The handshake guarantees both observations the assertions below
+        // need, independently of scheduling.
+        assert!(saw_hold, "the matcher's first FOK never held the guard");
+        assert!(
+            announced_in_time,
+            "the writer's first add did not block and announce itself"
+        );
+        assert!(!steps.is_empty(), "at least one matcher step");
+        assert!(announcements >= 1, "at least one blocked mutator");
 
         // FIFO: every FOK consumed the true front it saw under the exclusive
         // guard, and those fronts only ever move forward in sequence.
-        assert!(!steps.is_empty());
         let mut last_seq = None;
         for (i, step) in steps.iter().enumerate() {
             let (seq, id) = step.front.expect("the level is never empty");
@@ -316,22 +371,16 @@ mod tests {
             );
         }
 
-        // Writer wait, counted in exclusive sections rather than time: with
-        // an unbounded budget, a FOK that checks after an announcement waits
-        // until that mutator holds the shared side, so the only section that
-        // can run while a mutator is announced is the single one whose check
-        // preceded the announcement.
-        assert_eq!(exhausted, 0, "unbounded budget never runs out");
+        // Writer wait, counted in exclusive sections rather than time. A FOK
+        // that checks after an announcement waits until that mutator holds
+        // the shared side or its budget runs out, so a section can run while
+        // a mutator is announced only if its check preceded the announcement
+        // (at most one per announcement) or its budget ran out. This holds
+        // under any scheduling; wall-clock wait is deliberately not asserted.
         assert!(
-            overlapped as u64 <= announcements,
-            "{overlapped} exclusive sections ran while a mutator waited, \
-             more than its {announcements} announcements"
-        );
-        // Wall-clock wait is scheduler-dependent, so it is only bounded
-        // loosely here: the pre-#206 failure mode was seconds.
-        assert!(
-            max_wait < Duration::from_secs(5),
-            "writer add+cancel waited {max_wait:?} across {max_span} FOK calls"
+            overlapped as u64 <= announcements + exhausted,
+            "{overlapped} exclusive sections ran while a mutator waited, more than its \
+             {announcements} announcements plus {exhausted} exhausted hand-offs"
         );
     }
 }

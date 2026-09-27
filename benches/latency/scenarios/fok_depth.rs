@@ -22,7 +22,9 @@
 //!
 //! Plus writer contention cases at depths 100 and 10,000: one matcher thread
 //! repeatedly runs the first-maker FOK, a rejected FOK larger than the level
-//! (the longest exclusive section a FOK holds; issue #206) or, as the
+//! (a chosen long dry-run workload, issue #206; not an upper bound for every
+//! FOK: a successful FOK that consumes a deep level runs its dry run AND the
+//! sweep, and replenishing makers add steps) or, as the
 //! control, the first-maker GTC call, while a writer thread times its own
 //! `add_order` and `update_order(Cancel)` calls, so the time mutators spend
 //! blocked behind the fill-or-kill guard's exclusive section is measured
@@ -249,8 +251,10 @@ enum MatcherMode {
     /// A qty-1 FOK filled by the front maker, then one replacement add.
     FokFirstMaker,
     /// A FOK larger than the whole level: the dry run visits every maker
-    /// and kills it, so the exclusive section is the longest one a FOK can
-    /// hold. Nothing is consumed and nothing is replaced.
+    /// and kills it, a long exclusive section that leaves the level
+    /// unchanged. Chosen as the long dry-run workload, not the general worst
+    /// case: a successful FOK that consumes a deep level also sweeps, and
+    /// replenishing makers add steps. Nothing is consumed or replaced.
     FokRejected,
     /// The GTC control: the qty-1 first-maker call without the guard.
     Gtc,
@@ -280,9 +284,9 @@ impl MatcherMode {
 /// matcher consumes every maker ahead of `W`, `W` becomes the true front and
 /// is filled, and the late cancel finds nothing. That is correct FIFO under
 /// starvation, not a FIFO violation. The guard's bounded hand-off (#206)
-/// limits a blocked writer to at most two exclusive sections (one matcher
-/// per level) unless it cannot run for the whole hand-off budget, so these
-/// events stay possible on an oversubscribed host; both are counted and reported in the outcome note
+/// typically limits a blocked writer to two exclusive sections, but it is
+/// a bounded courtesy, not a guarantee, so these events stay possible (for
+/// example, on an oversubscribed host); both are counted and reported in the outcome note
 /// (and so in `manifest.json`):
 ///
 /// * `writer-owned consumed`: a matcher call filled a writer order;
