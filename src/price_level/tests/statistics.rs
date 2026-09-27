@@ -1292,4 +1292,54 @@ mod tests {
         assert_eq!(stats.sum_waiting_time(), u64::MAX - 5);
         assert!(stats.stats_degraded());
     }
+
+    /// Issue #154: pins the measured statistics layout on 64-bit targets so a
+    /// layout change is a deliberate, reviewed edit (see BENCH.md, "Statistics
+    /// cache contention"). Offsets come from `offset_of!` on the real struct.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn test_statistics_layout_64bit_is_compact_single_block() {
+        use std::mem::{align_of, size_of};
+
+        let mut layout = PriceLevelStatistics::field_layout();
+        layout.sort_by_key(|&(_, offset, _)| offset);
+
+        // Fields never overlap and all fit inside the struct.
+        for pair in layout.windows(2) {
+            let (_, a_off, a_size) = pair[0];
+            let (b_name, b_off, _) = pair[1];
+            assert!(a_off + a_size <= b_off, "{b_name} overlaps its predecessor");
+        }
+        let (_, last_off, last_size) = layout[layout.len() - 1];
+        assert!(last_off + last_size <= size_of::<PriceLevelStatistics>());
+
+        // 96 bytes, 16-byte aligned (the `AtomicU128` sets the alignment).
+        assert_eq!(size_of::<PriceLevelStatistics>(), 96);
+        assert_eq!(align_of::<PriceLevelStatistics>(), 16);
+
+        let offset_of = |name: &str| {
+            layout
+                .iter()
+                .find(|&&(n, _, _)| n == name)
+                .map(|&(_, offset, _)| offset)
+                .unwrap()
+        };
+        // Producer counters sit next to the execution aggregates and the
+        // seqlock word with no padding between them: every field lies within
+        // one 96-byte span, so on a 128-byte line (Apple aarch64) the whole
+        // struct occupies at most two lines, and on a 64-byte line (x86_64) at
+        // most three, whatever the 16-byte-aligned heap address.
+        let span = |a: &str, b: &str| offset_of(a).abs_diff(offset_of(b));
+        assert!(span("orders_added", "orders_executed") < 64);
+        assert!(span("orders_removed", "quantity_executed") < 64);
+        assert!(span("orders_added", "stats_seq") < 64);
+        for line in [64usize, 128] {
+            for base in (0..line).step_by(16) {
+                let first_line = base / line;
+                let last_line = (base + size_of::<PriceLevelStatistics>() - 1) / line;
+                let lines = last_line - first_line + 1;
+                assert!(lines <= if line == 64 { 3 } else { 2 });
+            }
+        }
+    }
 }

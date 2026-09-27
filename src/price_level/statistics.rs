@@ -131,6 +131,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// unless enabled at compile time). On a target without one, `portable-atomic`
 /// falls back to a global lock for this single counter; the other counters and
 /// the order queue are unaffected.
+///
+/// # Layout (issue #154)
+///
+/// On 64-bit targets the fields form one unpadded 96-byte block (16-byte
+/// aligned), so the producer counters `orders_added` / `orders_removed` usually
+/// share a cache line with the matcher's execution aggregates and `stats_seq`.
+/// That false sharing was measured and deliberately kept: separating the
+/// groups onto their own 128-byte lines removed it from a bare statistics
+/// object but showed no consistent or demonstrated repeatable p99 / p99.9
+/// benefit on a shared level, while raising
+/// the per-level allocation from 112 to 384 bytes. The data and method are in
+/// `BENCH.md`, "Statistics cache contention".
 #[derive(Debug)]
 pub struct PriceLevelStatistics {
     /// Number of orders added
@@ -1014,6 +1026,73 @@ impl PriceLevelStatistics {
     #[must_use]
     pub(crate) fn test_stats_seq(&self) -> u64 {
         self.stats_seq.load(Ordering::Relaxed)
+    }
+}
+
+/// Test-only layout probe (issue #154).
+///
+/// Returns `(field, byte offset, byte size)` for every field of
+/// [`PriceLevelStatistics`], in declaration order, as laid out by the compiler
+/// for the current target. Offsets come from [`std::mem::offset_of!`], so they
+/// reflect any field reordering `rustc` applied to this `repr(Rust)` struct.
+/// Used to report which fields can share a cache line; it has no production
+/// caller.
+#[cfg(test)]
+impl PriceLevelStatistics {
+    pub(crate) fn field_layout() -> [(&'static str, usize, usize); 10] {
+        use std::mem::{offset_of, size_of};
+        [
+            (
+                "orders_added",
+                offset_of!(Self, orders_added),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "orders_removed",
+                offset_of!(Self, orders_removed),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "orders_executed",
+                offset_of!(Self, orders_executed),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "quantity_executed",
+                offset_of!(Self, quantity_executed),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "value_executed",
+                offset_of!(Self, value_executed),
+                size_of::<AtomicU128>(),
+            ),
+            (
+                "last_execution_time",
+                offset_of!(Self, last_execution_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "first_arrival_time",
+                offset_of!(Self, first_arrival_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "sum_waiting_time",
+                offset_of!(Self, sum_waiting_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "stats_degraded",
+                offset_of!(Self, stats_degraded),
+                size_of::<AtomicBool>(),
+            ),
+            (
+                "stats_seq",
+                offset_of!(Self, stats_seq),
+                size_of::<AtomicU64>(),
+            ),
+        ]
     }
 }
 
