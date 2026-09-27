@@ -78,9 +78,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// point reads with no cross-field guarantee.
 ///
 /// A reader retries while a write section is open, so a writer descheduled
-/// inside its section delays readers (they spin) until it resumes; the
-/// section is short, finite and allocation-free, and a panicking writer
-/// closes it through the guard's `Drop`.
+/// inside its section delays readers (they spin) until it resumes. The
+/// section is short and finite; a successful record is allocation-free, but a
+/// rejected one (a maker timestamp in the future of execution, or a
+/// multiplication / counter overflow) formats its error while the section is
+/// still open, so readers also wait on that formatting and allocator work. A
+/// panicking writer closes the section through the guard's `Drop`.
 ///
 /// # `value_executed` width (issue #140)
 ///
