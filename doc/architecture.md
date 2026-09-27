@@ -32,8 +32,11 @@ no feature flags.
 3. `PriceLevel::update_order` cancels, resizes or replaces an order in place.
 4. `PriceLevel::snapshot` materializes the orders and recomputes the
    aggregates from them; `PriceLevelSnapshotPackage` wraps it with a SHA-256
-   checksum. It is not a linearizable point-in-time view under concurrent
-   same-side resizes (see #162).
+   checksum. It is fallible (#162): a collected set whose totals overflow or
+   whose sides are inconsistent is discarded and recollected, up to 8 attempts,
+   then a typed error is returned, so the stored aggregates always agree with
+   the collected orders. It is still not a linearizable point-in-time view
+   under concurrent same-side resizes.
 
 ## Concurrency model
 

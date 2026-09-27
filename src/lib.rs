@@ -921,6 +921,7 @@
 //!     TradeList::from_str(&format!("Trades:[{trade};note=]]")),
 //!     Err(PriceLevelError::InvalidFormat)
 //! ));
+//! ```
 //!
 //! ## Migration Guide (fallible `PriceLevel::snapshot` — breaking)
 //!
@@ -934,8 +935,8 @@
 //! walk, recollects a bounded number of times (8 attempts), and returns a typed
 //! error if no attempt is coherent.
 //!
-//! | v0.10 | next |
-//! |-------|------|
+//! | v0.9 | v0.10 |
+//! |------|-------|
 //! | `level.snapshot() -> PriceLevelSnapshot` | [`level.snapshot()`](PriceLevel::snapshot) `-> Result<PriceLevelSnapshot, PriceLevelError>` |
 //! | `level.snapshot_package()`, `level.snapshot_to_json()` | Unchanged signatures; they now also return the snapshot's [`PriceLevelError::InvalidOperation`] |
 //!

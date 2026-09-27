@@ -928,8 +928,9 @@ assert!(matches!(
     TradeList::from_str(&format!("Trades:[{trade};note=]]")),
     Err(PriceLevelError::InvalidFormat)
 ));
+```
 
-## Migration Guide (fallible `PriceLevel::snapshot` — breaking)
+### Migration Guide (fallible `PriceLevel::snapshot` — breaking)
 
 [`PriceLevel::snapshot`] walks the order shards without a transaction over
 the whole level, so a same-side quantity transfer between two shards during
@@ -941,8 +942,8 @@ value that disagreed with the snapshot's own orders. It now rejects that
 walk, recollects a bounded number of times (8 attempts), and returns a typed
 error if no attempt is coherent.
 
-| v0.10 | next |
-|-------|------|
+| v0.9 | v0.10 |
+|------|-------|
 | `level.snapshot() -> PriceLevelSnapshot` | [`level.snapshot()`](PriceLevel::snapshot) `-> Result<PriceLevelSnapshot, PriceLevelError>` |
 | `level.snapshot_package()`, `level.snapshot_to_json()` | Unchanged signatures; they now also return the snapshot's [`PriceLevelError::InvalidOperation`] |
 

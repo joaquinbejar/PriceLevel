@@ -8,8 +8,8 @@ Issue #172. Companion to the Production Panic Policy in
 
 The Production Panic Policy in `rules/global_rules.md` requires that
 crate-owned code not initiate panics. That is the required policy, not a
-completed state: remaining crate-owned panic paths (for example the
-`snapshot()` aggregate assertions) are being removed under the audit in
+completed state: remaining crate-owned panic paths (the `snapshot()`
+aggregate assertions were removed in #162) are being removed under the audit in
 [#161](https://github.com/joaquinbejar/PriceLevel/issues/161) and its
 sub-issues, and are out of scope here. This document covers the separate
 question of code the crate does not own. Some public operations call it: trait impls on a caller payload, caller closures, a caller's

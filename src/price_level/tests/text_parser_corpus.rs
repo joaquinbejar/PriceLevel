@@ -284,7 +284,10 @@ mod tests {
                     ),
                 ],
             ),
-            ("PriceLevelSnapshot", vec![level.snapshot().to_string()]),
+            (
+                "PriceLevelSnapshot",
+                vec![level.snapshot().expect("snapshot").to_string()],
+            ),
             ("PriceLevelStatistics", vec![level.stats().to_string()]),
             (
                 "OrderBookEntry",
