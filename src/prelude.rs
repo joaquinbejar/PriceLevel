@@ -13,6 +13,5 @@ pub use crate::orders::PegReferenceType;
 pub use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
 pub use crate::price_level::{OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot};
 pub use crate::utils::{
-    EntropySource, Price, Quantity, SystemClock, TimestampMs, UnixClock, UuidGenerator,
-    setup_logger,
+    EntropySource, Price, Quantity, TimestampMs, UnixClock, UuidGenerator, setup_logger,
 };

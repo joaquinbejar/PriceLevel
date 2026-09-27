@@ -127,13 +127,10 @@ impl Id {
     ///
     /// # Errors
     ///
-    /// - The error reported by `clock`, unchanged (for [`SystemClock`]:
-    ///   [`PriceLevelError::InvalidOperation`] before the Unix epoch).
+    /// - The error reported by `clock`, unchanged.
     /// - [`PriceLevelError::InvalidFieldValue`] (field `timestamp_ms`) if the
     ///   time exceeds [`Id::ULID_MAX_TIMESTAMP_MS`].
     /// - The error reported by `entropy`, unchanged.
-    ///
-    /// [`SystemClock`]: crate::SystemClock
     pub fn try_new_ulid<C, E>(clock: &C, entropy: &mut E) -> Result<Self, PriceLevelError>
     where
         C: UnixClock + ?Sized,
@@ -277,9 +274,9 @@ impl Id {
 #[cfg(test)]
 mod tests {
     use super::Id;
+    use crate::Side;
     use crate::errors::PriceLevelError;
     use crate::utils::{EntropySource, TimestampMs, UnixClock};
-    use crate::{Side, SystemClock};
     use std::str::FromStr;
     use uuid::{Uuid, Variant};
 
@@ -492,7 +489,7 @@ mod tests {
     fn test_random_constructors_accept_trait_objects() {
         let mut source = CountingEntropy::starting_at(0);
         let entropy: &mut dyn EntropySource = &mut source;
-        let clock: &dyn UnixClock = &SystemClock;
+        let clock: &dyn UnixClock = &FixedClock(1_716_000_000_000);
         let first = Id::try_new(clock, entropy).unwrap();
         let second = Id::try_new_uuid(entropy).unwrap();
         assert!(first.is_ulid());

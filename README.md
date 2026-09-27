@@ -682,8 +682,10 @@ The random [`Id`] constructors could panic inside `uuid` / `ulid` / `rand`
 when the operating system failed to provide entropy (or an RNG failed to
 seed or reseed), and `Default` hid that behind an infallible trait. They
 are replaced by fallible constructors that draw bytes from a
-**caller-supplied** [`EntropySource`] and, for ULIDs, read a
-[`UnixClock`]. The crate owns no randomness source and adds no dependency.
+**caller-supplied** [`EntropySource`] and, for ULIDs, take their timestamp
+from a **caller-supplied** [`UnixClock`] or an explicit [`TimestampMs`].
+The crate owns no randomness source and no clock reader, and adds no
+dependency.
 
 | v0.9 | v0.10 |
 |------|-------|
@@ -697,9 +699,7 @@ All return `Result<Id, PriceLevelError>`:
 
 - an entropy failure is returned unchanged from the source (conventionally
   the new [`PriceLevelError::EntropyUnavailable`] variant);
-- a clock failure is returned unchanged from the clock; [`SystemClock`]
-  reports a pre-epoch clock as [`PriceLevelError::InvalidOperation`] and a
-  millisecond count beyond `u64` as [`PriceLevelError::InvalidFieldValue`];
+- a clock failure is returned unchanged from the caller's [`UnixClock`];
 - a timestamp above [`Id::ULID_MAX_TIMESTAMP_MS`] (the 48-bit ULID time
   field) is rejected with [`PriceLevelError::InvalidFieldValue`] instead of
   being silently masked, and before any entropy is drawn.
@@ -712,29 +712,46 @@ the 48-bit timestamp and 80 random bits.
 Implement [`EntropySource`] over the randomness facility your application
 already uses (an OS call such as `getrandom`, or a CSPRNG) and map its
 failure into a [`PriceLevelError`]. **Implementations must not panic** and
-must never fill the buffer with predictable bytes on failure; return `Err`
-instead. A caller-supplied [`UnixClock`] carries the same no-panic
-obligation. [`SystemClock`] reads `std::time::SystemTime::now`, whose own
-failure handling belongs to the standard library.
+must never report success without writing fresh unpredictable bytes into
+the whole buffer; return `Err` instead. A caller-supplied [`UnixClock`]
+carries the same no-panic obligation. Note that
+`std::time::SystemTime::now` panics inside `std` if the platform clock
+call fails, so a strictly panic-free clock needs a fallible time source;
+[`TimestampMs::try_from_system_time`] converts an already-read
+`SystemTime` with checked arithmetic (pre-epoch and `u64` overflow are
+typed errors).
+
+The adapter below delegates to a fill function the application owns and
+maps its error. Until a real source is wired in, the example's stand-in
+fails, and the constructors surface that failure instead of producing an id:
 
 ```rust
-use pricelevel::{EntropySource, Id, PriceLevelError, SystemClock};
+use pricelevel::{EntropySource, Id, PriceLevelError, TimestampMs};
 
-struct MyEntropy; // wrap your application's RNG / OS entropy call here
+/// Adapts an application-owned fallible fill function, for example
+/// `FillEntropy(getrandom::fill)` with `getrandom` as your own dependency.
+struct FillEntropy<F>(F);
 
-impl EntropySource for MyEntropy {
+impl<F, E> EntropySource for FillEntropy<F>
+where
+    F: FnMut(&mut [u8]) -> Result<(), E>,
+    E: std::fmt::Display,
+{
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), PriceLevelError> {
-        // e.g. `getrandom::fill(dest).map_err(|e| PriceLevelError::EntropyUnavailable {
-        //     message: e.to_string(),
-        // })`
-        Ok(())
+        (self.0)(dest).map_err(|error| PriceLevelError::EntropyUnavailable {
+            message: error.to_string(),
+        })
     }
 }
 
-let order_id = Id::try_new(&SystemClock, &mut MyEntropy)?;
-assert!(order_id.is_ulid());
-let trade_id = Id::try_new_uuid(&mut MyEntropy)?;
-assert!(trade_id.is_uuid());
+// Stand-in for an entropy source that is not configured (or has failed).
+let mut entropy = FillEntropy(|_dest: &mut [u8]| Err("entropy source not configured"));
+
+let uuid = Id::try_new_uuid(&mut entropy);
+assert!(matches!(uuid, Err(PriceLevelError::EntropyUnavailable { .. })));
+
+let ulid = Id::try_new_ulid_at(TimestampMs::new(1_716_000_000_000), &mut entropy);
+assert!(matches!(ulid, Err(PriceLevelError::EntropyUnavailable { .. })));
 ```
 
 Deterministic ids that need no entropy are unchanged: [`Id::sequential`],

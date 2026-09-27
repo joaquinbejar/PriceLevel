@@ -4,13 +4,18 @@
 //! The crate deliberately owns no source of randomness: every random
 //! identifier is built from bytes a caller-supplied [`EntropySource`] hands
 //! over, so an operating-system entropy failure surfaces as a typed
-//! [`PriceLevelError`] instead of a panic inside a dependency's RNG. ULIDs
-//! additionally read a [`UnixClock`]; [`SystemClock`] is the standard
-//! implementation backed by [`std::time::SystemTime`].
+//! [`PriceLevelError`] instead of a panic inside a dependency's RNG.
+//!
+//! Likewise the crate owns no clock reader: ULIDs take their timestamp from a
+//! caller-supplied [`UnixClock`] or an explicit [`TimestampMs`]
+//! ([`Id::try_new_ulid_at`](crate::Id::try_new_ulid_at)). Reading the OS
+//! clock through `std::time::SystemTime::now` can itself panic inside `std`
+//! if the platform clock call fails, so that choice (and its failure policy)
+//! stays with the caller. [`TimestampMs::try_from_system_time`] performs the
+//! checked conversion of an already-read `SystemTime`.
 
 use crate::errors::PriceLevelError;
 use crate::utils::TimestampMs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A fallible source of unpredictable bytes used to build random identifiers.
 ///
@@ -73,6 +78,12 @@ pub trait EntropySource {
 ///
 /// Implementations **must not panic** and must report clock failures through
 /// `Err` rather than substituting zero or another fallback value.
+///
+/// The crate provides no implementation. Note that
+/// `std::time::SystemTime::now` panics inside `std` if the platform clock
+/// call fails; an implementation that must be panic-free needs a clock read
+/// with a fallible error channel. Convert an already-read `SystemTime` with
+/// [`TimestampMs::try_from_system_time`].
 pub trait UnixClock {
     /// Returns the current time in milliseconds since the Unix epoch.
     ///
@@ -81,108 +92,4 @@ pub trait UnixClock {
     /// Returns a [`PriceLevelError`] when the clock cannot be read or its value
     /// cannot be represented as a [`TimestampMs`].
     fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError>;
-}
-
-/// [`UnixClock`] backed by [`SystemTime::now`].
-///
-/// A clock set before the Unix epoch yields
-/// [`PriceLevelError::InvalidOperation`]; a time whose millisecond count does
-/// not fit in `u64` yields [`PriceLevelError::InvalidFieldValue`]. No value is
-/// clamped or defaulted.
-///
-/// Reading the OS clock goes through the standard library, which itself
-/// aborts the read with a panic if the platform clock call fails outright
-/// (for example `clock_gettime(CLOCK_REALTIME)` returning an error). That
-/// path is owned by `std`, not by this crate, and is shared with every other
-/// `SystemTime::now` caller; supply your own [`UnixClock`] if you need to
-/// avoid it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SystemClock;
-
-impl SystemClock {
-    /// Converts a [`SystemTime`] into milliseconds since the Unix epoch.
-    ///
-    /// # Errors
-    ///
-    /// - [`PriceLevelError::InvalidOperation`] if `time` is before the epoch.
-    /// - [`PriceLevelError::InvalidFieldValue`] if the millisecond count does
-    ///   not fit in `u64`.
-    pub fn timestamp_ms_from(time: SystemTime) -> Result<TimestampMs, PriceLevelError> {
-        let since_epoch =
-            time.duration_since(UNIX_EPOCH)
-                .map_err(|error| PriceLevelError::InvalidOperation {
-                    message: format!("system clock is before the unix epoch: {error}"),
-                })?;
-        let millis = since_epoch.as_millis();
-        let millis = u64::try_from(millis).map_err(|_| PriceLevelError::InvalidFieldValue {
-            field: "timestamp_ms".to_string(),
-            value: millis.to_string(),
-        })?;
-        Ok(TimestampMs::new(millis))
-    }
-}
-
-impl UnixClock for SystemClock {
-    fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
-        Self::timestamp_ms_from(SystemTime::now())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{SystemClock, UnixClock};
-    use crate::errors::PriceLevelError;
-    use std::time::{Duration, UNIX_EPOCH};
-
-    #[test]
-    fn test_system_clock_epoch_is_zero() {
-        let ts = SystemClock::timestamp_ms_from(UNIX_EPOCH).unwrap();
-        assert_eq!(ts.as_u64(), 0);
-    }
-
-    #[test]
-    fn test_system_clock_truncates_sub_millisecond_part() {
-        let time = UNIX_EPOCH + Duration::from_micros(1_716_000_000_123_999);
-        let ts = SystemClock::timestamp_ms_from(time).unwrap();
-        assert_eq!(ts.as_u64(), 1_716_000_000_123);
-    }
-
-    #[test]
-    fn test_system_clock_rejects_pre_epoch_time() {
-        let before = UNIX_EPOCH.checked_sub(Duration::from_millis(1)).unwrap();
-        let err = SystemClock::timestamp_ms_from(before).unwrap_err();
-        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
-    }
-
-    #[test]
-    fn test_system_clock_rejects_millis_beyond_u64() {
-        // u64::MAX ms + 1 ms, built from seconds + millis to avoid overflow.
-        let secs = u64::MAX / 1_000;
-        let extra_millis = u64::MAX % 1_000 + 1;
-        let span = Duration::from_secs(secs) + Duration::from_millis(extra_millis);
-        // Only meaningful on platforms whose `SystemTime` can represent it.
-        if let Some(far_future) = UNIX_EPOCH.checked_add(span) {
-            let err = SystemClock::timestamp_ms_from(far_future).unwrap_err();
-            match err {
-                PriceLevelError::InvalidFieldValue { field, value } => {
-                    assert_eq!(field, "timestamp_ms");
-                    assert_eq!(value, (u128::from(u64::MAX) + 1).to_string());
-                }
-                other => panic!("unexpected error {other:?}"),
-            }
-        }
-        // The largest representable millisecond count is accepted.
-        if let Some(max) = UNIX_EPOCH.checked_add(Duration::from_millis(u64::MAX)) {
-            assert_eq!(
-                SystemClock::timestamp_ms_from(max).unwrap().as_u64(),
-                u64::MAX
-            );
-        }
-    }
-
-    #[test]
-    fn test_system_clock_now_is_after_2020() {
-        let now = SystemClock.try_now_ms().unwrap();
-        assert!(now.as_u64() > 1_577_836_800_000);
-    }
 }

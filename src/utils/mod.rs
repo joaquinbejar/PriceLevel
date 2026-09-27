@@ -10,7 +10,7 @@ mod logger;
 mod uuid;
 mod value;
 
-pub use entropy::{EntropySource, SystemClock, UnixClock};
+pub use entropy::{EntropySource, UnixClock};
 pub use id::Id;
 pub use logger::setup_logger;
 pub use uuid::UuidGenerator;
