@@ -1032,6 +1032,34 @@
 //!   `Display` / `FromStr` text form does not carry the error slot (it decodes
 //!   as "no error", like `outcome`).
 //!
+//! ## Migration Guide (fallible order matching arithmetic — breaking)
+//!
+//! Every quantity operation in the order-matching paths is checked (#169).
+//!
+//! | v0.9 | v0.10 |
+//! |------|-------|
+//! | `OrderType::match_against(&self, u64) -> (u64, Option<Self>, u64, u64)` | [`OrderType::match_against`] `-> Result<(u64, Option<Self>, u64, u64), PriceLevelError>` |
+//! | `OrderType::refresh_iceberg(&self, NonZeroU64) -> (Self, u64)` | [`OrderType::refresh_iceberg`] `-> Result<(Self, u64), PriceLevelError>` |
+//!
+//! - The tuple contents are unchanged on success. Add `?` (or match the
+//!   `Result`); an `Err` is [`PriceLevelError::InvalidOperation`] and the input
+//!   order is unchanged (both methods borrow `self`).
+//! - A reserve order whose partial-fill replenishment `new_visible +
+//!   replenish_qty` overflows `u64` now returns `InvalidOperation`. Before, it
+//!   returned the "no progress" tuple `(0, Some(self.clone()), 0, incoming)`.
+//!   Only an order whose own visible + hidden exceeds `u64::MAX` reaches this,
+//!   and [`PriceLevel::add_order`] never admits one, so a level's matching is
+//!   unchanged for every admitted order. Every subtraction is bounded by a
+//!   preceding comparison or `min`, so its error branch is unreachable.
+//! - [`PriceLevel::match_order`] handles an `Err` from `match_against` under
+//!   the #164 contract: the sweep stops at that maker before mutating it and
+//!   reports the committed prefix with [`MatchResult::error`] set; a
+//!   fill-or-kill taker detects it in its dry run and is
+//!   [`MatchOutcome::Killed`] with the error set and the level unchanged.
+//!   [`PriceLevel::matchable_quantity`] returns the same prefix.
+//! - [`DEFAULT_RESERVE_REPLENISH_AMOUNT`] keeps its type (`NonZeroU64`) and
+//!   value (`80`); only its construction changed (no `unreachable!`).
+//!
 
 mod orders;
 mod price_level;

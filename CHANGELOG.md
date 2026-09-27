@@ -135,6 +135,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iceberg / reserve replenishment headroom depends on visit order: its total,
   and so a fill-or-kill verdict, can now differ from 0.9 and matches what the
   sweep executes.
+- **Order matching arithmetic is fallible (#169).**
+  `OrderType::match_against` now returns
+  `Result<(u64, Option<Self>, u64, u64), PriceLevelError>` and
+  `OrderType::refresh_iceberg` returns `Result<(Self, u64), PriceLevelError>`.
+  Every quantity subtraction and addition in them is checked and fails as
+  `PriceLevelError::InvalidOperation`. A reserve whose partial-fill
+  replenishment overflows `u64` (reachable only for an order `add_order`
+  rejects, e.g. visible = hidden = threshold = `u64::MAX`) returns that error
+  instead of an unchanged-order "no progress" tuple; the input order is always
+  unchanged. `PriceLevel::match_order` treats such an error under the #164
+  contract: the sweep stops before mutating that maker and reports the
+  committed prefix with `MatchResult::error` set, and a fill-or-kill taker is
+  killed in its dry run with the error set and the level unchanged. Matching
+  of every admitted order is unchanged. `DEFAULT_RESERVE_REPLENISH_AMOUNT`
+  keeps type `NonZeroU64` and value `80`; it is now built without
+  `unreachable!` (a zero literal is a compile-time trait-bound error).
 
 - **`PriceLevel::snapshot` is fallible (#162).** It now returns
   `Result<PriceLevelSnapshot, PriceLevelError>`. The shard walk has no
