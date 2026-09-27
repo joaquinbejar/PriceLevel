@@ -1,9 +1,9 @@
 use crate::errors::{CapacityResource, PriceLevelError};
-use crate::orders::OrderType;
+use crate::orders::{Id, OrderType, Side};
 use crate::price_level::statistics::PriceLevelStatistics;
 use crate::utils::alloc::{
     FallibleWriter, capacity_error, try_copy_str, try_push_vec, try_reserve_exact_vec,
-    try_reserve_string, try_reserve_vec,
+    try_reserve_set, try_reserve_string, try_reserve_vec,
 };
 use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{Price, Quantity};
@@ -309,38 +309,220 @@ impl SnapshotAggregates {
     /// visible + hidden total overflows `u64`, or if the visible or hidden sum
     /// across `orders` overflows `u64`.
     pub(crate) fn from_orders(orders: &[Arc<OrderType<()>>]) -> Result<Self, PriceLevelError> {
-        let mut visible_total: u64 = 0;
-        let mut hidden_total: u64 = 0;
-
+        let mut fold = AggregateFold::default();
         for order in orders {
-            let visible = order.visible_quantity().as_u64();
-            let hidden = order.hidden_quantity().as_u64();
+            fold.push(order)?;
+        }
+        Ok(fold.finish(orders.len()))
+    }
+}
 
-            // Reject any order whose OWN visible + hidden total is not
-            // representable in `u64`. `PriceLevel::add_order` enforces this same
-            // per-order invariant at admission, and the match sweep's reserve
-            // replenishment relies on it (a refreshed tranche is
-            // `new_visible + drawn_hidden <= visible + hidden`, which overflows
-            // only if the order's own total already does). Restoring such an
-            // order would smuggle in a state admission rejects, so the restore
-            // path validates it too rather than trusting the serialized bytes.
-            if visible.checked_add(hidden).is_none() {
-                return Err(aggregate_overflow("order total quantity overflows u64"));
-            }
+/// Running checked fold of per-order visible / hidden quantities behind
+/// [`SnapshotAggregates::from_orders`], which the refresh, the live snapshot
+/// and the restore validation
+/// ([`PriceLevelSnapshot::into_validated_restore`], issue #150) all use, so
+/// they reject the same order with the same error.
+#[derive(Debug, Default)]
+struct AggregateFold {
+    /// Sum of the visible quantities folded so far.
+    visible_total: u64,
+    /// Sum of the hidden quantities folded so far.
+    hidden_total: u64,
+}
 
-            visible_total = visible_total
-                .checked_add(visible)
-                .ok_or_else(|| aggregate_overflow("snapshot visible quantity overflow"))?;
+impl AggregateFold {
+    /// Folds one order. On error the fold is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if the order's own visible +
+    /// hidden total overflows `u64` (checked first), or if adding it to the
+    /// running visible or hidden sum overflows `u64` (in that order).
+    #[inline]
+    fn push(&mut self, order: &OrderType<()>) -> Result<(), PriceLevelError> {
+        let visible = order.visible_quantity().as_u64();
+        let hidden = order.hidden_quantity().as_u64();
 
-            hidden_total = hidden_total
-                .checked_add(hidden)
-                .ok_or_else(|| aggregate_overflow("snapshot hidden quantity overflow"))?;
+        // Reject any order whose OWN visible + hidden total is not
+        // representable in `u64`. `PriceLevel::add_order` enforces this same
+        // per-order invariant at admission, and the match sweep's reserve
+        // replenishment relies on it (a refreshed tranche is
+        // `new_visible + drawn_hidden <= visible + hidden`, which overflows
+        // only if the order's own total already does). Restoring such an
+        // order would smuggle in a state admission rejects, so the restore
+        // path validates it too rather than trusting the serialized bytes.
+        if visible.checked_add(hidden).is_none() {
+            return Err(aggregate_overflow("order total quantity overflows u64"));
         }
 
-        Ok(Self {
-            visible_quantity: Quantity::new(visible_total),
-            hidden_quantity: Quantity::new(hidden_total),
-            order_count: orders.len(),
+        let visible_total = self
+            .visible_total
+            .checked_add(visible)
+            .ok_or_else(|| aggregate_overflow("snapshot visible quantity overflow"))?;
+        let hidden_total = self
+            .hidden_total
+            .checked_add(hidden)
+            .ok_or_else(|| aggregate_overflow("snapshot hidden quantity overflow"))?;
+
+        self.visible_total = visible_total;
+        self.hidden_total = hidden_total;
+        Ok(())
+    }
+
+    /// The folded aggregates for `order_count` orders.
+    #[inline]
+    fn finish(self, order_count: usize) -> SnapshotAggregates {
+        SnapshotAggregates {
+            visible_quantity: Quantity::new(self.visible_total),
+            hidden_quantity: Quantity::new(self.hidden_total),
+            order_count,
+        }
+    }
+}
+
+/// A snapshot whose orders passed every restore check, carrying what
+/// [`crate::price_level::PriceLevel::from_snapshot`] needs to build the level
+/// (issue #150). Produced only by
+/// [`PriceLevelSnapshot::into_validated_restore`].
+#[derive(Debug)]
+pub(crate) struct ValidatedRestore {
+    /// The level price, in price ticks.
+    pub(crate) price: Price,
+    /// Aggregates recomputed from `orders` (the snapshot's stored aggregate
+    /// fields are not trusted).
+    pub(crate) aggregates: SnapshotAggregates,
+    /// The single side every order shares; `None` for an empty snapshot.
+    pub(crate) side: Option<Side>,
+    /// The orders, in snapshot (queue-consumption) order, unchanged.
+    pub(crate) orders: Vec<Arc<OrderType<()>>>,
+    /// The persisted statistics, moved out of the snapshot, with their
+    /// private seqlock sequence restarted at 0.
+    pub(crate) statistics: PriceLevelStatistics,
+}
+
+/// Error for an order price that differs from the level price.
+#[cold]
+#[inline(never)]
+fn topology_price_error(order_price: u128, level_price: u128) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "snapshot order price {order_price} does not match level price {level_price}"
+        ),
+    }
+}
+
+/// Error for an order side that differs from the level side.
+#[cold]
+#[inline(never)]
+fn topology_side_error(order_side: Side, level_side: Side) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "snapshot order side {order_side:?} is incompatible with the level side {level_side:?}"
+        ),
+    }
+}
+
+/// Error for an order id repeated in the snapshot.
+#[cold]
+#[inline(never)]
+fn duplicate_id_error(id: Id) -> PriceLevelError {
+    PriceLevelError::DuplicateOrderId(id.to_string())
+}
+
+impl PriceLevelSnapshot {
+    /// Validates the orders for restoration and returns the validated parts
+    /// (issue #150).
+    ///
+    /// Before #150 restore walked the orders three times (aggregate refresh,
+    /// duplicate ids, topology), each walk returning its first error. Now it
+    /// walks them twice:
+    ///
+    /// 1. The allocation-free checked aggregate fold
+    ///    ([`SnapshotAggregates::from_orders`]). It runs to completion before
+    ///    anything is allocated, so a snapshot rejected here costs no
+    ///    scratch memory, whatever the position of the failing order.
+    /// 2. One fused pass over ids and topology, with the duplicate-id set
+    ///    reserved once for the whole vector.
+    ///
+    /// The error precedence is the pre-#150 one, unchanged:
+    ///
+    /// 1. Aggregates (per-order total, then the running visible and hidden
+    ///    sums): the first failing order in vector order.
+    /// 2. [`PriceLevelError::CapacityExceeded`] (resource
+    ///    [`CapacityResource::RestoreScratch`]) if the duplicate-id set
+    ///    cannot be reserved.
+    /// 3. [`PriceLevelError::DuplicateOrderId`] for the first id that
+    ///    repeats, reported at its second occurrence.
+    /// 4. Topology: the first order whose price differs from the level price
+    ///    or whose side differs from the first order's side (price checked
+    ///    before side for the same order).
+    ///
+    /// In the fused pass a duplicate is returned at once (nothing left
+    /// outranks it), while a topology violation is recorded and the pass
+    /// keeps checking ids only, so a later duplicate still wins. Duplicates
+    /// are always an error: the queue's keep-first behaviour is never relied
+    /// upon.
+    ///
+    /// # Errors
+    ///
+    /// As ranked above; the snapshot is consumed either way.
+    #[inline(never)]
+    pub(crate) fn into_validated_restore(self) -> Result<ValidatedRestore, PriceLevelError> {
+        // Walk 1, rank 1: allocation-free.
+        let aggregates = SnapshotAggregates::from_orders(&self.orders)?;
+
+        // Rank 2. Sized by an input-derived length, so reserved fallibly
+        // (issue #164).
+        let mut seen = std::collections::HashSet::new();
+        try_reserve_set(
+            &mut seen,
+            self.orders.len(),
+            CapacityResource::RestoreScratch,
+        )?;
+
+        // Walk 2, ranks 3 and 4.
+        let level_price = self.price.as_u128();
+        let mut topology_failure: Option<PriceLevelError> = None;
+        let mut side: Option<Side> = None;
+        for order in &self.orders {
+            if !seen.insert(order.id()) {
+                return Err(duplicate_id_error(order.id()));
+            }
+            // Only the first topology violation is kept.
+            if topology_failure.is_some() {
+                continue;
+            }
+            let order_price = order.price().as_u128();
+            if order_price != level_price {
+                topology_failure = Some(topology_price_error(order_price, level_price));
+                continue;
+            }
+            match side {
+                None => side = Some(order.side()),
+                Some(level_side) if level_side != order.side() => {
+                    topology_failure = Some(topology_side_error(order.side(), level_side));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(error) = topology_failure {
+            return Err(error);
+        }
+        // The scratch set is no longer needed; release it before the caller
+        // builds the queue, lowering the restore's peak memory.
+        drop(seen);
+
+        // The statistics are moved, not cloned; restart their private seqlock
+        // sequence as the former clone did, so a restore still rebuilds a
+        // level whose sequence was near exhaustion (issue #165).
+        let mut statistics = self.statistics;
+        statistics.restart_seq_exclusive();
+        Ok(ValidatedRestore {
+            price: self.price,
+            aggregates,
+            side,
+            orders: self.orders,
+            statistics,
         })
     }
 }

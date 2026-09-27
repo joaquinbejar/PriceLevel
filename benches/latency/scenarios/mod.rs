@@ -6,6 +6,7 @@ mod contention;
 mod depth;
 mod isolated;
 mod matching;
+pub mod restore_sizes;
 mod snapshot;
 pub mod snapshot_sizes;
 mod stats_contention;
@@ -35,6 +36,10 @@ pub fn run_all(config: &Config) -> Vec<ScenarioReport> {
     }
     if config.runs("snapshot_sizes") {
         reports.extend(snapshot_sizes::run(config));
+    }
+
+    if config.runs("restore_sizes") {
+        reports.extend(restore_sizes::run(config));
     }
     if config.runs("depth") {
         reports.extend(depth::run(config));

@@ -1005,6 +1005,20 @@ impl PriceLevelStatistics {
         Ok(())
     }
 
+    /// Restarts the private seqlock sequence at 0 on an exclusively owned
+    /// value, keeping every counter and the degraded flag (issue #150).
+    ///
+    /// A snapshot restore moves the persisted statistics into the rebuilt
+    /// level instead of cloning them; [`Clone`] always produced a fresh even
+    /// sequence, and this keeps that behaviour, so rebuilding a level through
+    /// a snapshot still recovers one whose sequence was near exhaustion
+    /// (issue #165). `&mut self` proves no reader or writer can observe the
+    /// store, so no atomic read-modify-write is needed.
+    #[inline]
+    pub(crate) fn restart_seq_exclusive(&mut self) {
+        *self.stats_seq.get_mut() = 0;
+    }
+
     /// Test-only seeding seam (issue #165): place the seqlock sequence at
     /// `value` so the exhaustion protocol can be exercised without an
     /// astronomical number of write sections.

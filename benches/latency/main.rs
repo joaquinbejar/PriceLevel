@@ -78,6 +78,16 @@ fn main() {
         println!();
     }
 
+    if config.runs("restore_sizes") {
+        // Issue #150: allocation count / bytes / peak live bytes of snapshot
+        // restore, per level size (untimed pass).
+        println!("== Restore size sweep allocations (separate pass, not timed) ==");
+        for line in scenarios::restore_sizes::run_alloc(&config) {
+            println!("{line}");
+        }
+        println!();
+    }
+
     if !config.runs("alloc") {
         return;
     }
