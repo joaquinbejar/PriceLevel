@@ -216,11 +216,54 @@ impl UuidGenerator {
     /// Builds the UUID for a reserved sequence value: v5 over the value's
     /// decimal text. Pure; the caller must have reserved `value` from this
     /// generator.
+    ///
+    /// This runs once per emitted trade inside
+    /// [`PriceLevel::match_order`](crate::PriceLevel::match_order), so it is
+    /// on the fill hot path. The decimal name is encoded into a fixed stack
+    /// buffer (issue #146) instead of a heap `String`; the hashed bytes are
+    /// exactly `value.to_string().as_bytes()`, so every id is byte-identical
+    /// to the pre-#146 allocating form.
     #[must_use]
+    #[inline]
     pub(crate) fn uuid_for(&self, value: u64) -> Uuid {
-        let name = value.to_string();
-        Uuid::new_v5(&self.namespace, name.as_bytes())
+        let mut buf = [0u8; MAX_U64_DECIMAL_DIGITS];
+        Uuid::new_v5(&self.namespace, encode_decimal(value, &mut buf))
     }
+}
+
+/// Decimal digits in `u64::MAX` (`18446744073709551615`): the widest name
+/// any sequence value can produce.
+const MAX_U64_DECIMAL_DIGITS: usize = 20;
+
+/// Writes the ASCII decimal representation of `value` (no sign, no leading
+/// zeros, `b"0"` for zero) right-aligned into `buf` and returns the used
+/// suffix: exactly the bytes of `value.to_string()`, without allocating.
+///
+/// Digits are written least-significant first through the reversed mutable
+/// iterator, so there is no indexing or slicing expression, no narrowing
+/// cast and no arithmetic that can overflow (`% 10` and `/ 10` on a `u64`
+/// cannot). `start` is always a position yielded by the iterator (`0..20`)
+/// and the loop always stops by `remaining == 0` because a `u64` has at most
+/// 20 decimal digits, so the checked `get(start..)` always succeeds; its
+/// `unwrap_or` arm is dead and only there to stay panic-free.
+#[inline]
+fn encode_decimal(value: u64, buf: &mut [u8; MAX_U64_DECIMAL_DIGITS]) -> &[u8] {
+    let mut remaining = value;
+    let mut start = 0;
+    for (position, slot) in buf.iter_mut().enumerate().rev() {
+        // `remaining % 10` is in `0..=9`, so its lowest little-endian byte is
+        // the whole digit, and `b'0' | digit == b'0' + digit` (0x30 has its
+        // low nibble clear).
+        let [digit, ..] = (remaining % 10).to_le_bytes();
+        *slot = b'0' | digit;
+        remaining /= 10;
+        if remaining == 0 {
+            start = position;
+            break;
+        }
+    }
+    let buf: &[u8] = buf;
+    buf.get(start..).unwrap_or(buf)
 }
 
 #[cfg(test)]
@@ -589,6 +632,79 @@ mod tests {
         assert_eq!(block.take(), Some(u64::MAX - 1));
         assert_eq!(block.take(), None);
         assert_exhausted_error(&generator.try_reserve_block(1).unwrap_err(), 1);
+    }
+
+    // ---- issue #146: allocation-free decimal name encoding ----
+
+    /// The pre-#146 reference form: v5 over the heap-allocated decimal text.
+    fn reference_uuid(namespace: &Uuid, value: u64) -> Uuid {
+        Uuid::new_v5(namespace, value.to_string().as_bytes())
+    }
+
+    fn assert_equivalent(generator: &UuidGenerator, value: u64) {
+        let mut buf = [0u8; MAX_U64_DECIMAL_DIGITS];
+        assert_eq!(
+            encode_decimal(value, &mut buf),
+            value.to_string().as_bytes(),
+            "decimal name mismatch for {value}"
+        );
+        assert_eq!(
+            generator.uuid_for(value),
+            reference_uuid(&generator.namespace(), value),
+            "uuid mismatch for {value}"
+        );
+    }
+
+    #[test]
+    fn test_encode_decimal_matches_to_string_at_width_boundaries() {
+        let generator = UuidGenerator::new(create_test_namespace());
+        for value in [0, 1, 9, 10, 11, 99, 100, u64::MAX - 1, u64::MAX] {
+            assert_equivalent(&generator, value);
+        }
+        // Every power of ten and its neighbours (each decimal-width boundary).
+        let mut power: u64 = 1;
+        loop {
+            assert_equivalent(&generator, power - 1);
+            assert_equivalent(&generator, power);
+            assert_equivalent(&generator, power + 1);
+            match power.checked_mul(10) {
+                Some(next) => power = next,
+                None => break,
+            }
+        }
+        // Dense low range.
+        for value in 0..100_000u64 {
+            assert_equivalent(&generator, value);
+        }
+    }
+
+    #[test]
+    fn test_try_next_matches_reference_from_restored_counters() {
+        let namespace = create_test_namespace();
+        for start in [0, 9, 99, 999_999, 1 << 32, u64::MAX - 3] {
+            let generator = generator_at(start);
+            for offset in 0..3 {
+                assert_eq!(
+                    generator.try_next().unwrap(),
+                    reference_uuid(&namespace, start + offset)
+                );
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_uuid_for_is_byte_identical_to_to_string_path(value: u64, ns: u128) {
+            let namespace = Uuid::from_u128(ns);
+            let generator = UuidGenerator::new(namespace);
+            let mut buf = [0u8; MAX_U64_DECIMAL_DIGITS];
+            let expected = value.to_string();
+            proptest::prop_assert_eq!(
+                encode_decimal(value, &mut buf),
+                expected.as_bytes()
+            );
+            proptest::prop_assert_eq!(generator.uuid_for(value), reference_uuid(&namespace, value));
+        }
     }
 
     #[test]
