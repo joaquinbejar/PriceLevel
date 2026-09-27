@@ -154,7 +154,8 @@ fn register_trade_list_parse_benchmarks(c: &mut Criterion) {
                     Quantity::new(10),
                     Side::Buy,
                     TimestampMs::new(1_616_823_000_000 + i),
-                ));
+                ))
+                .expect("capacity available in test");
             }
             let text = list.to_string();
             group.bench_function(format!("trade_list_from_str_{id_kind}_{n}"), |b| {
