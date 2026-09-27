@@ -40,6 +40,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ParseError`). Canonical `Sequential` text (at most 20 digits) and other
   non-canonical decimals (`"007"`, `"+42"`) parse exactly as before.
 
+- **Trade and statistics clock reads are caller-supplied and fallible
+  (#171).** The crate no longer reads the wall clock, narrows
+  `Duration::as_millis()` with `as`, or substitutes `0` for a pre-epoch
+  clock.
+  - `Trade::new(..)` is removed; use
+    `Trade::try_new(.., &clock) -> Result<Trade, PriceLevelError>` (reads a
+    caller-supplied `UnixClock` once) or the unchanged infallible
+    `Trade::with_timestamp`.
+  - `PriceLevelStatistics::reset()` becomes
+    `reset(&clock) -> Result<(), PriceLevelError>`; the clock is read before
+    anything is mutated, so a failure leaves counters, timestamps and the
+    degraded flag unchanged. New infallible `reset_at(TimestampMs)`.
+  - `PriceLevelStatistics::time_since_last_execution()` becomes
+    `time_since_last_execution(&clock) -> Result<Option<u64>, PriceLevelError>`
+    plus `time_since_last_execution_at(TimestampMs)`. `Ok(None)` means no
+    execution; a clock failure is `Err`, and a `now` before the last execution
+    is `InvalidOperation` (previously `None`).
+  - New `PriceLevelStatistics::new_at(TimestampMs)` and
+    `PriceLevelStatistics::try_new(&clock)`. `PriceLevelStatistics` is now
+    re-exported at the crate root so they are nameable.
+  - Behavior change: `PriceLevelStatistics::new()` / `Default`,
+    `PriceLevel::new`, `PriceLevelSnapshot::new` / `with_orders` / `from_str`
+    and a snapshot omitting `statistics` are deterministic and clock-free:
+    `first_arrival_time()` starts at `0` (unstamped) instead of the wall clock.
+    Identical input now yields identical snapshot checksums.
+  - A serialized statistics object omitting `first_arrival_time` decodes it
+    as `0` (unstamped) instead of the restore instant. Packages written by the
+    crate always carry the field, so v2, v3 and v4 wire compatibility and
+    checksum validation are unchanged. `match_order` was already clock-free.
 - **New `PriceLevelError::EntropyUnavailable { message }` variant (#167)**,
   the conventional error for a failing `EntropySource`. Exhaustive matches on
   `PriceLevelError` need a new arm.

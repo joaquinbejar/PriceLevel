@@ -99,12 +99,12 @@ dependency, not caller code, and its errors map to typed variants.
 | `PriceLevel::iter_orders`, `OrderQueue::iter_orders` loop body / adapters | **`DashMap` shard read lock**, held between `next()` calls | none | a body that mutates the same level on the same thread can deadlock; writers to that shard (including the matcher) wait. A panic releases the read lock without poisoning. Use `snapshot_orders` to run arbitrary code with no lock. Kept lazy because v0.7 made `iter_orders` non-allocating on purpose |
 | `PriceLevelSnapshot::iter_orders` | none | none | iterates an owned `Vec` |
 
-### Clock and entropy traits (`src/utils/entropy.rs`, `src/utils/id.rs`)
+### Clock and entropy traits (`src/utils/entropy.rs`, `src/utils/id.rs`, `src/execution/trade.rs`, `src/price_level/statistics.rs`)
 
 | Call | Where | Guard | Partial mutation | Notes |
 |------|-------|-------|------------------|-------|
 | `EntropySource::try_fill_bytes` | `Id::try_new`, `Id::try_new_ulid`, `Id::try_new_ulid_at`, `Id::try_new_uuid` | none | none | failures must be returned as `Err`; a panic unwinds with no library state touched (#167) |
-| `UnixClock::try_now_ms` | `Id::try_new`, `Id::try_new_ulid` | none | none | same |
+| `UnixClock::try_now_ms` | `Id::try_new`, `Id::try_new_ulid`, `Trade::try_new`, `PriceLevelStatistics::try_new`, `PriceLevelStatistics::reset`, `PriceLevelStatistics::time_since_last_execution` | none (`reset` reads the clock before entering its seqlock write section) | none | same; a failed or panicking read leaves the statistics unchanged (#171). `PriceLevel::match_order` never calls a clock |
 
 ### `tracing` subscriber
 
