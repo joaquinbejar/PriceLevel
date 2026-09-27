@@ -125,7 +125,7 @@ branches differently (it takes the level-wide fill-or-kill guard), which
 shows up in the uncontended `tif_fok_success` / `tif_fok_reject` numbers and,
 far more dramatically, in the contention comparison below.
 
-### The contention scenario, and its fixture-parity fix
+### The contention scenario, and its fixture-parity fixes
 
 `contention_gtc_matcher` and `contention_fok_matcher` run one matcher thread
 against `N-1` writer threads that continuously add/cancel/read against a
@@ -140,23 +140,49 @@ its own uncontended baseline" an apples-to-oranges comparison — some of the
 gap could have come from the much larger matcher-target depth itself, not
 from contention or the FOK guard. This version instead adds one fresh
 dedicated target maker per matcher iteration, untimed, immediately before the
-timed `match_order` call (the same shape `tif.rs::full_match_with_tif` uses),
-so the matcher-owned depth here is `1` too. The fixed 2,000-order churn pool
-— identical between the GTC and FOK runs — is the actual contention variable
-under test, not a depth mismatch against the baseline.
+timed `match_order` call (the same shape `tif.rs::full_match_with_tif` uses).
+
+That first fix introduced a second problem a follow-up review caught:
+`match_order` sweeps the level's resting queue strictly FIFO, and the churn
+pool was seeded before the matcher loop starts, so every per-iteration target
+maker is admitted *behind* the churn pool in sequence order. A 1-quantity
+taker is satisfied by whichever order is currently at the front — typically a
+churn order, not the fresh target — so the timed call is **not** guaranteed
+to consume the target that same iteration just added. Left unconsumed, that
+target stayed resting forever; matcher-owned depth grew by up to one order
+per iteration instead of staying bounded, which also inflated an FOK
+matcher's `O(depth)` preflight cost across the run — silently invalidating
+both the "matcher-owned depth is 1" claim and the churn-pool-only depth
+parity with the uncontended baseline as the run progressed. The fix: an
+UNTIMED cancel of that same iteration's own target id immediately after the
+timed call — a harmless `Ok(None)` if the match already consumed it, a real
+removal if it is still resting — so a target survives past its own iteration
+only as a transient state, never accumulates. `run_contention` asserts this
+bound after the loop by attempting the identical cancel on every target id
+and requiring `Ok(None)` for all of them (i.e. none are still resting).
 
 This still does not make "contended vs. uncontended" a fully controlled
 comparison (the churn pool and writer threads are real, by-design
 differences — that *is* contention). The claim below is restricted to
 **GTC-vs-FOK under the same load**, which is controlled. It also reports
-writer throughput as a **rate** (`completed / elapsed wall time`), not a raw
-count: the matcher's fixed op count means the GTC and FOK runs cover
-different wall-clock windows (the GTC matcher finishes in well under a
-millisecond; the FOK matcher takes tens of milliseconds at the same op
-count), so a raw writer-op count comparison would conflate "writers did less
-work" with "writers had less time" — see the example run's numbers below,
-where writer *throughput* (not count) drops by roughly two orders of
-magnitude under FOK.
+writer throughput as a **rate**, not a raw count: the matcher's fixed op
+count means the GTC and FOK runs cover different wall-clock windows (the GTC
+matcher finishes in well under a millisecond; the FOK matcher takes tens of
+milliseconds at the same op count), so a raw writer-op count comparison would
+conflate "writers did less work" with "writers had less time" — see the
+example run's numbers below, where writer *throughput* (not count) drops by
+roughly two orders of magnitude under FOK.
+
+That rate itself needed a second fix: an earlier version divided the summed
+writer op count by the *matcher's* elapsed window, but each writer keeps
+counting completed ops from `go` until it next observes `stop` — strictly
+later than the matcher's own window ends, by an unbounded amount if a writer
+is mid-iteration when `stop` flips. A numerator spanning a longer interval
+than its denominator is not a rate over any single interval. This version
+instead has each writer time its own active window (the exact span its own
+`completed` counter spans) and reports the **sum of each writer's own
+`completed / that writer's own elapsed`** — every individual ratio is a rate
+over one consistent interval, so summing them is a well-defined aggregate.
 
 ## The p99.99 caveat
 
@@ -263,7 +289,7 @@ crate performance guarantee.
 
 ```
 == Run manifest ==
-commit             : b1cc71d0cbc8bf0caefef3e449cce02fc7cabef8 (dirty)
+commit             : 9ee1ddee31dc0878e8040ffcc16fe2fb46515988 (dirty)
 cpu                : Apple M5 Max
 logical cores      : 18
 os/arch            : macos/aarch64
@@ -284,7 +310,7 @@ captured during development of this harness, not a property of the harness
 itself; a clean checkout on a tagged commit reports `(clean)`. This same
 information, plus the `Config` used and every scenario's measured boundary
 and percentile summary, is written to
-`target/latency/1790504343099/manifest.json` for this particular run (see
+`target/latency/1790505358408/manifest.json` for this particular run (see
 "Persisted artifacts" — the run id is a wall-clock millisecond timestamp, so
 yours will differ).
 
@@ -297,70 +323,70 @@ table output.
 
 | Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns) | max (ns) | Outcomes |
 |---|---|---|---|---|---|---|---|---|---|
-| isolated_add_gtc | isolated | 1000 | 300 | 83 | 792 | 1083 | 1083 | 1083 | 300/300 succeeded |
-| isolated_cancel_success | isolated | 350 | 300 | 42 | 584 | 750 | 750 | 750 | 300/300 found and cancelled |
+| isolated_add_gtc | isolated | 1000 | 300 | 83 | 1041 | 1333 | 1333 | 1333 | 300/300 succeeded |
+| isolated_cancel_success | isolated | 350 | 300 | 42 | 666 | 833 | 833 | 833 | 300/300 found and cancelled |
 | isolated_cancel_missing | isolated | 1000 | 300 | 41 | 42 | 42 | 42 | 42 | 300/300 reported missing (Ok(None)) |
-| isolated_quantity_decrease | isolated | 350 | 300 | 42 | 167 | 833 | 833 | 833 | 300/300 resized (100 -> 40) |
-| isolated_quantity_increase | isolated | 350 | 300 | 125 | 666 | 792 | 792 | 792 | 300/300 resized (40 -> 100) |
-| isolated_replace | isolated | 350 | 300 | 125 | 708 | 875 | 875 | 875 | 300/300 replaced |
-| match_empty | match | 0 | 300 | 42 | 83 | 667 | 667 | 667 | 300/300 NotFilled |
-| match_full | match | 1 | 300 | 208 | 833 | 1333 | 1333 | 1333 | 300/300 Filled |
-| match_partial | match | 1 | 300 | 208 | 709 | 792 | 792 | 792 | 300/300 PartiallyFilled |
-| many_fill_sweep | match | 7000 | 300 | 4000 | 6583 | 10167 | 10167 | 10167 | 300/300 Filled, 6000 total trades |
-| iceberg_replenish | match | 1 | 300 | 250 | 750 | 875 | 875 | 875 | 300/300 Filled |
-| reserve_replenish | match | 1 | 300 | 250 | 750 | 833 | 833 | 833 | 300/300 Filled |
-| tif_gtc_full_match | tif | 1 | 300 | 208 | 750 | 875 | 875 | 875 | 300/300 Filled (taker_tif=Gtc) |
-| tif_ioc_full_match | tif | 1 | 300 | 208 | 750 | 833 | 833 | 833 | 300/300 Filled (taker_tif=Ioc) |
-| tif_day_full_match | tif | 1 | 300 | 208 | 750 | 792 | 792 | 792 | 300/300 Filled (taker_tif=Day) |
-| tif_gtd_full_match | tif | 1 | 300 | 208 | 750 | 792 | 792 | 792 | 300/300 Filled (taker_tif=Gtd(9999999999999)) |
-| tif_fok_success | tif | 1 | 300 | 1375 | 2167 | 3125 | 3125 | 3125 | 300/300 Filled (taker_tif=Fok) |
-| tif_fok_reject | tif | 1 | 300 | 1167 | 1250 | 1708 | 1708 | 1708 | 300/300 Killed |
-| tif_post_only_reject | tif | 1 | 300 | 667 | 750 | 750 | 750 | 750 | 300/300 Rejected |
-| iteration | iteration | 1000 | 300 | 5958 | 6917 | 39792 | 39792 | 39792 | 300/300 traversals visited exactly 1000 orders |
-| snapshot_capture | snapshot | 1000 | 300 | 12083 | 24084 | 30791 | 30791 | 30791 | 300/300 snapshots carried exactly 1000 orders |
-| checksum_validate | snapshot | 1000 | 300 | 906042 | 1302167 | 3039042 | 3039042 | 3039042 | 300/300 validated OK |
-| restore | snapshot | 1000 | 300 | 1270541 | 1605000 | 3792166 | 3792166 | 3792166 | 300/300 restored with exactly 1000 orders |
-| depth_sweep_add@100 | depth | 100 | 300 | 83 | 125 | 625 | 625 | 625 | 300/300 succeeded |
-| depth_sweep_add@1000 | depth | 1000 | 300 | 83 | 167 | 334 | 334 | 334 | 300/300 succeeded |
-| depth_sweep_small_taker@100 | depth | 100 | 300 | 167 | 250 | 292 | 292 | 292 | 300/300 Filled |
-| depth_sweep_small_taker@1000 | depth | 1000 | 300 | 167 | 209 | 250 | 250 | 250 | 300/300 Filled |
-| scaled_quantity@1 | depth | 100 | 300 | 83 | 166 | 708 | 708 | 708 | 300/300 succeeded |
-| scaled_quantity@10000 | depth | 100 | 300 | 83 | 125 | 500 | 500 | 500 | 300/300 succeeded |
-| scaled_quantity@1000000000 | depth | 100 | 300 | 83 | 84 | 125 | 125 | 125 | 300/300 succeeded |
-| scaled_price@1 | depth | 100 | 300 | 83 | 84 | 125 | 125 | 125 | 300/300 succeeded |
-| scaled_price@10000 | depth | 100 | 300 | 83 | 84 | 459 | 459 | 459 | 300/300 succeeded |
-| scaled_price@18446744073709551615 | depth | 100 | 300 | 83 | 125 | 542 | 542 | 542 | 300/300 succeeded |
-| contention_gtc_matcher | contention | 1 | 300 | 708 | 2000 | 6500 | 6500 | 6500 | matcher: 300/300 Filled (646030 ops/s over 0.000464s); writers: 2910 completed (2208 successful, 0 missing, 702 rejected) across 3 threads = 6266487 ops/s |
-| contention_fok_matcher | contention | 1 | 300 | 54667 | 61250 | 134750 | 134750 | 134750 | matcher: 300/300 Filled (18130 ops/s over 0.016547s); writers: 337 completed (272 successful, 2 missing, 63 rejected) across 3 threads = 20366 ops/s |
+| isolated_quantity_decrease | isolated | 350 | 300 | 42 | 125 | 834 | 834 | 834 | 300/300 resized (100 -> 40) |
+| isolated_quantity_increase | isolated | 350 | 300 | 125 | 750 | 1041 | 1041 | 1041 | 300/300 resized (40 -> 100) |
+| isolated_replace | isolated | 350 | 300 | 125 | 792 | 875 | 875 | 875 | 300/300 replaced |
+| match_empty | match | 0 | 300 | 209 | 292 | 375 | 375 | 375 | 300/300 NotFilled |
+| match_full | match | 1 | 300 | 209 | 958 | 1542 | 1542 | 1542 | 300/300 Filled |
+| match_partial | match | 1 | 300 | 416 | 500 | 1042 | 1042 | 1042 | 300/300 PartiallyFilled |
+| many_fill_sweep | match | 7000 | 300 | 4000 | 6042 | 9167 | 9167 | 9167 | 300/300 Filled, 6000 total trades |
+| iceberg_replenish | match | 1 | 300 | 291 | 917 | 958 | 958 | 958 | 300/300 Filled |
+| reserve_replenish | match | 1 | 300 | 250 | 834 | 1041 | 1041 | 1041 | 300/300 Filled |
+| tif_gtc_full_match | tif | 1 | 300 | 208 | 750 | 916 | 916 | 916 | 300/300 Filled (taker_tif=Gtc) |
+| tif_ioc_full_match | tif | 1 | 300 | 209 | 750 | 834 | 834 | 834 | 300/300 Filled (taker_tif=Ioc) |
+| tif_day_full_match | tif | 1 | 300 | 209 | 334 | 834 | 834 | 834 | 300/300 Filled (taker_tif=Day) |
+| tif_gtd_full_match | tif | 1 | 300 | 209 | 333 | 750 | 750 | 750 | 300/300 Filled (taker_tif=Gtd(9999999999999)) |
+| tif_fok_success | tif | 1 | 300 | 1375 | 2083 | 2875 | 2875 | 2875 | 300/300 Filled (taker_tif=Fok) |
+| tif_fok_reject | tif | 1 | 300 | 1167 | 1209 | 1209 | 1209 | 1209 | 300/300 Killed |
+| tif_post_only_reject | tif | 1 | 300 | 417 | 500 | 583 | 583 | 583 | 300/300 Rejected |
+| iteration | iteration | 1000 | 300 | 6000 | 6542 | 8375 | 8375 | 8375 | 300/300 traversals visited exactly 1000 orders |
+| snapshot_capture | snapshot | 1000 | 300 | 12292 | 12750 | 14584 | 14584 | 14584 | 300/300 snapshots carried exactly 1000 orders |
+| checksum_validate | snapshot | 1000 | 300 | 903084 | 1008167 | 1009834 | 1009834 | 1009834 | 300/300 validated OK |
+| restore | snapshot | 1000 | 300 | 1282083 | 1428750 | 1493583 | 1493583 | 1493583 | 300/300 restored with exactly 1000 orders |
+| depth_sweep_add@100 | depth | 100 | 300 | 83 | 125 | 959 | 959 | 959 | 300/300 succeeded |
+| depth_sweep_add@1000 | depth | 1000 | 300 | 83 | 125 | 750 | 750 | 750 | 300/300 succeeded |
+| depth_sweep_small_taker@100 | depth | 100 | 300 | 167 | 291 | 292 | 292 | 292 | 300/300 Filled |
+| depth_sweep_small_taker@1000 | depth | 1000 | 300 | 208 | 250 | 292 | 292 | 292 | 300/300 Filled |
+| scaled_quantity@1 | depth | 100 | 300 | 83 | 167 | 208 | 208 | 208 | 300/300 succeeded |
+| scaled_quantity@10000 | depth | 100 | 300 | 83 | 167 | 708 | 708 | 708 | 300/300 succeeded |
+| scaled_quantity@1000000000 | depth | 100 | 300 | 83 | 167 | 625 | 625 | 625 | 300/300 succeeded |
+| scaled_price@1 | depth | 100 | 300 | 83 | 167 | 625 | 625 | 625 | 300/300 succeeded |
+| scaled_price@10000 | depth | 100 | 300 | 83 | 125 | 1000 | 1000 | 1000 | 300/300 succeeded |
+| scaled_price@18446744073709551615 | depth | 100 | 300 | 83 | 167 | 583 | 583 | 583 | 300/300 succeeded |
+| contention_gtc_matcher | contention | 1 | 300 | 708 | 3375 | 17917 | 17917 | 17917 | matcher: 300/300 Filled (403746 ops/s over 0.000743s); writers: 4348 completed (3259 successful, 4 missing, 1085 rejected) across 3 threads = 5866452 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 300 | 29416 | 84583 | 206750 | 206750 | 206750 | matcher: 300/300 Filled (31375 ops/s over 0.009562s); writers: 2105 completed (1776 successful, 52 missing, 277 rejected) across 3 threads = 220078 ops/s (sum of each writer's own completed/elapsed) |
 
 **Reading the FOK contention row (GTC-vs-FOK under identical load only — see
 "The contention scenario" above for why this comparison, and not "vs.
 uncontended", is the controlled one).** `contention_fok_matcher`'s p50
-(54,667 ns) is roughly 77x `contention_gtc_matcher`'s p50 (708 ns) under the
-identical churn-pool / writer-thread load and the same matcher-owned depth
-(1). That gap is consistent with `doc/architecture.md`'s "Fill-or-kill
+(29,416 ns) is roughly 42x `contention_gtc_matcher`'s p50 (708 ns) under the
+identical churn-pool / writer-thread load and the same bounded matcher-owned
+depth. That gap is consistent with `doc/architecture.md`'s "Fill-or-kill
 excludes every mutator on the level": an FOK match holds the level-wide guard
 exclusively across its whole dry-run and sweep, so it now also waits behind
 the writer threads' admissions/cancels contending for that same guard's
 shared side — not the per-maker shard lock GTC pays alone. Writer
-*throughput* during the FOK run also dropped by roughly two orders of
-magnitude (20,366 ops/s vs. 6,266,487 ops/s for GTC) — reported as a rate,
-not a raw count, because the FOK run's matcher loop ran roughly 35x longer in
-wall-clock time (16.5 ms vs. 0.46 ms) at the same fixed op count, so a raw
-count comparison alone would not distinguish "writers did less work" from
-"writers had less time to work in". The rate is the guard blocking the
-writers, not the writers blocking themselves or each other. This is exactly
-the effect the issue asks this harness to make visible, separated from
-uncontended service time.
+*throughput* during the FOK run also dropped by roughly an order of
+magnitude (220,078 ops/s, summed per-writer, vs. 5,866,452 ops/s for GTC) —
+each figure is itself a sum of each writer's own `completed / that writer's
+own elapsed`, not a raw count over a shared window (see "The contention
+scenario" above for why a shared-window rate would be invalid here). The
+FOK run's matcher loop also ran roughly 13x longer in wall-clock time
+(9.6 ms vs. 0.74 ms) at the same fixed op count — consistent with, not
+independent of, the throughput drop. This is exactly the effect the issue
+asks this harness to make visible, separated from uncontended service time.
 
 ### Allocation measurements (same run)
 
 ```
-add_order            reps=200    alloc_count/op=2.12     alloc_bytes/op=338.64     dealloc_count_total=25       dealloc_bytes_total=10980
-match_full           reps=200    alloc_count/op=3.08     alloc_bytes/op=1788.29    dealloc_count_total=604      dealloc_bytes_total=66858
+add_order            reps=200    alloc_count/op=2.17     alloc_bytes/op=368.36     dealloc_count_total=33       dealloc_bytes_total=13984
+match_full           reps=200    alloc_count/op=3.12     alloc_bytes/op=1793.93    dealloc_count_total=548      dealloc_bytes_total=64362
 snapshot_capture     reps=200    alloc_count/op=138.00   alloc_bytes/op=43776.00   dealloc_count_total=27400    dealloc_bytes_total=7155200
 checksum_validate    reps=200    alloc_count/op=36014.00 alloc_bytes/op=936224.00  dealloc_count_total=7202800  dealloc_bytes_total=187244800
-restore              reps=200    alloc_count/op=41348.03 alloc_bytes/op=1790194.70 dealloc_count_total=7843615  dealloc_bytes_total=293424448
+restore              reps=200    alloc_count/op=41348.28 alloc_bytes/op=1790290.74 dealloc_count_total=7843666  dealloc_bytes_total=293434460
 ```
 
 `checksum_validate` and `restore` allocate far more than `add_order` /

@@ -34,10 +34,47 @@
 //! comparison (the churn pool and writer threads are real differences by
 //! design — that IS contention). `BENCH.md` restricts its causal claim to
 //! GTC-vs-FOK **under the same load**, which is controlled, and reports
-//! writer throughput as a rate (completed / elapsed wall time) rather than
-//! a raw count, because the matcher's fixed op count means the GTC and FOK
-//! runs cover different wall-clock windows (finding 7's second half) — a
-//! raw count comparison would conflate "less work" with "less time".
+//! writer throughput as a rate rather than a raw count, because the
+//! matcher's fixed op count means the GTC and FOK runs cover different
+//! wall-clock windows (finding 7's second half) — a raw count comparison
+//! would conflate "less work" with "less time".
+//!
+//! # Matcher-target depth stays bounded (issue #142 review round 2, finding 1)
+//!
+//! `match_order` sweeps the level's resting queue strictly FIFO (oldest
+//! insertion sequence first), and every per-iteration target maker below is
+//! admitted AFTER (hence behind, in sequence) the churn pool seeded at
+//! setup. So the timed `match_order` call is NOT guaranteed to consume the
+//! target THIS iteration just added — with a 1-quantity taker it is
+//! satisfied by whichever order is currently at the front, which is
+//! typically a churn order, not the fresh target. An earlier version of
+//! this scenario assumed the opposite (its own next-in-FIFO target would
+//! always be the one consumed) and left every unconsumed target resting
+//! forever: matcher-owned depth grew by up to one order per iteration
+//! instead of staying bounded, which also inflated an FOK matcher's
+//! `O(depth)` preflight cost across the run. This version instead attempts
+//! an UNTIMED cancel of THIS iteration's own target id immediately after
+//! the timed call — a harmless `Ok(None)` if the match already consumed it,
+//! a real removal if it is still resting — so a target can survive past its
+//! own iteration only as the transient state between "add" and "cancel",
+//! never accumulate. [`run_contention`] asserts this bound after the loop
+//! by attempting the same cancel on every target id and requiring `Ok(None)`
+//! for all of them.
+//!
+//! # Writer throughput: a common interval per worker (finding 2)
+//!
+//! An earlier version computed writer throughput as
+//! `writer_outcome.completed / matcher_window`, but `matcher_window` only
+//! covers the matcher's own loop, while each writer keeps counting
+//! completed ops from `go` until it next observes `stop` — strictly later
+//! than `matcher_window`'s end, and by an unbounded amount if a writer is
+//! mid-iteration when `stop` flips. That mismatched
+//! numerator/denominator pair is not a rate over any single interval. This
+//! version instead has each writer time its OWN active window (the same
+//! `go`-to-`stop-observed` span its own `completed` counter spans) and
+//! reports `sum_over_writers(completed / that writer's own elapsed)` — every
+//! individual ratio is a rate over one consistent interval, so the sum is
+//! well-defined aggregate writer throughput.
 //!
 //! This is still a CLOSED-LOOP measurement per thread — see
 //! `manifest::COORDINATED_OMISSION_DISCLOSURE`.
@@ -118,6 +155,8 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
         // Untimed: add this iteration's own dedicated 1-quantity target
         // maker, at a fresh id disjoint from the churn pool and every other
         // matcher iteration's target, immediately before the timed call.
+        // See the module docs: FIFO order means the timed call below is NOT
+        // guaranteed to consume THIS target.
         level
             .add_order(fixtures::standard_order(
                 MATCHER_TARGET_ID_BASE + i as u64,
@@ -139,15 +178,34 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
         let elapsed = t0.elapsed();
         outcomes.push(result.outcome());
         durations_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+
+        // Untimed: remove this iteration's own target if the call above did
+        // NOT consume it, so matcher-owned depth never accumulates across
+        // iterations — see the module docs. `Ok(None)` (already consumed)
+        // is the common, harmless case; `Ok(Some(_))` means it survived and
+        // is now removed.
+        level
+            .update_order(OrderUpdate::Cancel {
+                order_id: Id::from_u64(MATCHER_TARGET_ID_BASE + i as u64),
+            })
+            .expect("contention: matcher target cleanup cancel must not error");
     }
     let matcher_window = matcher_window_start.elapsed();
     stop.store(true, Ordering::Relaxed);
 
     let mut writer_outcome = WriterOutcome::default();
+    let mut writer_ops_per_sec = 0.0f64;
     for handle in writer_handles {
         let outcome = handle
             .join()
             .expect("contention: a writer thread must not panic");
+        // Each writer's own completed count divided by that SAME writer's
+        // own active-window elapsed time — a rate over one consistent
+        // interval (see the module docs, finding 2). Summed rather than
+        // averaged: the aggregate throughput of N concurrent workers is the
+        // sum of their individual throughputs, not their mean.
+        let active_secs = outcome.active_secs.max(f64::EPSILON);
+        writer_ops_per_sec += outcome.completed as f64 / active_secs;
         writer_outcome = writer_outcome.merge(outcome);
     }
     assert_eq!(
@@ -155,21 +213,40 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
         "contention({name}): writer threads must report zero unexpected errors"
     );
 
+    // Bounds the matcher-target depth invariant (finding 1): every target id
+    // this run ever admitted must be absent now — either the timed match
+    // consumed it, or this loop's own cleanup cancel did. Calling `Cancel`
+    // again here must therefore find nothing for every single one.
+    for i in 0..matcher_ops as u64 {
+        let result = level
+            .update_order(OrderUpdate::Cancel {
+                order_id: Id::from_u64(MATCHER_TARGET_ID_BASE + i),
+            })
+            .expect("contention: post-run target verification cancel must not error");
+        assert!(
+            result.is_none(),
+            "contention({name}): matcher target id {i} survived past its own iteration's \
+             cleanup — matcher-owned depth is not bounded"
+        );
+    }
+
     let filled = outcomes
         .iter()
         .filter(|o| **o == MatchOutcome::Filled)
         .count();
     let killed = outcomes.iter().filter(|o| o.was_killed()).count();
-    // Every one of the matcher's dedicated single-order targets is
-    // guaranteed matchable (qty 1 maker, qty 1 taker), so a GTC matcher must
-    // fill every call; an FOK matcher facing an always-feasible 1-for-1 match
-    // must also fill every call (a kill would indicate the level lost
-    // feasibility unexpectedly under contention, which would itself be a
-    // real correctness signal worth failing loudly on).
+    // The level always has at least the churn pool's depth, plus this
+    // iteration's own freshly-added 1-quantity target if the churn pool
+    // ever ran transiently dry, so a 1-quantity taker always has at least
+    // one unit of depth to take: a GTC matcher must fill every call, and an
+    // FOK matcher facing an always-feasible 1-for-1 match must also fill
+    // every call (a kill would indicate the level lost feasibility
+    // unexpectedly under contention, which would itself be a real
+    // correctness signal worth failing loudly on).
     assert_eq!(
         filled, matcher_ops,
-        "contention({name}): every matcher op targets its own dedicated 1-quantity maker and must \
-         fill; {killed} were killed instead"
+        "contention({name}): every matcher op must fill against the level's guaranteed depth; \
+         {killed} were killed instead"
     );
     fixtures::assert_stats_healthy(&level, matcher_ops as u64, &format!("contention({name})"));
 
@@ -177,7 +254,6 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
     // FOK runs cover different wall-clock windows (finding 7), so only a
     // per-second rate is comparable between the two variants.
     let window_secs = matcher_window.as_secs_f64().max(f64::EPSILON);
-    let writer_ops_per_sec = writer_outcome.completed as f64 / window_secs;
     let matcher_ops_per_sec = matcher_ops as f64 / window_secs;
 
     ScenarioReport::from_samples(
@@ -189,7 +265,8 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
         format!(
             "matcher: {filled}/{matcher_ops} Filled ({matcher_ops_per_sec:.0} ops/s over \
              {window_secs:.6}s); writers: {} completed ({} successful, {} missing, {} rejected) \
-             across {writer_threads} threads = {writer_ops_per_sec:.0} ops/s",
+             across {writer_threads} threads = {writer_ops_per_sec:.0} ops/s (sum of each \
+             writer's own completed/elapsed)",
             writer_outcome.completed,
             writer_outcome.successful,
             writer_outcome.missing,
@@ -202,6 +279,12 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
 /// recycled id pool disjoint from the matcher's targets, until `stop` is
 /// set. Never calls `match_order` — matching stays single-threaded on the
 /// caller's own thread, per the one-logical-matcher-per-level contract.
+///
+/// Times its OWN active window (`start` to its own `stop`-observation) into
+/// [`WriterOutcome::active_secs`], the same span [`WriterOutcome::completed`]
+/// counts over — see the module docs, finding 2, for why the caller must use
+/// THIS elapsed value rather than the matcher's own window when computing a
+/// throughput rate.
 fn writer_loop(
     writer_id: usize,
     level: &PriceLevel,
@@ -213,6 +296,7 @@ fn writer_loop(
     while !go.load(Ordering::Acquire) {
         std::hint::spin_loop();
     }
+    let start = Instant::now();
 
     let mut outcome = WriterOutcome::default();
     let mut i: u64 = 0;
@@ -249,6 +333,7 @@ fn writer_loop(
         outcome.completed += 1;
         i += 1;
     }
+    outcome.active_secs = start.elapsed().as_secs_f64();
     outcome
 }
 
@@ -259,6 +344,12 @@ struct WriterOutcome {
     missing: u64,
     rejected: u64,
     errors: u64,
+    /// This worker's own active-window elapsed time — from observing `go`
+    /// to observing `stop` — the same span `completed` counts over. NOT
+    /// merged by [`Self::merge`] (summing wall-clock windows across workers
+    /// is meaningless); the caller computes each worker's own
+    /// `completed / active_secs` rate before merging the counters.
+    active_secs: f64,
 }
 
 impl WriterOutcome {

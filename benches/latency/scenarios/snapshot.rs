@@ -92,7 +92,11 @@ fn snapshot_capture(config: &Config) -> ScenarioReport {
     let level = fixtures::seeded_standard_level(DEPTH, Side::Buy, 10);
 
     for _ in 0..config.warmup {
-        std::hint::black_box(level.snapshot());
+        std::hint::black_box(
+            level
+                .snapshot()
+                .expect("snapshot_capture: warmup snapshot() must succeed for a coherent level"),
+        );
     }
 
     let (durations_ns, valid_count) = measure_fold(
@@ -100,6 +104,8 @@ fn snapshot_capture(config: &Config) -> ScenarioReport {
         0usize,
         |_| level.snapshot(),
         |acc, _i, snap| {
+            let snap =
+                snap.expect("snapshot_capture: snapshot() must succeed for a coherent level");
             assert_eq!(
                 snap.order_count(),
                 DEPTH as usize,

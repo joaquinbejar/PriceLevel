@@ -187,6 +187,12 @@ fn measure_snapshot_capture(config: &Config) -> AllocReport {
     }
     let after = AllocStats::read();
     alloc::disable();
+
+    let succeeded = snapshots.iter().filter(|s| s.is_ok()).count();
+    assert_eq!(
+        succeeded, reps,
+        "alloc measurement (snapshot_capture): every snapshot() call must succeed"
+    );
     drop(snapshots);
     drop(level);
 
