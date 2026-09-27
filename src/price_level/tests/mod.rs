@@ -4,3 +4,4 @@ mod level;
 mod order_queue;
 mod snapshot;
 mod statistics;
+mod text_parser_corpus;

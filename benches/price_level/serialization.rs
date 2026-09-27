@@ -128,6 +128,39 @@ pub fn register_benchmarks(c: &mut Criterion) {
     });
 
     group.finish();
+
+    register_trade_list_parse_benchmarks(c);
+}
+
+/// `TradeList::from_str` over 0 / 1 / 32 / 1024 trades with sequential and
+/// UUID identifiers (issue #152).
+fn register_trade_list_parse_benchmarks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PriceLevel - TradeList parse");
+    for id_kind in ["seq", "uuid"] {
+        for n in [0_u64, 1, 32, 1024] {
+            let id = |v: u64| match id_kind {
+                "seq" => Id::sequential(v),
+                _ => Id::from_uuid(Uuid::from_u128(u128::from(v) << 64 | 0xABCD)),
+            };
+            let mut list = TradeList::new();
+            for i in 0..n {
+                list.add(Trade::with_timestamp(
+                    id(1_000 + i),
+                    id(1),
+                    id(10 + i),
+                    Price::new(10_000),
+                    Quantity::new(10),
+                    Side::Buy,
+                    TimestampMs::new(1_616_823_000_000 + i),
+                ));
+            }
+            let text = list.to_string();
+            group.bench_function(format!("trade_list_from_str_{id_kind}_{n}"), |b| {
+                b.iter(|| black_box(TradeList::from_str(black_box(&text)).unwrap()))
+            });
+        }
+    }
+    group.finish();
 }
 
 /// Set up a price level with standard orders.
