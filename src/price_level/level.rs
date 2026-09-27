@@ -10,7 +10,7 @@ use crate::price_level::order_queue::{
 use crate::price_level::snapshot::{BorrowedOrders, SnapshotAggregates, deserialize_plain_orders};
 use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
-use crate::utils::alloc::{try_reserve_exact_vec, try_reserve_set};
+use crate::utils::alloc::try_reserve_exact_vec;
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
     try_reserve_str,
@@ -725,17 +725,77 @@ impl PriceLevel {
     /// a fresh, zeroed set — so a restored level resumes with its recorded
     /// history.
     ///
+    /// The orders are validated in a single checked pass (issue #150) and then
+    /// enqueued in vector order, which is the restored price-time priority
+    /// (issue #109). The snapshot's stored aggregate fields are not trusted:
+    /// the restored counters are recomputed from the orders.
+    ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if any restored order's own
-    /// visible + hidden total overflows `u64`, or if recomputing the snapshot's
-    /// level aggregates overflows `u64` — the same per-order and per-level
-    /// invariants [`Self::add_order`] enforces at admission — or
-    /// [`PriceLevelError::DuplicateOrderId`] if the snapshot's orders vector
-    /// repeats an order id, or [`PriceLevelError::CapacityExceeded`] (resource
-    /// [`CapacityResource::RestoreScratch`]) if the duplicate-id scratch set
-    /// cannot be reserved (issue #164). Nothing is built on error.
-    pub fn from_snapshot(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
+    /// When a snapshot violates several rules, the error returned is the
+    /// highest-ranked one below, independent of where in the orders vector
+    /// each violation sits (the ranking is the order of the pre-#150 separate
+    /// validation walks, preserved exactly):
+    ///
+    /// 1. [`PriceLevelError::InvalidOperation`] if an order's own visible +
+    ///    hidden total overflows `u64`, or if the level's visible or hidden sum
+    ///    overflows `u64` (the same per-order and per-level invariants
+    ///    [`Self::add_order`] enforces at admission); the first such order in
+    ///    vector order is reported.
+    /// 2. [`PriceLevelError::CapacityExceeded`] (resource
+    ///    [`CapacityResource::RestoreScratch`]) if the duplicate-id scratch set
+    ///    cannot be reserved (issue #164).
+    /// 3. [`PriceLevelError::DuplicateOrderId`] for the first repeated id.
+    /// 4. [`PriceLevelError::InvalidOperation`] for the first order whose price
+    ///    differs from the snapshot price or whose side differs from the first
+    ///    order's side.
+    /// 5. [`PriceLevelError::CounterExhausted`] if the queue cannot mint an
+    ///    insertion sequence (not reachable from a fresh queue), then
+    ///    [`PriceLevelError::InvalidOperation`] if the order count does not fit
+    ///    the level's topology word.
+    ///
+    /// Nothing is built on error.
+    pub fn from_snapshot(snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
+        let validated = snapshot.into_validated_restore()?;
+
+        let order_count = validated.aggregates.order_count;
+        // Fallible (issue #165): uniqueness was validated above, and a fresh
+        // queue cannot exhaust its sequence on a `Vec`, but any insertion
+        // failure is propagated rather than silently dropping an order.
+        let queue = OrderQueue::try_from(validated.orders)?;
+
+        // Pin the restored side alongside the restored count in the topology
+        // word (issue #126). An empty snapshot restores Unpinned; a non-empty
+        // one pins the single side the validation proved coherent. The count is
+        // validated against `topology::MAX_COUNT` with a checked conversion
+        // (issue #163) rather than assumed to fit.
+        let side_tag = validated
+            .side
+            .map_or(topology::TAG_UNPINNED, topology::tag_of);
+        let topology_word = topology::try_pack(side_tag, order_count)?;
+
+        Ok(Self {
+            price: validated.price.as_u128(),
+            visible_quantity: AtomicU64::new(validated.aggregates.visible_quantity.as_u64()),
+            hidden_quantity: AtomicU64::new(validated.aggregates.hidden_quantity.as_u64()),
+            topology: AtomicU64::new(topology_word),
+            topology_epoch: AtomicU64::new(0),
+            orders: queue,
+            // Moved, not cloned: the snapshot is consumed.
+            stats: Arc::new(validated.statistics),
+            fok_guard: RwLock::new(()),
+            level_poisoned: AtomicBool::new(false),
+            mutation_epoch: AtomicU64::new(0),
+        })
+    }
+
+    /// The pre-#150 restore, kept verbatim and test-only so the single-pass
+    /// validation of [`Self::from_snapshot`] can be compared against it
+    /// (identical results, identical error precedence).
+    #[cfg(test)]
+    pub(crate) fn from_snapshot_legacy(
+        mut snapshot: PriceLevelSnapshot,
+    ) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
         // Reject a snapshot whose orders vector repeats an id. Building the
@@ -748,7 +808,11 @@ impl PriceLevel {
             // Sized by an input-derived length, so reserved fallibly (issue
             // #164) rather than with the aborting `with_capacity`.
             let mut seen = std::collections::HashSet::new();
-            try_reserve_set(&mut seen, orders.len(), CapacityResource::RestoreScratch)?;
+            crate::utils::alloc::try_reserve_set(
+                &mut seen,
+                orders.len(),
+                CapacityResource::RestoreScratch,
+            )?;
             for order in orders {
                 if !seen.insert(order.id()) {
                     return Err(PriceLevelError::DuplicateOrderId(order.id().to_string()));
