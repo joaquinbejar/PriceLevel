@@ -31,10 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Previously `u64` came first, so an all-digit ULID such as the nil ULID
   `00000000000000000000000000` parsed as `Sequential` and `Display` →
   `FromStr` was not an identity. Now `id.to_string().parse::<Id>() == Ok(id)`
-  for every `Id`. Inputs that change meaning: 26-character all-digit texts
-  with at least six leading zeros (now `Ulid`, were `Sequential`), 32-digit
-  simple-form texts with at least twelve leading zeros (now `Uuid`, were
-  `Sequential`), and 26-character texts starting with `8`-`9` / a letter,
+  for every `Id`. Inputs that change meaning are non-canonical
+  (zero-padded) sequential spellings: 26-character all-digit texts whose
+  decimal value is at most `u64::MAX` (now `Ulid`, were `Sequential`),
+  32-digit simple-form texts whose decimal value is at most `u64::MAX` (now
+  `Uuid`, were `Sequential`), and 26-character texts starting with `8`-`9` / a letter,
   which overflow 128 bits and used to wrap silently to a different ULID (now
   `ParseError`). Canonical `Sequential` text (at most 20 digits) and other
   non-canonical decimals (`"007"`, `"+42"`) parse exactly as before.

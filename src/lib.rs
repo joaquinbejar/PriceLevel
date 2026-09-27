@@ -760,12 +760,14 @@
 //! every [`Id`], and canonical sequential text (at most 20 digits) is
 //! unaffected.
 //!
-//! Only non-canonical inputs change meaning:
+//! Only non-canonical sequential spellings change meaning (the nil ULID text is
+//! the canonical ULID spelling; what changes is that it no longer reads as a
+//! zero-padded sequential id):
 //!
 //! | Input | Before | Now |
 //! |-------|--------|-----|
-//! | 26 digits, at least 6 leading zeros | `Sequential` | `Ulid` |
-//! | 32 digits, at least 12 leading zeros | `Sequential` | `Uuid` (simple form) |
+//! | 26 digits whose decimal value is at most `u64::MAX` (so at least 6 leading zeros) | `Sequential` | `Ulid` |
+//! | 32 digits whose decimal value is at most `u64::MAX` (so at least 12 leading zeros) | `Sequential` | `Uuid` (simple form) |
 //! | 26 Crockford characters starting above `7` | `Ulid` (top bits silently lost) | `ParseError` |
 //!
 //! If you store sequential ids zero-padded to 26 or 32 characters, strip the
