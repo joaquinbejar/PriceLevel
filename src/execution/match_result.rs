@@ -1,4 +1,4 @@
-use crate::errors::PriceLevelError;
+use crate::errors::{CapacityResource, PriceLevelError};
 use crate::execution::list::TradeList;
 use crate::execution::trade::Trade;
 use crate::orders::Id;
@@ -73,6 +73,29 @@ impl MatchOutcome {
 /// `remaining_quantity`, `is_complete`, and `trades`.
 /// Use the provided accessor methods and mutation helpers.
 ///
+/// # Failure contract (#164)
+///
+/// A match can stop early because a fallible step failed (result growth,
+/// trade-id reservation, counter exhaustion, an arithmetic or invariant
+/// violation). [`PriceLevel::match_order`](crate::PriceLevel::match_order)
+/// still returns a `MatchResult` in that case (never a bare error that would
+/// lose fills) and [`Self::error`] carries the typed failure:
+///
+/// - `error()` is `None` for a match that ran to its natural end.
+/// - When `error()` is `Some`, every trade the level committed before the
+///   failure is in [`Self::trades`] (in FIFO order), every maker those trades
+///   fully consumed is in [`Self::filled_order_ids`], and
+///   [`Self::remaining_quantity`] is the taker's true residual. The level's
+///   queue and counters agree with exactly those trades. [`Self::outcome`]
+///   still classifies the fills (`Filled` / `PartiallyFilled` / `NotFilled`).
+/// - A fill-or-kill taker fails before any maker is touched: outcome
+///   [`MatchOutcome::Killed`], no trades, full remaining, level unchanged, and
+///   the error set.
+///
+/// Only the first failure is kept (it is the root cause; the sweep stops at
+/// it). Resource failures use the allocation-free
+/// [`PriceLevelError::CapacityExceeded`].
+///
 /// # Decode-time validation
 ///
 /// The Rust API keeps the fields mutually consistent, but a decoder writes
@@ -111,6 +134,13 @@ pub struct MatchResult {
     /// back (#135).
     #[serde(serialize_with = "serialize_outcome_as_some")]
     outcome: MatchOutcome,
+
+    /// The failure that stopped the match early, if any (#164 contract; see
+    /// the type-level docs). Serialized as an `Option` on both the emit side
+    /// and [`MatchResultWire`], so JSON and positional (bincode) encodings are
+    /// symmetric; a JSON payload written before the field existed decodes as
+    /// `None`.
+    error: Option<PriceLevelError>,
 }
 
 /// Serializes `outcome` wrapped in `Some` — see the field doc on
@@ -145,6 +175,10 @@ struct MatchResultWire {
     /// `PartiallyFilled` without trades.
     #[serde(default)]
     outcome: Option<MatchOutcome>,
+    /// Absent in payloads written before the #164 contract: defaults to
+    /// `None` ("no error").
+    #[serde(default)]
+    error: Option<PriceLevelError>,
 }
 
 impl TryFrom<MatchResultWire> for MatchResult {
@@ -171,6 +205,7 @@ impl TryFrom<MatchResultWire> for MatchResult {
             is_complete: wire.is_complete,
             filled_order_ids: wire.filled_order_ids,
             outcome,
+            error: wire.error,
         }
         .validated()
     }
@@ -197,6 +232,7 @@ impl MatchResult {
             } else {
                 MatchOutcome::NotFilled
             },
+            error: None,
         }
     }
 
@@ -204,30 +240,97 @@ impl MatchResult {
     /// vectors pre-sized for up to `capacity` entries.
     ///
     /// A single match sweep at one price level produces at most one trade and
-    /// at most one filled order id per resting order it consumes, so a good
-    /// `capacity` is the tighter of the taker's incoming quantity and the
-    /// level's resting order count (see `PriceLevel::match_order`). Pre-sizing
-    /// both vectors removes the per-fill reallocations on the match hot path
-    /// without over-reserving for a small taker against a deep level.
-    #[must_use]
-    pub fn with_capacity(order_id: Id, initial_quantity: Quantity, capacity: usize) -> Self {
-        // Same zero-quantity consistency as `new` (see there).
-        let is_complete = initial_quantity.as_u64() == 0;
-        Self {
-            order_id,
-            trades: TradeList::with_capacity(capacity),
-            remaining_quantity: initial_quantity.as_u64(),
-            is_complete,
-            filled_order_ids: Vec::with_capacity(capacity),
-            outcome: if is_complete {
-                MatchOutcome::Filled
-            } else {
-                MatchOutcome::NotFilled
-            },
+    /// at most one filled order id per maker step, so a good `capacity` is the
+    /// tighter of the taker's incoming quantity and the level's resting order
+    /// count (see `PriceLevel::match_order`). Pre-sizing both vectors removes
+    /// the per-fill reallocations on the match hot path without over-reserving
+    /// for a small taker against a deep level.
+    ///
+    /// Allocation is fallible (`Vec::new` + `try_reserve_exact`): an
+    /// unrepresentable `capacity` such as `usize::MAX` or an allocator refusal
+    /// returns a typed error instead of panicking. `capacity == 0` never
+    /// allocates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::Trades`] or [`CapacityResource::FilledOrderIds`]) if
+    /// either vector cannot be reserved.
+    pub fn try_with_capacity(
+        order_id: Id,
+        initial_quantity: Quantity,
+        capacity: usize,
+    ) -> Result<Self, PriceLevelError> {
+        let mut result = Self::new(order_id, initial_quantity);
+        result.trades = TradeList::try_with_capacity(capacity)?;
+        result
+            .filled_order_ids
+            .try_reserve_exact(capacity)
+            .map_err(|_| {
+                PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, capacity)
+            })?;
+        Ok(result)
+    }
+
+    /// Reserves room for at least `additional` more trades AND `additional`
+    /// more filled order ids (amortized growth).
+    ///
+    /// Never allocates when the spare capacity already suffices. The matching
+    /// engine calls this before committing each maker step, so the step's
+    /// [`Self::add_trade`] / [`Self::add_filled_order_id`] cannot then fail on
+    /// growth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] if either vector cannot
+    /// grow. Only capacity may have changed; every observable field (trades,
+    /// filled ids, remaining quantity, completion, outcome, error) is left
+    /// unchanged.
+    #[inline]
+    pub fn try_reserve(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        self.trades.try_reserve(additional)?;
+        self.try_reserve_filled(additional)
+    }
+
+    /// Exact-growth variant of [`Self::try_reserve`], used by the fill-or-kill
+    /// preflight that knows the exact number of steps its sweep will take.
+    pub(crate) fn try_reserve_exact(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        self.trades.try_reserve_exact(additional)?;
+        self.filled_order_ids
+            .try_reserve_exact(additional)
+            .map_err(|_| {
+                PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, additional)
+            })
+    }
+
+    /// `true` when one more trade AND one more filled id fit without growing.
+    /// The matching engine's per-step fast-path check.
+    #[inline]
+    pub(crate) fn has_step_capacity(&self) -> bool {
+        // Under an armed test limiter every step must go through the
+        // (limited) reservation so the cap is exact, whatever spare capacity
+        // amortized growth happened to leave.
+        #[cfg(test)]
+        if crate::execution::list::test_seam::armed() {
+            return false;
         }
+        self.trades.len() < self.trades.capacity()
+            && self.filled_order_ids.len() < self.filled_order_ids.capacity()
+    }
+
+    /// Reserves `additional` filled-order-id slots (amortized growth).
+    #[inline]
+    fn try_reserve_filled(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        self.filled_order_ids.try_reserve(additional).map_err(|_| {
+            PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, additional)
+        })
     }
 
     /// Add a trade to this match result.
+    ///
+    /// All validation and the storage reservation happen BEFORE any field is
+    /// changed, so on `Err` the result is exactly as it was: trades, filled
+    /// ids, remaining quantity, completion and outcome are untouched.
     ///
     /// # Errors
     ///
@@ -236,7 +339,11 @@ impl MatchResult {
     /// would underflow), which indicates an over-fill bug in the caller, or if
     /// the trade's taker order id differs from this result's incoming order id
     /// (a trade can only belong to the taker that initiated the match).
+    /// Returns [`PriceLevelError::CapacityExceeded`] if the trade list cannot
+    /// grow.
     pub fn add_trade(&mut self, trade: Trade) -> Result<(), PriceLevelError> {
+        #[cfg(test)]
+        test_seam::check_add_trade()?;
         if trade.taker_order_id() != self.order_id {
             return Err(PriceLevelError::InvalidOperation {
                 message: format!(
@@ -246,7 +353,7 @@ impl MatchResult {
                 ),
             });
         }
-        self.remaining_quantity = self
+        let remaining_quantity = self
             .remaining_quantity
             .checked_sub(trade.quantity().as_u64())
             .ok_or_else(|| PriceLevelError::InvalidOperation {
@@ -256,6 +363,13 @@ impl MatchResult {
                     self.remaining_quantity
                 ),
             })?;
+        // Reserve before committing anything (#170): a failed growth must not
+        // leave remaining / completion / outcome describing a trade the list
+        // does not hold.
+        self.trades.try_reserve(1)?;
+
+        // Commit: nothing below can fail.
+        self.remaining_quantity = remaining_quantity;
         self.is_complete = self.remaining_quantity == 0;
         // Keep the outcome in lockstep with the fields it summarizes: a trade
         // has now occurred, so the result is at least partially filled.
@@ -265,13 +379,85 @@ impl MatchResult {
         } else {
             MatchOutcome::PartiallyFilled
         };
-        self.trades.add(trade);
+        self.trades.push_reserved(trade);
         Ok(())
     }
 
-    /// Add a filled order ID to track orders removed from the book
-    pub fn add_filled_order_id(&mut self, order_id: Id) {
+    /// Add a filled order ID to track orders removed from the book.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] with resource
+    /// [`CapacityResource::FilledOrderIds`] if the id vector cannot grow; the
+    /// result is left unchanged.
+    pub fn add_filled_order_id(&mut self, order_id: Id) -> Result<(), PriceLevelError> {
+        self.try_reserve_filled(1)?;
+        // Capacity reserved: this push cannot reallocate.
         self.filled_order_ids.push(order_id);
+        Ok(())
+    }
+
+    /// Returns the failure that stopped this match early, if any.
+    ///
+    /// `None` means the match ran to its natural end. `Some` means the sweep
+    /// stopped at a failed step: the trades, filled ids and remaining quantity
+    /// still describe exactly what the level committed before the failure
+    /// (see the type-level "Failure contract" section).
+    #[must_use]
+    #[inline]
+    pub fn error(&self) -> Option<&PriceLevelError> {
+        self.error.as_ref()
+    }
+
+    /// Returns `true` if the match stopped early on a failure
+    /// (`self.error().is_some()`).
+    #[must_use]
+    #[inline]
+    pub fn is_failed(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Records the failure that stopped the match. Keeps the FIRST failure
+    /// (the root cause); later ones are ignored. Used by the matching engine.
+    #[cold]
+    pub(crate) fn set_error(&mut self, error: PriceLevelError) {
+        if self.error.is_none() {
+            self.error = Some(error);
+        }
+    }
+
+    /// Clones the result without an infallible allocation.
+    ///
+    /// `Clone` is still derived; use this where a typed failure is required.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] if any buffer of the copy
+    /// cannot be allocated.
+    pub fn try_clone(&self) -> Result<Self, PriceLevelError> {
+        let mut filled_order_ids = Vec::new();
+        filled_order_ids
+            .try_reserve_exact(self.filled_order_ids.len())
+            .map_err(|_| {
+                PriceLevelError::capacity_exceeded(
+                    CapacityResource::FilledOrderIds,
+                    self.filled_order_ids.len(),
+                )
+            })?;
+        filled_order_ids.extend_from_slice(&self.filled_order_ids);
+        let error = match &self.error {
+            Some(error) => Some(error.try_clone()?),
+            None => None,
+        };
+        Ok(Self {
+            order_id: self.order_id,
+            trades: self.trades.try_clone()?,
+            remaining_quantity: self.remaining_quantity,
+            is_complete: self.is_complete,
+            filled_order_ids,
+            outcome: self.outcome,
+            error,
+        })
     }
 
     /// Returns the ID of the incoming order that initiated the match.
@@ -556,7 +742,13 @@ impl MatchResult {
         //    advances it past each match, which is exactly subsequence
         //    semantics (and implies plain membership).
         if !self.filled_order_ids.is_empty() {
-            let mut seen = std::collections::HashSet::with_capacity(self.filled_order_ids.len());
+            let mut seen = std::collections::HashSet::new();
+            seen.try_reserve(self.filled_order_ids.len()).map_err(|_| {
+                PriceLevelError::capacity_exceeded(
+                    CapacityResource::ValidationScratch,
+                    self.filled_order_ids.len(),
+                )
+            })?;
             let mut makers = self
                 .trades
                 .as_vec()
@@ -795,7 +987,55 @@ impl FromStr for MatchResult {
             is_complete,
             filled_order_ids,
             outcome,
+            // The text format does not carry the failure slot (like `outcome`
+            // before it, it is lossy); decode as "no error".
+            error: None,
         }
         .validated()
+    }
+}
+
+/// Test-only fault injection for [`MatchResult::add_trade`] (issue #170).
+///
+/// While armed, `add_trade` succeeds `after` more times on this thread and then
+/// fails (before mutating anything) with an `InvalidOperation`. It exists so the
+/// engine's "a committed fill could not be recorded" path can be exercised; in
+/// production that failure is ruled out structurally. Compiled only under
+/// `cfg(test)`.
+#[cfg(test)]
+pub(crate) mod test_seam {
+    use crate::errors::PriceLevelError;
+    use std::cell::Cell;
+
+    thread_local! {
+        static FAIL_ADD_TRADE_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    /// Disarms the injection on drop.
+    pub(crate) struct AddTradeFailGuard;
+
+    impl Drop for AddTradeFailGuard {
+        fn drop(&mut self) {
+            FAIL_ADD_TRADE_AFTER.with(|cell| cell.set(None));
+        }
+    }
+
+    /// Makes the `(after + 1)`-th `add_trade` on this thread fail.
+    pub(crate) fn fail_add_trade_after(after: usize) -> AddTradeFailGuard {
+        FAIL_ADD_TRADE_AFTER.with(|cell| cell.set(Some(after)));
+        AddTradeFailGuard
+    }
+
+    pub(super) fn check_add_trade() -> Result<(), PriceLevelError> {
+        FAIL_ADD_TRADE_AFTER.with(|cell| match cell.get() {
+            Some(0) => Err(PriceLevelError::InvalidOperation {
+                message: "injected add_trade failure".to_string(),
+            }),
+            Some(n) => {
+                cell.set(Some(n - 1));
+                Ok(())
+            }
+            None => Ok(()),
+        })
     }
 }

@@ -33,3 +33,9 @@ pub use list::TradeList;
 pub use match_result::{MatchOutcome, MatchResult};
 pub use taker::TakerKind;
 pub use trade::Trade;
+
+/// Test-only fault-injection seams for result growth (issue #170).
+#[cfg(test)]
+pub(crate) use list::test_seam as trade_list_seam;
+#[cfg(test)]
+pub(crate) use match_result::test_seam as match_result_seam;

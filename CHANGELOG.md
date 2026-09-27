@@ -103,9 +103,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not.
   v2, v3 and v4 packages all restore; legacy packages keep their original
   checksum. Pinned by v2 (0.8.4) and v3 (0.9.2) fixtures stored verbatim.
+- **Fallible execution-result allocation and growth (#170).**
+  `TradeList::with_capacity` and `MatchResult::with_capacity` (which panicked
+  on capacity overflow, e.g. `usize::MAX`) are replaced by
+  `TradeList::try_with_capacity` / `MatchResult::try_with_capacity` returning
+  `Result<_, PriceLevelError>` (`Vec::new` + `try_reserve_exact`).
+  `TradeList::add` and `MatchResult::add_filled_order_id` now return
+  `Result<(), PriceLevelError>`. `MatchResult::add_trade` validates and
+  reserves before committing remaining quantity, completion, outcome or the
+  trade, so a failure leaves the result unchanged. The decode-time validator's
+  duplicate-id set is reserved fallibly.
+- **`MatchResult` carries a typed match failure (#164 contract, #170).** New
+  `MatchResult::error() -> Option<&PriceLevelError>` and `is_failed()`.
+  `PriceLevel::match_order` keeps returning `MatchResult`; when a step fails it
+  stops the sweep and reports every committed trade and filled id, the true
+  remaining quantity, and the error, with the level's queue, counters, side
+  topology and statistics consistent with those trades. Storage for each step
+  is reserved before the maker mutation. A fill-or-kill taker reserves the
+  exact trade count (from its dry run) before touching any maker; on failure
+  it is `Killed` with the error set and the level unchanged. The new `error`
+  field round-trips through JSON and bincode; JSON without it decodes as "no
+  error"; the text form does not carry it.
+- **New `PriceLevelError::CapacityExceeded { resource, additional }` variant
+  and `CapacityResource` enum (#170).** Fixed payload, so reporting an
+  allocation failure never allocates. `PriceLevelError` now derives `Clone`,
+  `PartialEq`, `Eq`, `Serialize` and `Deserialize`. Exhaustive matches need a
+  new arm.
+- **`PriceLevel::matchable_quantity` replays in sweep order (#170).** The dry
+  run walks the queue by insertion sequence (the order `match_order` consumes
+  it) instead of `(timestamp, sequence)`. This corrects the dry run where
+  iceberg / reserve replenishment headroom depends on visit order: its total,
+  and so a fill-or-kill verdict, can now differ from 0.9 and matches what the
+  sweep executes.
 
 ### Added
 
+- `MatchResult::try_reserve`, `MatchResult::try_clone`,
+  `TradeList::try_reserve`, `TradeList::capacity` and `TradeList::try_clone`
+  (#170): fallible growth and cloning with typed `CapacityExceeded` failures.
 - `TimestampMs::try_from_system_time(SystemTime)` (#167): checked conversion
   of an already-read `SystemTime` (pre-epoch and `u64` millisecond overflow
   are typed errors; no clamping). It does not read the clock.

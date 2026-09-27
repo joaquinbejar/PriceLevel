@@ -34,7 +34,7 @@ mod tests {
             } else {
                 Id::from_uuid(uuid::Uuid::from_u128(u128::from(i) << 64 | 7))
             };
-            l.add(trade(i, id));
+            l.add(trade(i, id)).expect("capacity available in test");
         }
         l
     }
@@ -201,8 +201,10 @@ mod tests {
         let mut r = MatchResult::new(Id::sequential(900), Quantity::new(10));
         r.add_trade(trade(1, Id::sequential(50))).expect("add");
         r.add_trade(trade(2, Id::sequential(51))).expect("add");
-        r.add_filled_order_id(Id::sequential(1));
-        r.add_filled_order_id(Id::sequential(2));
+        r.add_filled_order_id(Id::sequential(1))
+            .expect("capacity available in test");
+        r.add_filled_order_id(Id::sequential(2))
+            .expect("capacity available in test");
         r.finalize(Quantity::new(5));
         let text = r.to_string();
         (r, text)

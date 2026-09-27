@@ -192,7 +192,8 @@ mod tests {
             r.add_trade(*t).expect("add_trade");
         }
         for id in filled {
-            r.add_filled_order_id(*id);
+            r.add_filled_order_id(*id)
+                .expect("capacity available in test");
         }
         r.finalize(Quantity::new(remaining));
         r.to_string()

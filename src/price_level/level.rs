@@ -244,6 +244,14 @@ pub struct PriceLevel {
     mutation_epoch: AtomicU64,
 }
 
+/// Result of [`PriceLevel::dry_run`]: what a sweep would fill and how many
+/// trades it would emit.
+#[derive(Debug, Clone, Copy)]
+struct DryRun {
+    filled: u64,
+    trades: usize,
+}
+
 impl PriceLevel {
     /// Reconstructs a price level directly from a snapshot.
     ///
@@ -1076,22 +1084,34 @@ impl PriceLevel {
     /// from the real `match_order` behavior.
     #[must_use]
     pub fn matchable_quantity(&self, incoming_quantity: u64, taker_id: Id) -> u64 {
+        self.dry_run(incoming_quantity, taker_id).filled
+    }
+
+    /// The deterministic dry run behind [`Self::matchable_quantity`]: returns
+    /// both the quantity the sweep would fill and the exact number of trades
+    /// it would emit, so the fill-or-kill preflight can reserve the result's
+    /// storage before the first maker is touched (issue #170 / #164 contract).
+    fn dry_run(&self, incoming_quantity: u64, taker_id: Id) -> DryRun {
+        let mut dry = DryRun {
+            filled: 0,
+            trades: 0,
+        };
         if incoming_quantity == 0 {
-            return 0;
+            return dry;
         }
 
-        // Snapshot the resting orders. `snapshot_orders()` is ordered by
-        // `(timestamp, sequence)` whereas the real sweep pops by pure insertion
-        // sequence; these coincide when timestamps are monotonic with insertion
-        // (the normal case). The two can only differ in *visit order*, never in
-        // the fillable *total*: every maker (including a fully-drained
-        // replenishing iceberg/auto-reserve) contributes the same amount
-        // regardless of when it is visited, so the sum this returns is exactly
-        // what the sweep would consume — which is all fill-or-kill depends on.
+        // Snapshot the resting orders in ascending insertion sequence: the
+        // exact order the real sweep pops them (`match_front` walks the
+        // insertion-sequence index; a replenished tranche is re-sequenced at
+        // the tail, modelled by `push_back` below; a partial fill keeps its
+        // sequence, modelled by `push_front`). Visiting in the sweep's own
+        // order makes the prediction exact per STEP, not only in total, so the
+        // trade count below equals what the sweep emits (issue #170).
         let mut pending: std::collections::VecDeque<Arc<OrderType<()>>> =
-            self.snapshot_orders().into();
+            self.snapshot_by_insertion_seq().into();
         let mut remaining = incoming_quantity;
         let mut filled: u64 = 0;
+        let mut trades: usize = 0;
 
         // Track the level's visible counter as the sweep would evolve it, so the
         // dry run models the #124 replenish-headroom ABORT (issue #130). A
@@ -1169,6 +1189,14 @@ impl PriceLevel {
                 Some(total) => total,
                 None => break,
             };
+            // The real sweep emits a trade exactly when `consumed > 0`.
+            if consumed > 0 {
+                trades = match trades.checked_add(1) {
+                    Some(count) => count,
+                    None => break,
+                };
+            }
+            dry = DryRun { filled, trades };
             remaining = new_remaining;
 
             if let Some(updated) = updated_order {
@@ -1184,7 +1212,7 @@ impl PriceLevel {
             }
         }
 
-        filled
+        dry
     }
 
     /// Matches an incoming taker order against existing orders at this price level.
@@ -1258,6 +1286,38 @@ impl PriceLevel {
     /// A `MatchResult` carrying the generated trades, the remaining unmatched
     /// quantity, the completion flag, the fully-filled maker IDs, and the
     /// terminal [`MatchOutcome`](crate::execution::MatchOutcome).
+    ///
+    /// # Failure contract (#164)
+    ///
+    /// This method never returns a bare error and never drops a committed
+    /// fill. If a fallible step fails (today: growing the result's trade /
+    /// filled-id storage; later issues plug trade-id reservation, counter
+    /// exhaustion and arithmetic failures into the same slot), the sweep stops
+    /// and the returned result carries the typed failure in
+    /// [`MatchResult::error`](crate::execution::MatchResult::error):
+    ///
+    /// - **Non-fill-or-kill takers.** The storage for each step is reserved
+    ///   *before* the step's maker mutation is committed, so a growth failure
+    ///   stops the sweep between two makers: the result holds every committed
+    ///   trade (a strict FIFO prefix of the unconstrained sweep), the filled
+    ///   ids of the makers that prefix removed, and the taker's true remaining
+    ///   quantity; the queue, `visible` / `hidden` counters, order count,
+    ///   side topology and statistics agree with exactly those trades. If
+    ///   recording fails *after* a commit (ruled out by construction: the slot
+    ///   is pre-reserved and the fill is validated by the sweep), the step's
+    ///   level bookkeeping is still completed, `remaining_quantity` reflects the
+    ///   committed fill, the unrecordable trade is logged at `ERROR` with all
+    ///   its fields, and the sweep stops with the error set.
+    /// - **Fill-or-kill takers.** The dry run under the exclusive guard counts
+    ///   the exact number of trades the sweep will emit, and that storage is
+    ///   reserved before the first maker is touched. A reservation failure
+    ///   kills the taker ([`MatchResult::was_killed`]) with no trades, the full
+    ///   remaining quantity, the level unchanged, and the error set; a
+    ///   successful reservation leaves the sweep no fallible growth.
+    ///
+    /// Resource failures are reported as the allocation-free
+    /// [`PriceLevelError::CapacityExceeded`]
+    /// and logged at `ERROR` (after the fill-or-kill guard is released).
     ///
     /// # Concurrency
     ///
@@ -1451,14 +1511,20 @@ impl PriceLevel {
         // queue and counters untouched — never a partial fill. `_fok_guard` is
         // `Some` only for a positive FOK taker; it drops at the end of the
         // method (after the sweep). The non-FOK paths take no fill-or-kill guard.
-        let _fok_guard = if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
+        let is_fok = matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0;
+        // Steps the fill-or-kill sweep will emit trades for, from the exact dry
+        // run below (only meaningful when `is_fok`).
+        let mut fok_trades: usize = 0;
+        let fok_guard = if is_fok {
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
             // to match a half-mutated level rather than sweep it (issue #130).
             if self.is_poisoned() {
                 return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             }
-            let available = self.matchable_quantity(incoming_quantity, taker_order_id);
+            let dry = self.dry_run(incoming_quantity, taker_order_id);
+            let available = dry.filled;
+            fok_trades = dry.trades;
             if available < incoming_quantity {
                 // Release the exclusive guard BEFORE emitting the event (issue
                 // #172): the kill verdict is already decided and nothing was
@@ -1496,10 +1562,56 @@ impl PriceLevel {
         // immediately frees. The bound is advisory — `order_count` is read
         // `Relaxed` and both `Vec`s still grow if a concurrent `add_order` lands
         // mid-sweep — so it is a hint, not a cap.
-        let capacity = (incoming_quantity as usize).min(self.order_count());
-        let mut result =
-            MatchResult::with_capacity(taker_order_id, Quantity::new(incoming_quantity), capacity);
+        //
+        // Allocation is fallible (issue #170, #164 contract):
+        //
+        // * Fill-or-kill reserves EXACTLY the number of trades the dry run
+        //   predicted, before the first maker mutation. Under the exclusive
+        //   guard the queue is frozen and the dry run replays the sweep step
+        //   for step in the sweep's own (insertion-sequence) order, so the
+        //   sweep emits exactly `fok_trades` trades and at most that many
+        //   filled ids: every per-step reservation below is then a no-op and
+        //   the sweep has no fallible growth left. A reservation failure here
+        //   kills the taker with the level untouched and the error reported.
+        // * Every other taker treats the pre-size as a hint: if it cannot be
+        //   reserved the sweep starts from an empty result and the per-step
+        //   reservation below is authoritative.
+        let mut result = if is_fok {
+            let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+            if let Err(err) = result.try_reserve_exact(fok_trades) {
+                // Nothing was mutated: release the guard before logging (the
+                // same #172 rule as the insufficient-depth kill above).
+                drop(fok_guard);
+                tracing::error!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    trades = fok_trades,
+                    price = self.price,
+                    error = %err,
+                    "fill-or-kill taker killed: result storage could not be reserved; level untouched"
+                );
+                result.mark_killed(incoming_quantity);
+                result.set_error(err);
+                return result;
+            }
+            result
+        } else {
+            let capacity = usize::try_from(incoming_quantity)
+                .unwrap_or(usize::MAX)
+                .min(self.order_count());
+            MatchResult::try_with_capacity(
+                taker_order_id,
+                Quantity::new(incoming_quantity),
+                capacity,
+            )
+            .unwrap_or_else(|_| MatchResult::new(taker_order_id, Quantity::new(incoming_quantity)))
+        };
         let mut remaining = incoming_quantity;
+        // The failure that stops the sweep early (#164 contract), with the
+        // committed trade that could not be recorded, if that is what failed.
+        // Logged and stored on the result only after the sweep, once the step
+        // bookkeeping is complete and the fill-or-kill guard is released.
+        let mut sweep_error: Option<(PriceLevelError, Option<Trade>)> = None;
 
         // No-progress safety guard. A maker that yields no progress
         // (`consumed == 0`, re-queued unchanged, `remaining` not decreased)
@@ -1577,6 +1689,26 @@ impl PriceLevel {
         }
 
         while remaining > 0 {
+            // Reserve this step's trade + filled-id slots BEFORE `match_front`
+            // commits any maker mutation (issue #170). With spare capacity (the
+            // common case: the pre-size above) this is a length/capacity
+            // compare and never allocates. When the pre-size is used up and
+            // the queue is already drained, stop without growing: the next
+            // `match_front` would report `Empty` anyway, and growing first
+            // would add an allocation to every "taker larger than the level"
+            // sweep. On a reservation failure nothing of this step has
+            // happened yet, so stopping here leaves queue, counters and result
+            // in agreement: the result reports exactly the fills committed so
+            // far and the true remainder.
+            if !result.has_step_capacity() {
+                if self.orders.is_empty() {
+                    break;
+                }
+                if let Err(err) = result.try_reserve(1) {
+                    sweep_error = Some((err, None));
+                    break;
+                }
+            }
             let outcome = self.orders.match_front(&mut set_aside, |seq, order_arc| {
                 // Self-trade prevention, DEFENSE-IN-DEPTH (issue #126). The
                 // common case is already handled terminally before the sweep: if
@@ -1818,13 +1950,25 @@ impl PriceLevel {
                             timestamp,
                         );
 
-                        if result.add_trade(trade).is_err() {
-                            remaining = new_remaining;
-                            break;
-                        }
-
-                        if data.fully_consumed {
-                            result.add_filled_order_id(data.maker_id);
+                        // The maker mutation is committed. Record the fill;
+                        // the slots were reserved before `match_front`, so this
+                        // cannot fail on growth, and the id / quantity checks
+                        // hold by construction (the trade carries this taker's
+                        // id and `consumed <= remaining`, with `remaining` kept
+                        // in lockstep with the result). If it fails anyway we do
+                        // NOT abandon the step: the bookkeeping below still runs
+                        // so counters / topology / statistics match the queue,
+                        // then the sweep stops with the error set (issue #170;
+                        // this replaces a bare `break` that skipped it all).
+                        match result.add_trade(trade) {
+                            Ok(()) => {
+                                if data.fully_consumed
+                                    && let Err(err) = result.add_filled_order_id(data.maker_id)
+                                {
+                                    sweep_error = Some((err, None));
+                                }
+                            }
+                            Err(err) => sweep_error = Some((err, Some(trade))),
                         }
 
                         // The trade is already committed (added to `result` and
@@ -1901,7 +2045,7 @@ impl PriceLevel {
                         );
                     }
 
-                    if remaining == 0 {
+                    if remaining == 0 || sweep_error.is_some() {
                         break;
                     }
                 }
@@ -1909,6 +2053,38 @@ impl PriceLevel {
         }
 
         result.finalize(Quantity::new(remaining));
+
+        if let Some((err, lost_trade)) = sweep_error {
+            // Release the fill-or-kill guard before running the subscriber
+            // (issue #172); the level is already consistent.
+            drop(fok_guard);
+            match lost_trade {
+                // A committed fill the result could not hold. Unreachable by
+                // construction (see above); logged with every trade field so
+                // it is never silent. `remaining` already reflects it.
+                Some(trade) => tracing::error!(
+                    price = self.price,
+                    taker_order_id = %taker_order_id,
+                    trade_id = %trade.trade_id(),
+                    maker_order_id = %trade.maker_order_id(),
+                    quantity = trade.quantity().as_u64(),
+                    remaining,
+                    error = %err,
+                    "match sweep stopped: committed fill could not be recorded in the result"
+                ),
+                None => tracing::error!(
+                    price = self.price,
+                    taker_order_id = %taker_order_id,
+                    trades = result.trades().len(),
+                    remaining,
+                    error = %err,
+                    "match sweep stopped early: result storage could not grow; committed fills reported"
+                ),
+            }
+            result.set_error(err);
+        } else {
+            drop(fok_guard);
+        }
 
         result
     }
