@@ -1,0 +1,30 @@
+# Configuration for the Production Panic Policy gate (issue #173).
+#
+# These four keys are the clippy-supported "allow in tests" toggles for the
+# lints in `[lints.clippy]` (Cargo.toml) that have one. All four are
+# recognized by the pinned toolchain (`rust-toolchain.toml`: `channel =
+# "stable"`; verified against `cargo clippy 0.1.98` — running clippy with an
+# unknown key here makes clippy hard-error and print the accepted key list,
+# which was used to confirm these four exist).
+#
+# What "in tests" means here: clippy treats an item as a test if it (or an
+# enclosing item) carries `#[cfg(test)]` or `#[test]`. That correctly exempts
+# every co-located `mod tests { ... }` block under `src/<module>/tests/`, and
+# whole integration-test / proptest / loom crate roots (compiled with
+# `cfg(test)` throughout). It does NOT distinguish a real test from a
+# standalone `#[cfg(test)] fn` production helper living outside a `mod
+# tests {}` block — clippy's own heuristic would wrongly exempt that helper
+# too. `scripts/check_panic_policy.py` re-checks unwrap/expect/panic/indexing
+# forms on exactly that shape as a second layer (see the script header), so
+# the gap left by these four toggles does not silently pass.
+#
+# Lints with no such toggle (`arithmetic_side_effects`,
+# `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap`,
+# `manual_assert`, `panic_in_result_fn`, `get_unwrap`, `exit`, `unreachable`,
+# `todo`, `unimplemented`) have no config key to evaluate; test/bench crate
+# roots that need relief from them carry an explicit `#![allow(...)]` instead
+# (see each file's header comment).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
