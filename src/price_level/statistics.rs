@@ -36,11 +36,51 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// ([`record_execution`](Self::record_execution) / [`reset`](Self::reset)) and
 /// back to even on its exit, both `Release`; a reader loads it `Acquire`, copies
 /// the fields, `Acquire`-fences, re-loads it, and retries if it changed or was
-/// odd. Writers are serialized by the engine model (one matcher per level +
-/// `reset`'s quiescence contract), which the seqlock assumes. The lone
-/// read-modify-write loops in `checked_fetch_add_u64`
+/// odd. The lone read-modify-write loops in `checked_fetch_add_u64`
 /// and `checked_fetch_add_u128` are standard
 /// `compare_exchange_weak` CAS retries.
+///
+/// # Writer contract (issue #153)
+///
+/// The statistics support **exactly one concurrent writer** of the execution
+/// aggregates at a time:
+///
+/// - [`record_execution`](Self::record_execution) is driven by the single
+///   logical matcher of the level (`PriceLevel::match_order`; see "Concurrency
+///   Model" in the crate docs). Two `record_execution` calls overlapping in
+///   time on the same instance are **unsupported**.
+/// - [`reset`](Self::reset) / [`reset_at`](Self::reset_at) require
+///   **quiescence**: no `record_execution` (hence no `match_order`) in flight.
+///
+/// The sequence guard is a publication protocol for **readers**, not a writer
+/// lock: entering a write section is a plain increment, not an exclusive
+/// acquire, so it neither serializes two writers nor excludes `reset` from a
+/// `record_execution`. With two overlapping writers the sequence can pass
+/// through an even value while the first writer's transaction is still
+/// half-applied, and a reader can accept that partial tuple. The crate does
+/// not detect this schedule; it is outside the contract rather than protected.
+/// Concurrent recorders still leave arithmetically correct **final** totals
+/// (every counter update is an atomic checked RMW and a rollback subtracts
+/// exactly what its own call added), but [`Clone`], serialization and
+/// [`Display`](std::fmt::Display) are only guaranteed coherent under the
+/// single-writer contract.
+///
+/// Under that contract, a multi-field reader running concurrently with the
+/// writer, from any number of threads, returns a state the statistics actually
+/// held between two write sections: every execution recorded before it began
+/// is fully present or fully absent, never a partial prefix, and an overflow
+/// rollback is never observed. [`record_order_added`](Self::record_order_added)
+/// and [`record_order_removed`](Self::record_order_removed) are single-counter
+/// increments outside the write section; they may be called from any number of
+/// threads (admissions and cancels run concurrently with the matcher), and a
+/// multi-field read sees each of those counters at some value it held during
+/// the read. The single-field accessors and the average ratios are `Relaxed`
+/// point reads with no cross-field guarantee.
+///
+/// A reader retries while a write section is open, so a writer descheduled
+/// inside its section delays readers (they spin) until it resumes; the
+/// section is short, finite and allocation-free, and a panicking writer
+/// closes it through the guard's `Drop`.
 ///
 /// # `value_executed` width (issue #140)
 ///
@@ -106,6 +146,10 @@ pub struct PriceLevelStatistics {
 /// even, so a concurrent multi-field reader retries if it overlapped either
 /// increment. Using a guard keeps the section correct across the early returns
 /// in [`PriceLevelStatistics::record_execution`].
+///
+/// Entry is an unconditional increment, not an exclusive acquire: the guard
+/// assumes the single-writer contract (issue #153) and does not serialize two
+/// overlapping writers.
 struct WriteSeqGuard<'a> {
     seq: &'a AtomicU64,
 }
@@ -247,19 +291,23 @@ impl PriceLevelStatistics {
     ///
     /// Retries until a full copy brackets an even, unchanged sequence — i.e. no
     /// writer transaction ([`record_execution`](Self::record_execution) /
-    /// [`reset`](Self::reset)) overlapped it, so the copy is NEVER a torn mix of
-    /// a pre- and post-write prefix (a bounded fallback that returned a torn copy
-    /// would defeat the checksummed snapshot this backs).
+    /// [`reset`](Self::reset)) overlapped it, so under the single-writer
+    /// contract (issue #153) the copy is NEVER a torn mix of a pre- and
+    /// post-write prefix (a bounded fallback that returned a torn copy would
+    /// defeat the checksummed snapshot this backs). With two overlapping writers
+    /// (unsupported) an even, unchanged sequence no longer implies that no
+    /// transaction was in flight, and this guarantee does not hold.
     ///
     /// # Liveness
     ///
     /// The loop's work PER attempt is bounded (one sequence load + a nine-field
-    /// copy), and it converges under the advisory writer-serialization contract
-    /// (one matcher per level + `reset`'s quiescence): a writer holds the section
-    /// for only a short, allocation-free burst before dropping the guard back to
-    /// even, and `record_execution` is finite, so a reader exits on the first
-    /// iteration when uncontended and otherwise as soon as recording quiesces
-    /// (which it always does — the matcher cannot record forever). A panicking
+    /// copy), and it converges under the writer contract (one matcher per level
+    /// and a quiescent `reset`): a writer holds the section for only a short,
+    /// allocation-free burst before dropping the guard back to even, and
+    /// `record_execution` is finite, so a reader exits on the first iteration
+    /// when uncontended and otherwise as soon as recording quiesces (which it
+    /// always does — the matcher cannot record forever). A writer descheduled
+    /// inside its section keeps readers spinning until it resumes. A panicking
     /// writer still restores the even sequence via the guard's `Drop`, so the
     /// reader is never stranded on a permanently-odd sequence.
     fn read_consistent(&self) -> StatsData {
@@ -354,12 +402,20 @@ impl PriceLevelStatistics {
         Ok(Self::new_at(clock.try_now_ms()?))
     }
 
-    /// Record a new order being added
+    /// Record a new order being added.
+    ///
+    /// A single `Relaxed` increment outside the seqlock write section; safe to
+    /// call from any number of threads concurrently with the matcher (see the
+    /// struct-level "Writer contract").
     pub fn record_order_added(&self) {
         self.orders_added.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record an order being removed without execution
+    /// Record an order being removed without execution.
+    ///
+    /// A single `Relaxed` increment outside the seqlock write section; safe to
+    /// call from any number of threads concurrently with the matcher (see the
+    /// struct-level "Writer contract").
     pub fn record_order_removed(&self) {
         self.orders_removed.fetch_add(1, Ordering::Relaxed);
     }
@@ -379,20 +435,34 @@ impl PriceLevelStatistics {
     /// An accepted execution contributes to **every** aggregate, or to **none**.
     /// If a later counter overflows after earlier ones already advanced, this
     /// rolls the committed prefix back (a `fetch_sub` of exactly what this call
-    /// added — sound by the same call-backed reservation argument as the #111 /
-    /// #113 rollbacks: the subtracted units are exactly the units this call
-    /// added, so the undo is commutative with concurrent `record_execution`
-    /// deltas). That call-backed argument assumes no concurrent
-    /// [`reset`](Self::reset) `store(0)` races the rollback — see the quiescence
-    /// contract on `reset`. So a caller never observes a partial contribution in
-    /// the final state. On any failure — a validation error or a counter overflow —
-    /// the sticky [`stats_degraded`](Self::stats_degraded) flag is set: the
-    /// dropped execution is then observable, even though the caller
+    /// added, never below zero because those units are still present). So a
+    /// caller never observes a partial contribution in the final state. On any
+    /// failure — a validation error or a counter overflow — the sticky
+    /// [`stats_degraded`](Self::stats_degraded) flag is set: the dropped
+    /// execution is then observable, even though the caller
     /// (`PriceLevel::match_order`) cannot fail the already-committed trade.
-    /// Because these are independent atomics, a *concurrent* reader may
-    /// still glimpse a prefix transiently before its rollback (the same window
-    /// the #111 reserve-then-rollback admission has); the guarantee is on the
-    /// committed final state, not on the transient.
+    ///
+    /// # Writer contract (issue #153)
+    ///
+    /// At most one `record_execution` may be in flight per instance, and none
+    /// may overlap a [`reset`](Self::reset) / [`reset_at`](Self::reset_at). The
+    /// engine satisfies this through its single logical matcher per level;
+    /// direct callers of this public method must serialize their calls
+    /// themselves. The whole call runs inside the seqlock write section, so
+    /// under this contract a concurrent [`Clone`], serialization or
+    /// [`Display`](std::fmt::Display) sees the execution fully applied or not
+    /// at all, and never a prefix that is later rolled back. The `Relaxed`
+    /// single-field accessors are outside that protocol and may glimpse the
+    /// prefix transiently.
+    ///
+    /// Overlapping calls are **unsupported**. They still produce correct final
+    /// totals (each update is an atomic checked RMW, and a rollback subtracts
+    /// exactly what its own call added, so it commutes with the other call's
+    /// deltas), but the sequence guard does not protect a concurrent
+    /// multi-field reader from them: it can accept a partial tuple. An overlap
+    /// with `reset` is worse: a `store(0)` landing between a committed prefix
+    /// and its `fetch_sub` rollback wraps the counter. Neither is prevented by
+    /// the guard; both are caller contract violations.
     ///
     /// # Errors
     ///
@@ -412,9 +482,11 @@ impl PriceLevelStatistics {
 
         // Bracket the whole record as a seqlock WRITE (issue #129): a concurrent
         // multi-field reader (`Clone` / serialize) retries rather than capture an
-        // in-flight prefix, and `reset` — also a writer — cannot interleave this
-        // transaction's rollback. The guard's `Drop` closes the section (back to
-        // even) on EVERY return path below, including the early validation errors.
+        // in-flight prefix or a later-rolled-back one. The guard is NOT a writer
+        // lock: it does not exclude a second `record_execution` or a `reset`;
+        // the single-writer contract (issue #153) does. The guard's `Drop`
+        // closes the section (back to even) on EVERY return path below,
+        // including the early validation errors.
         let _write = WriteSeqGuard::new(&self.stats_seq);
 
         // Validate everything that can fail BEFORE mutating any counter, so a
@@ -495,9 +567,9 @@ impl PriceLevelStatistics {
             return Err(err);
         }
 
-        // Monotonic (issue #129): a concurrent / out-of-order record can never
-        // move the "latest execution" backwards. Belt-and-braces with the
-        // seqlock, but cheap and independently correct.
+        // Monotonic (issue #129): an out-of-order record (or an unsupported
+        // overlapping one) can never move the "latest execution" backwards.
+        // Cheap and independent of the seqlock.
         self.last_execution_time
             .fetch_max(current_time, Ordering::Relaxed);
 
@@ -726,17 +798,21 @@ impl PriceLevelStatistics {
     ///
     /// This must only be called on a **quiescent** level — with no in-flight
     /// [`record_execution`](Self::record_execution) (and hence no in-flight
-    /// `PriceLevel::match_order`). A reset participates in the seqlock as a
-    /// WRITER (issue #129), so it can never interleave the middle of a
-    /// `record_execution` transaction's rollback (which would otherwise wrap a
-    /// counter toward `u64::MAX` via a `store(0)` racing a `fetch_sub`) — but the
-    /// seqlock protects READERS, it does not serialize two writers. The
-    /// single-matcher-per-level model already serializes `record_execution`, and
-    /// this quiescence requirement extends that to a reset. No engine path
-    /// resets during matching, so the race does not occur today; it remains a
-    /// caller obligation because reset is public. A multi-field reader
-    /// (`Clone` / serialize) racing a reset retries and observes either the
-    /// pre-reset or fully-reset state, never a mix.
+    /// `PriceLevel::match_order`) and no other reset. A reset is a seqlock
+    /// WRITER (issue #129), but the sequence guard protects READERS only; it
+    /// does not exclude a concurrent `record_execution` (issue #153). A reset
+    /// overlapping a `record_execution` whose overflow rollback is in progress
+    /// can `store(0)` a counter between the committed prefix and its
+    /// `fetch_sub`, wrapping that counter toward its maximum. Quiescence is
+    /// what rules this out, not the guard. No engine path resets during
+    /// matching; it remains a caller obligation because reset is public.
+    ///
+    /// Under this contract, a multi-field reader (`Clone` / serialize /
+    /// `Display`) racing the reset retries and observes either the pre-reset
+    /// or the fully reset execution state, never a mix. Concurrent
+    /// [`record_order_added`](Self::record_order_added) /
+    /// [`record_order_removed`](Self::record_order_removed) are single-counter
+    /// increments that the reset may or may not include.
     pub fn reset_at(&self, started_at: TimestampMs) {
         // Seqlock write section: a concurrent multi-field reader retries rather
         // than capture a half-reset copy.
@@ -773,15 +849,25 @@ impl Clone for PriceLevelStatistics {
     /// pre- and post-`record_execution` prefix — the seqlock retries until it
     /// captures a state the level actually held. A restored level therefore
     /// carries the recorded statistics rather than a fresh, zeroed set.
+    ///
+    /// The coherence guarantee holds under the single-writer contract (one
+    /// `record_execution` at a time, quiescent `reset`; see the struct-level
+    /// "Writer contract", issue #153). Clones may run from any number of
+    /// threads concurrently with that writer. Under overlapping recorders
+    /// (unsupported) a clone can capture a partial execution.
     fn clone(&self) -> Self {
         Self::from_data(self.read_consistent())
     }
 }
 
 impl fmt::Display for PriceLevelStatistics {
+    /// Formats one seqlock-consistent copy of every field, coherent under the
+    /// single-writer contract (see the struct-level "Writer contract", issue
+    /// #153).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Consistent multi-field read (issue #129): the emitted string is a
-        // coherent snapshot, not a torn mix, and round-trips through `FromStr`.
+        // Consistent multi-field read (issue #129): under the single-writer
+        // contract the emitted string is a coherent snapshot, not a torn mix,
+        // and round-trips through `FromStr`.
         let d = self.read_consistent();
         write!(
             f,
@@ -906,12 +992,16 @@ impl FromStr for PriceLevelStatistics {
 }
 
 impl Serialize for PriceLevelStatistics {
+    /// Serializes one seqlock-consistent copy of every field, coherent under
+    /// the single-writer contract (see the struct-level "Writer contract",
+    /// issue #153).
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        // Read all fields as ONE consistent seqlock snapshot (issue #129) so a
-        // concurrent `record_execution` can never make the serialized (and hence
+        // Read all fields as ONE consistent seqlock snapshot (issue #129) so,
+        // under the single-writer contract (issue #153), the concurrent
+        // `record_execution` can never make the serialized (and hence
         // checksummed) statistics a torn pre/post-write mix.
         let d = self.read_consistent();
 

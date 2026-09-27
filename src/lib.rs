@@ -112,6 +112,20 @@
 //!   or whose sums overflow `u64` is recollected at most 8 times in total, after
 //!   which the call returns a typed [`PriceLevelError::InvalidOperation`] rather
 //!   than looping or substituting a live counter (#162).
+//! - **Statistics have a single writer.** [`PriceLevelStatistics`] supports
+//!   exactly one concurrent writer of its execution aggregates:
+//!   [`PriceLevelStatistics::record_execution`] is driven by the one logical
+//!   matcher, and [`PriceLevelStatistics::reset`] /
+//!   [`PriceLevelStatistics::reset_at`] require quiescence (no match or
+//!   recording in flight). Under that contract the multi-field reads (`Clone`,
+//!   which backs [`PriceLevel::snapshot`], serde and `Display`) may run from
+//!   any number of threads and always return a complete execution state,
+//!   never a partial or later rolled-back one. The sequence guard behind those
+//!   reads protects readers only; it is not a writer lock, so overlapping
+//!   `record_execution` calls (or a reset during one) are unsupported and a
+//!   reader can then capture a partial execution (issue #153). Order
+//!   admission and removal counters are plain atomic increments and may be
+//!   bumped from any thread.
 //!
 //! ## Caller-Supplied Code
 //!
