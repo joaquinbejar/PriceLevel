@@ -54,20 +54,33 @@ mod tests {
         level.add_order(maker(1, 10)).expect("admit maker");
         let ids = UuidGenerator::new(Uuid::new_v4());
 
-        let subscriber = registry().with(PanickingLayer);
-        let unwound = tracing::subscriber::with_default(subscriber, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                level.match_order(
-                    100,
-                    Id::from_u64(99),
-                    TimeInForce::Fok,
-                    TakerKind::Standard,
-                    TimestampMs::new(1),
-                    &ids,
-                )
-            }))
-        });
-        assert!(unwound.is_err(), "the subscriber panic must propagate");
+        // `tracing` caches callsite interest process-wide, so a concurrent
+        // test thread that (re)registers dispatchers can transiently hide the
+        // kill event from this thread's scoped subscriber. A killed FOK that
+        // emitted nothing mutated nothing, so retrying is harmless; the test
+        // requires that the panicking subscriber is reached at least once.
+        let mut panicked = false;
+        for attempt in 0..1_000u64 {
+            let subscriber = registry().with(PanickingLayer);
+            let unwound = tracing::subscriber::with_default(subscriber, || {
+                tracing::callsite::rebuild_interest_cache();
+                catch_unwind(AssertUnwindSafe(|| {
+                    level.match_order(
+                        100,
+                        Id::from_u64(10_000 + attempt),
+                        TimeInForce::Fok,
+                        TakerKind::Standard,
+                        TimestampMs::new(1),
+                        &ids,
+                    )
+                }))
+            });
+            if unwound.is_err() {
+                panicked = true;
+                break;
+            }
+        }
+        assert!(panicked, "the subscriber panic must propagate");
 
         // Nothing was mutated by the killed FOK.
         assert_eq!(level.order_count(), 1);
@@ -90,21 +103,27 @@ mod tests {
         assert_eq!(level.visible_quantity(), 0);
     }
 
-    /// A formatting destination that cancels every order on its first write.
-    /// With a derived `Debug` this deadlocked: `DashMap`'s `Debug` held a shard
-    /// read lock while writing into the destination.
-    struct ReentrantWriter<'a> {
+    /// A formatting destination that cancels every resting order the moment
+    /// an order BODY is being written (the `Standard` variant name). With the
+    /// old derived `Debug`, that write happened inside `DashMap`'s `Debug`,
+    /// under the shard read lock of the entry being formatted, so cancelling
+    /// that same order (shard write lock, same thread) deadlocked.
+    struct CancelOnOrderBody<'a> {
         level: &'a PriceLevel,
         ids: Vec<Id>,
+        fired: bool,
         out: String,
     }
 
-    impl std::fmt::Write for ReentrantWriter<'_> {
+    impl std::fmt::Write for CancelOnOrderBody<'_> {
         fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            for id in self.ids.drain(..) {
-                let _ = self
-                    .level
-                    .update_order(OrderUpdate::Cancel { order_id: id });
+            if !self.fired && s.contains("Standard") {
+                self.fired = true;
+                for id in self.ids.drain(..) {
+                    let _ = self
+                        .level
+                        .update_order(OrderUpdate::Cancel { order_id: id });
+                }
             }
             self.out.push_str(s);
             Ok(())
@@ -112,25 +131,72 @@ mod tests {
     }
 
     #[test]
-    fn debug_does_not_hold_locks_while_writing_to_caller_destination() {
+    fn debug_does_not_hold_shard_locks_while_writing_order_bodies() {
         let level = PriceLevel::new(PRICE);
         let ids: Vec<Id> = (1..=64).map(Id::from_u64).collect();
         for n in 1..=64 {
             level.add_order(maker(n, 1)).expect("admit maker");
         }
 
-        let mut writer = ReentrantWriter {
+        let mut writer = CancelOnOrderBody {
             level: &level,
             ids,
+            fired: false,
             out: String::new(),
         };
         write!(writer, "{level:?}").expect("formatting succeeds");
 
+        assert!(writer.fired, "the re-entrant cancel must have been armed");
         assert!(writer.out.starts_with("PriceLevel"));
-        // The formatted text is the pre-cancel materialization; the level now
-        // reflects the destination's re-entrant cancels.
+        // The text is the pre-cancel materialization (all 64 bodies); the
+        // level reflects the destination's re-entrant cancels.
+        assert_eq!(writer.out.matches("Standard").count(), 64);
         assert_eq!(level.order_count(), 0);
         assert_eq!(level.visible_quantity(), 0);
+    }
+
+    /// A formatting destination that runs a fill-or-kill match on EVERY write.
+    /// On an empty level the old derived `Debug` held only one guard while
+    /// writing: the `fok_guard` read guard (inside `RwLock`'s `Debug`), so the
+    /// re-entrant FOK's exclusive acquisition on the same thread deadlocked.
+    /// The hand-written `Debug` omits the guard, so every re-entry succeeds.
+    struct FokOnEveryWrite<'a> {
+        level: &'a PriceLevel,
+        ids: &'a UuidGenerator,
+        matches: u64,
+    }
+
+    impl std::fmt::Write for FokOnEveryWrite<'_> {
+        fn write_str(&mut self, _s: &str) -> std::fmt::Result {
+            self.matches += 1;
+            let result = self.level.match_order(
+                1,
+                Id::from_u64(1_000 + self.matches),
+                TimeInForce::Fok,
+                TakerKind::Standard,
+                TimestampMs::new(1),
+                self.ids,
+            );
+            if result.outcome() == MatchOutcome::Killed {
+                Ok(())
+            } else {
+                Err(std::fmt::Error)
+            }
+        }
+    }
+
+    #[test]
+    fn debug_does_not_hold_fok_guard_while_writing() {
+        let level = PriceLevel::new(PRICE);
+        let ids = UuidGenerator::new(Uuid::new_v4());
+        let mut writer = FokOnEveryWrite {
+            level: &level,
+            ids: &ids,
+            matches: 0,
+        };
+        write!(writer, "{level:?}").expect("every re-entrant FOK is killed, none blocks");
+        assert!(writer.matches > 0);
+        assert_eq!(level.order_count(), 0);
     }
 
     /// A formatting destination that panics mid-write leaves the level

@@ -6,9 +6,13 @@ Issue #172. Companion to the Production Panic Policy in
 
 ## Contract
 
-Crate-owned code does not initiate panics; that is enforced independently of
-this document. Some public operations, however, call code the crate does not
-own: trait impls on a caller payload, caller closures, a caller's
+The Production Panic Policy in `rules/global_rules.md` requires that
+crate-owned code not initiate panics. That is the required policy, not a
+completed state: remaining crate-owned panic paths (for example the
+`snapshot()` aggregate assertions) are being removed under the audit in
+[#161](https://github.com/joaquinbejar/PriceLevel/issues/161) and its
+sub-issues, and are out of scope here. This document covers the separate
+question of code the crate does not own. Some public operations call it: trait impls on a caller payload, caller closures, a caller's
 `fmt::Write` / `Serializer` / `Deserializer`, and the process-installed
 `tracing` subscriber. Rust bounds such as `Clone`, `Default`, `Debug`,
 `Serialize` or `FnOnce` cannot express "does not panic", so:
@@ -46,7 +50,7 @@ left behind by an unwind.
 
 | Call | Where | Guard | Partial mutation | Unwind effect |
 |------|-------|-------|------------------|---------------|
-| `T::clone` | `with_reduced_quantity`, `refresh_iceberg`, `match_against` (partial-fill residual), derived `Clone` | none | none (`&self`) | source order intact |
+| `T::clone` | `with_reduced_quantity`, `refresh_iceberg`, `match_against` (partial-fill residual), derived `Clone` | none | none (`&self`) | crate-controlled fields of the source order unchanged; payload side effects (interior mutability in `T`) are not covered |
 | `T: Debug` into caller formatter | derived `Debug` | none | none | none |
 | `T: PartialEq` / `Eq` | derived `PartialEq` | none | none | none |
 | `T: Serialize` + caller `Serializer` | derived `Serialize` | none | none | partial output is the caller's |
@@ -54,6 +58,12 @@ left behind by an unwind.
 | `T::default` | `FromStr for OrderType<T>` | none | none | parse abandoned |
 | `F: FnOnce(T) -> U` | `map_extra_fields` | none | none | consumed `self` dropped |
 | `&mut T` handed out | `extra_fields_mut` | none | caller-owned value | caller's responsibility |
+
+"Unwind effect" describes crate-controlled state only. A caller impl can
+mutate its own payload through interior mutability before panicking; the
+library makes no statement about the payload after such a panic. The
+payload test in `src/orders/tests/order_type.rs` shows preservation only for
+its own side-effect-free payload.
 
 `Display for OrderType<T>` does not touch `T`; it writes to the caller's
 formatter only. `OrderMetadata` and `()` are crate/core payloads and are
@@ -89,6 +99,13 @@ dependency, not caller code, and its errors map to typed variants.
 | `PriceLevel::iter_orders`, `OrderQueue::iter_orders` loop body / adapters | **`DashMap` shard read lock**, held between `next()` calls | none | a body that mutates the same level on the same thread can deadlock; writers to that shard (including the matcher) wait. A panic releases the read lock without poisoning. Use `snapshot_orders` to run arbitrary code with no lock. Kept lazy because v0.7 made `iter_orders` non-allocating on purpose |
 | `PriceLevelSnapshot::iter_orders` | none | none | iterates an owned `Vec` |
 
+### Clock and entropy traits (`src/utils/entropy.rs`, `src/utils/id.rs`)
+
+| Call | Where | Guard | Partial mutation | Notes |
+|------|-------|-------|------------------|-------|
+| `EntropySource::try_fill_bytes` | `Id::try_new`, `Id::try_new_ulid`, `Id::try_new_ulid_at`, `Id::try_new_uuid` | none | none | failures must be returned as `Err`; a panic unwinds with no library state touched (#167) |
+| `UnixClock::try_now_ms` | `Id::try_new`, `Id::try_new_ulid` | none | none | same |
+
 ### `tracing` subscriber
 
 Events are dispatched synchronously into the process-installed subscriber.
@@ -103,7 +120,7 @@ and tests.
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
-| `setup_logger` `debug!` | none | global subscriber installed |
+| `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a re-entrant `setup_logger` call returns it instead of blocking |
 
 No event is emitted inside the `OrderQueue::match_front` / `update_entry` /
 `try_push_with` closures, so none runs under a `DashMap` shard write lock.

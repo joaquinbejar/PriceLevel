@@ -92,7 +92,10 @@ static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// synchronously, on the calling thread, into whichever subscriber the process
 /// installed (this one or the caller's own). That subscriber is external code
 /// and **must not panic** or call back into the level that emitted the event.
-/// The library does not catch a subscriber panic; see
+/// No subscriber code runs while this function's one-time initialization is
+/// in progress: the confirmation event is emitted after it completes, so a
+/// subscriber that calls `setup_logger` again gets the cached result instead
+/// of blocking. The library does not catch a subscriber panic; see
 /// `PriceLevel::match_order` and `doc/panic-boundaries.md` for where events
 /// are emitted relative to locks and mutations.
 ///
@@ -100,6 +103,9 @@ static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// Returns an error if initializing the global subscriber fails.
 #[allow(dead_code)]
 pub fn setup_logger() -> Result<(), PriceLevelError> {
+    // Set only by the call that actually performs initialization, so the
+    // confirmation event is emitted exactly once, as before.
+    let mut installed_level = None;
     let result = LOGGER_INIT_RESULT.get_or_init(|| {
         let log_level = env::var("LOGLEVEL")
             .unwrap_or_else(|_| "INFO".to_string())
@@ -118,10 +124,18 @@ pub fn setup_logger() -> Result<(), PriceLevelError> {
         tracing::subscriber::set_global_default(subscriber)
             .map_err(|error| format!("failed to set global logging subscriber: {error}"))?;
 
-        tracing::debug!("Log level set to: {}", level);
+        installed_level = Some(level);
 
         Ok(())
     });
+
+    // Emit the confirmation only AFTER `get_or_init` has completed (issue
+    // #172): logging inside the initializer would run subscriber code while the
+    // `OnceLock` is still initializing, and a subscriber that re-entered
+    // `setup_logger` would block on that same initialization (deadlock).
+    if let Some(level) = installed_level {
+        tracing::debug!("Log level set to: {}", level);
+    }
 
     result
         .clone()

@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exclusive guard is released, so a panicking `tracing` subscriber can no longer
   poison a level whose state is intact. The statistics-drop warning is emitted
   after the step's queue, counter and topology bookkeeping, not before it.
+  `setup_logger` emits its confirmation event after its one-time
+  initialization completes, so a subscriber that re-enters `setup_logger`
+  gets the cached result instead of blocking on the in-progress init.
 
 ### Documentation
 

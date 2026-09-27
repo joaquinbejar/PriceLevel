@@ -46,8 +46,13 @@ pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: NonZeroU64 = match NonZeroU64::new(8
 /// closure given to [`Self::map_extra_fields`], **must not panic**. These are
 /// pure value utilities: none holds a lock or mutates library state, and every
 /// method except [`Self::map_extra_fields`] borrows `self`, so a panic unwinds
-/// leaving the source order intact. The library does not promise to recover
-/// from a caller panic or from an allocator OOM abort, and never catches one.
+/// with the crate-controlled fields of the source order (id, price,
+/// quantities, side, user id, timestamp, time in force, order-type
+/// parameters) unchanged. That guarantee does **not** extend to the payload:
+/// a caller impl can mutate `T` through interior mutability (a `Cell`, a
+/// shared handle) before panicking, and those side effects are the caller's.
+/// The library does not promise to recover from a caller panic or from an
+/// allocator OOM abort, and never catches one.
 ///
 /// The matching engine ([`crate::PriceLevel`]) only ever stores
 /// `OrderType<()>`, so no caller payload code runs under its locks.
