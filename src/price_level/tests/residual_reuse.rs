@@ -27,6 +27,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
+    use std::time::{Duration, Instant};
     use uuid::Uuid;
 
     const PRICE: u128 = 10_000;
@@ -199,6 +200,8 @@ mod tests {
         const FILLS: u64 = 2_000;
         const READERS: usize = 2;
         const ORIGINAL: u64 = 1_000_000;
+        /// Upper bound on the wait for every reader to enter its stress loop.
+        const WAIT_LIMIT: Duration = Duration::from_secs(30);
         let level = Arc::new(PriceLevel::new(PRICE));
         drop(level.add_order(standard(1, ORIGINAL)).expect("admit"));
         let done = Arc::new(AtomicBool::new(false));
@@ -271,10 +274,30 @@ mod tests {
         // Start the stress fills only once every reader is inside its stress
         // loop (it has checked at least one view there), so the loop cannot
         // pass vacuously by seeing `done` before any check.
+        //
+        // A reader that dies (a failed ownership assertion) never publishes
+        // its second observation, so the wait also watches for a terminated
+        // reader and for an overall deadline: either stops the other readers,
+        // joins them and fails the test instead of hanging. The deadline is a
+        // failure bound only, never a synchronization point.
+        let deadline = Instant::now() + WAIT_LIMIT;
         while observations
             .iter()
             .any(|count| count.load(Ordering::Acquire) < 2)
         {
+            let reader_died = readers.iter().any(thread::JoinHandle::is_finished);
+            if reader_died || Instant::now() >= deadline {
+                done.store(true, Ordering::Release);
+                for reader in readers {
+                    if let Err(payload) = reader.join() {
+                        std::panic::resume_unwind(payload);
+                    }
+                }
+                panic!(
+                    "readers did not reach the stress loop within {WAIT_LIMIT:?} \
+                     (reader terminated early: {reader_died})"
+                );
+            }
             thread::yield_now();
         }
         for i in 0..FILLS {
