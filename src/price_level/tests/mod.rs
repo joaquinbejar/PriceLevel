@@ -7,9 +7,8 @@ mod level;
 mod order_math_failures;
 mod order_queue;
 mod parked_prefix;
-mod restore_validation;
-//!
 mod residual_reuse;
+mod restore_validation;
 mod result_failures;
 mod snapshot;
 mod snapshot_coherence;
