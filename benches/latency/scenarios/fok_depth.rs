@@ -20,11 +20,13 @@
 //!   taker drains the front tranche (a replenishment re-sequenced at the
 //!   tail) and one unit of the next maker (depths 100 and 10,000 only).
 //!
-//! Plus a contention pair at depth 10,000: one matcher thread repeatedly
-//! runs the first-maker FOK (or, as the control, GTC) call while a writer
-//! thread times its own `add_order` and `update_order(Cancel)` calls, so
-//! the time mutators spend blocked behind the fill-or-kill guard's exclusive
-//! section is measured directly. Starvation anomalies there (issue #206)
+//! Plus writer contention cases at depths 100 and 10,000: one matcher thread
+//! repeatedly runs the first-maker FOK, a rejected FOK larger than the level
+//! (the longest exclusive section a FOK holds; issue #206) or, as the
+//! control, the first-maker GTC call, while a writer thread times its own
+//! `add_order` and `update_order(Cancel)` calls, so the time mutators spend
+//! blocked behind the fill-or-kill guard's exclusive section is measured
+//! directly. Starvation anomalies there (issue #206)
 //! are counted, not asserted; see [`writers_during`].
 
 use crate::config::Config;
@@ -44,7 +46,8 @@ const MAX_WARMUP: usize = 1_000;
 const FOK_SAMPLES: usize = 5_000;
 const GTC_SAMPLES: usize = 10_000;
 const ICEBERG_HIDDEN: u64 = 1_000_000;
-const CONTENTION_DEPTH: u64 = 10_000;
+/// Resting depths of the writer contention cases (issue #206).
+const CONTENTION_DEPTHS: [u64; 2] = [100, 10_000];
 /// Writer ids, disjoint from every maker and replacement id.
 const WRITER_ID_BASE: u64 = 1_000_000_000_000;
 
@@ -121,8 +124,15 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             reports.push(replenish(config, depth));
         }
     }
-    reports.extend(writers_during(config, TimeInForce::Fok));
-    reports.extend(writers_during(config, TimeInForce::Gtc));
+    for depth in CONTENTION_DEPTHS {
+        for mode in [
+            MatcherMode::FokFirstMaker,
+            MatcherMode::FokRejected,
+            MatcherMode::Gtc,
+        ] {
+            reports.extend(writers_during(config, mode, depth));
+        }
+    }
     reports
 }
 
@@ -233,8 +243,31 @@ fn replenish(config: &Config, depth: u64) -> ScenarioReport {
     )
 }
 
-/// One matcher thread loops the first-maker call at depth 10,000 while this
-/// thread times its own admission and cancellation of a writer-owned order.
+/// What the matcher thread loops in a writer contention case (issue #206).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatcherMode {
+    /// A qty-1 FOK filled by the front maker, then one replacement add.
+    FokFirstMaker,
+    /// A FOK larger than the whole level: the dry run visits every maker
+    /// and kills it, so the exclusive section is the longest one a FOK can
+    /// hold. Nothing is consumed and nothing is replaced.
+    FokRejected,
+    /// The GTC control: the qty-1 first-maker call without the guard.
+    Gtc,
+}
+
+impl MatcherMode {
+    fn tag(self) -> &'static str {
+        match self {
+            Self::FokFirstMaker => "fok",
+            Self::FokRejected => "fok_rejected",
+            Self::Gtc => "gtc",
+        }
+    }
+}
+
+/// One matcher thread loops `mode`'s call at `depth` while this thread times
+/// its own admission and cancellation of a writer-owned order.
 ///
 /// # Anomalies are counted, not asserted (issue #206)
 ///
@@ -271,9 +304,13 @@ fn replenish(config: &Config, depth: u64) -> ScenarioReport {
 /// [`fifo_gate`]). `PL_LATENCY_STRICT_FIFO=1` additionally turns starvation
 /// events into a hard failure that prints every classified event; it is off
 /// by default so an unfair scheduler cannot fail `cargo test --all-targets`.
-fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioReport> {
+///
+/// In [`MatcherMode::FokRejected`] the matcher consumes nothing, so a
+/// consumed writer order or a cancel finding nothing is impossible and is
+/// asserted instead of counted.
+fn writers_during(config: &Config, mode: MatcherMode, depth: u64) -> Vec<ScenarioReport> {
     let samples = config.contention_ops;
-    let level = Arc::new(level_of(CONTENTION_DEPTH, standard));
+    let level = Arc::new(level_of(depth, standard));
     let ready = Arc::new(Barrier::new(2));
     let stop = Arc::new(AtomicBool::new(false));
     let matcher_calls = Arc::new(AtomicU64::new(0));
@@ -290,11 +327,24 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
         let adds_done = Arc::clone(&adds_done);
         thread::spawn(move || -> MatcherLog {
             let generator = UuidGenerator::new(Uuid::nil());
-            let mut next = CONTENTION_DEPTH;
-            let mut log = MatcherLog::default();
+            let mut next = depth;
+            let mut log = MatcherLog::new(depth);
             ready.wait();
             while !stop.load(Ordering::Relaxed) {
-                let result = take(&level, 1, matcher_tif, &generator);
+                if mode == MatcherMode::FokRejected {
+                    // The level never holds more than depth + 1 units (one
+                    // writer order at a time), so depth + 2 is always killed.
+                    let result = take(&level, depth + 2, TimeInForce::Fok, &generator);
+                    assert!(result.was_killed(), "rejected matcher FOK is killed");
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                let tif = if mode == MatcherMode::Gtc {
+                    TimeInForce::Gtc
+                } else {
+                    TimeInForce::Fok
+                };
+                let result = take(&level, 1, tif, &generator);
                 assert_eq!(
                     result.executed_quantity(),
                     Ok(Quantity::new(1)),
@@ -351,16 +401,18 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
     // filled a writer order, so each such fill leaves one extra maker.
     assert_eq!(
         level.order_count() as u64,
-        CONTENTION_DEPTH + anomalies.writer_consumed,
+        depth + anomalies.writer_consumed,
         "writers_during: resting count must be depth + writer orders the matcher consumed"
     );
+    if mode == MatcherMode::FokRejected {
+        assert!(
+            !anomalies.any(),
+            "writers_during_fok_rejected: a killed FOK consumes nothing: {anomalies}"
+        );
+    }
     assert_healthy(&level, "writers_during");
     let calls = matcher_calls.load(Ordering::Relaxed);
-    let tag = if matches!(matcher_tif, TimeInForce::Fok) {
-        "fok"
-    } else {
-        "gtc"
-    };
+    let tag = mode.tag();
     if let Err(reason) = fifo_gate(&anomalies, config.strict_fifo) {
         panic!(
             "writers_during_{tag}: {reason}: {anomalies}\nevents (writer id, matcher front id, bracket [done_before, started_after], class):\n{}",
@@ -373,18 +425,18 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
     );
     vec![
         ScenarioReport::from_samples(
-            format!("writer_add_during_{tag}@{CONTENTION_DEPTH}"),
+            format!("writer_add_during_{tag}@{depth}"),
             "fok_depth",
-            CONTENTION_DEPTH,
-            "PriceLevel::add_order — concurrent with a qty-1 matcher loop (#143)",
+            depth,
+            "PriceLevel::add_order — concurrent with a matcher loop (#143, #206)",
             add_ns,
             note.clone(),
         ),
         ScenarioReport::from_samples(
-            format!("writer_cancel_during_{tag}@{CONTENTION_DEPTH}"),
+            format!("writer_cancel_during_{tag}@{depth}"),
             "fok_depth",
-            CONTENTION_DEPTH,
-            "PriceLevel::update_order(Cancel) — concurrent with a qty-1 matcher loop (#143)",
+            depth,
+            "PriceLevel::update_order(Cancel) — concurrent with a matcher loop (#143, #206)",
             cancel_ns,
             note,
         ),
@@ -472,8 +524,9 @@ fn fixture_u64(id: Id) -> Option<u64> {
     }
 }
 
-#[derive(Default)]
 struct MatcherLog {
+    /// Seeded depth: matcher replacement ids start here.
+    depth: u64,
     /// Oldest matcher-owned maker id not yet consumed (ids are
     /// admission-ordered: seeds `0..depth`, then replacements).
     front: u64,
@@ -485,6 +538,15 @@ struct MatcherLog {
 }
 
 impl MatcherLog {
+    fn new(depth: u64) -> Self {
+        Self {
+            depth,
+            front: 0,
+            writer_fills: Vec::new(),
+            out_of_order: Vec::new(),
+        }
+    }
+
     fn record(&mut self, maker: Option<Id>) {
         let Some(id) = maker.and_then(fixture_u64) else {
             panic!("matcher trade must carry a fixture maker id: {maker:?}");
@@ -510,8 +572,8 @@ impl MatcherLog {
             // Matcher makers older than W for certain: seeds and the first
             // `done_before` replacements. Possibly older: up to
             // `started_after` replacements.
-            let certainly_older_end = CONTENTION_DEPTH + done_before;
-            let possibly_older_end = CONTENTION_DEPTH + started_after;
+            let certainly_older_end = self.depth + done_before;
+            let possibly_older_end = self.depth + started_after;
             let class = if front >= possibly_older_end {
                 out.proven_front += 1;
                 "proven front"
