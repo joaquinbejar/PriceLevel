@@ -34,11 +34,13 @@
 //! dependency, so, as `tests/loom/cancel_match.rs` does for the queue, this
 //! file reproduces the exact protocol with loom primitives:
 //!
-//! - writer entry: `seq.fetch_add(1, Relaxed)` then `fence(Release)`
-//!   (`WriteSeqGuard::new`);
+//! - writer entry: a `Relaxed` checked increment that refuses to open when
+//!   the sequence exceeds `u64::MAX - 2` (issue #165), then `fence(Release)`
+//!   (`WriteSeqGuard::try_new`); a refused entry only sets the degraded flag;
 //! - field updates: `Relaxed` checked CAS adds, `Relaxed` `fetch_sub` rollback,
 //!   `Relaxed` degraded-flag CAS (`record_execution`);
-//! - writer exit: `seq.fetch_add(1, Release)` (`WriteSeqGuard::drop`);
+//! - writer exit: a checked `Release` increment, proven in range by the entry
+//!   check (`WriteSeqGuard::drop`);
 //! - reader: `seq.load(Acquire)`, retry if odd, `Relaxed` field loads,
 //!   `fence(Acquire)`, `seq.load(Relaxed)`, accept iff unchanged
 //!   (`read_consistent`).
@@ -110,20 +112,32 @@ struct Tuple {
     stats_degraded: bool,
 }
 
+/// Mirror of `STATS_SEQ_ENTRY_LIMIT` (issue #165).
+const SEQ_ENTRY_LIMIT: u64 = u64::MAX - 2;
+
 /// Mirror of `WriteSeqGuard`.
 struct Guard<'a>(&'a AtomicU64);
 
 impl<'a> Guard<'a> {
-    fn enter(seq: &'a AtomicU64) -> Self {
-        seq.fetch_add(1, Ordering::Relaxed);
+    fn enter(seq: &'a AtomicU64) -> Option<Self> {
+        seq.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+            if s <= SEQ_ENTRY_LIMIT {
+                s.checked_add(1)
+            } else {
+                None
+            }
+        })
+        .ok()?;
         fence(Ordering::Release);
-        Self(seq)
+        Some(Self(seq))
     }
 }
 
 impl Drop for Guard<'_> {
     fn drop(&mut self) {
-        self.0.fetch_add(1, Ordering::Release);
+        let _ = self
+            .0
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |s| s.checked_add(1));
     }
 }
 
@@ -171,7 +185,11 @@ impl Stats {
     /// Mirror of `record_execution`'s commit / rollback sequence (validation
     /// has no shared-state effect before the guard, so it is elided).
     fn record(&self, quantity: u64, waiting: Option<u64>) -> Result<(), ()> {
-        let _write = Guard::enter(&self.seq);
+        let Some(_write) = Guard::enter(&self.seq) else {
+            // Refused entry (issue #165): drop the execution, mark degraded.
+            self.mark_degraded();
+            return Err(());
+        };
 
         if checked_add_usize(&self.orders_executed, 1).is_err() {
             self.mark_degraded();
@@ -310,6 +328,42 @@ fn single_writer_rollback_invisible_to_two_readers() {
             }
         }
         assert_eq!(stats.read_consistent(), Some(after));
+    });
+}
+
+/// Issue #165: the writer's LAST admissible section (sequence seeded at the
+/// entry limit's largest even value) exits in range, and the following record
+/// is refused without opening a section. A concurrent reader only ever accepts
+/// the initial state, the committed record, or that record plus the degraded
+/// flag the refusal sets; it never spins on an odd sequence left behind.
+#[test]
+fn single_writer_exhausted_sequence_refusal_is_coherent() {
+    model(4, || {
+        let stats = Arc::new(Stats::new());
+        stats.seq.store(u64::MAX - 3, Ordering::Relaxed);
+
+        let writer = {
+            let stats = Arc::clone(&stats);
+            loom::thread::spawn(move || {
+                assert_eq!(stats.record(2, None), Ok(()));
+                assert_eq!(stats.record(3, None), Err(()));
+            })
+        };
+
+        let reader = {
+            let stats = Arc::clone(&stats);
+            loom::thread::spawn(move || stats.read_consistent())
+        };
+
+        writer.join().expect("writer panicked");
+        if let Some(copy) = reader.join().expect("reader panicked") {
+            assert!(
+                copy == INITIAL || copy == AFTER_OK || copy == AFTER_ROLLBACK,
+                "reader accepted a partial tuple: {copy:?}"
+            );
+        }
+        assert_eq!(stats.seq.load(Ordering::Relaxed), u64::MAX - 1);
+        assert_eq!(stats.read_consistent(), Some(AFTER_ROLLBACK));
     });
 }
 

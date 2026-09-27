@@ -1,11 +1,12 @@
 //! Core price level implementation
 
 use crate::UuidGenerator;
-use crate::errors::PriceLevelError;
+use crate::errors::{ExhaustedCounter, PriceLevelError};
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
 use crate::price_level::snapshot::SnapshotAggregates;
+use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
@@ -280,17 +281,35 @@ pub struct PriceLevel {
     mutation_epoch: AtomicU64,
 }
 
-/// Result of [`PriceLevel::dry_run`]: what a sweep would fill and how many
-/// trades it would emit, plus the typed failure that would stop the sweep.
+/// Result of [`PriceLevel::dry_run`]: what a sweep would fill, how many
+/// trades it would emit, how many makers it would re-sequence at the tail
+/// (replenishments, each needing a fresh FIFO sequence; issue #165), plus the
+/// typed failure that would stop the sweep.
 #[derive(Debug, Clone)]
 struct DryRun {
     filled: u64,
     trades: usize,
+    /// Replenishments that keep the maker resident (`ReplaceAtTail`), each of
+    /// which reserves one fresh FIFO sequence in the real sweep (issue #165).
+    replenishes: u64,
     /// The [`OrderType::match_against`] error the real sweep would hit at the
     /// maker where the dry run stopped (issue #169). `filled` / `trades` are
     /// then the committed prefix the real sweep would report alongside it.
     error: Option<PriceLevelError>,
 }
+
+/// Terminal epoch value (issue #165): an epoch never moves past it, and a
+/// reader that loads it treats the epoch as "changed, unknown". See
+/// `PriceLevel::bump_epoch`.
+const EPOCH_EXHAUSTED: u64 = u64::MAX;
+
+/// Headroom kept below [`EPOCH_EXHAUSTED`] for bumps already in flight when an
+/// operation passes the headroom check (issue #165).
+const EPOCH_HEADROOM: u64 = 1 << 32;
+
+/// An operation is refused before it mutates anything once either epoch has
+/// reached this value (issue #165).
+const EPOCH_MUTATION_LIMIT: u64 = EPOCH_EXHAUSTED - EPOCH_HEADROOM;
 
 impl PriceLevel {
     /// Reconstructs a price level directly from a snapshot.
@@ -366,7 +385,10 @@ impl PriceLevel {
         let price = snapshot.price().as_u128();
         // Clone the persisted statistics before consuming the snapshot's orders.
         let stats = (*snapshot.statistics()).clone();
-        let queue = OrderQueue::from(snapshot.into_orders());
+        // Fallible (issue #165): uniqueness was validated above, and a fresh
+        // queue cannot exhaust its sequence on a `Vec`, but any insertion
+        // failure is propagated rather than silently dropping an order.
+        let queue = OrderQueue::try_from(snapshot.into_orders())?;
 
         // Pin the restored side alongside the restored count in the topology word
         // (issue #126). An empty snapshot restores Unpinned; a non-empty one pins
@@ -633,17 +655,141 @@ impl PriceLevel {
 
     /// Bump the topology epoch on a side pin / un-pin so a racing
     /// [`Self::snapshot`] retries a materialization that spanned the transition.
+    /// Checked; see [`Self::bump_epoch`] for the exhaustion protocol.
     #[inline]
     fn bump_topology_epoch(&self) {
-        self.topology_epoch.fetch_add(1, Ordering::Release);
+        Self::bump_epoch(&self.topology_epoch);
     }
 
     /// Bump the mutation epoch on a committed add / cancel / resize so a racing
     /// post-only depth scan retries (issue #130). `Release` so the queue mutation
     /// that precedes it happens-before a scanner's `Acquire` read of the epoch.
+    /// Checked; see [`Self::bump_epoch`] for the exhaustion protocol.
     #[inline]
     fn bump_mutation_epoch(&self) {
-        self.mutation_epoch.fetch_add(1, Ordering::Release);
+        Self::bump_epoch(&self.mutation_epoch);
+    }
+
+    /// Checked `Release` increment of an epoch (issue #165).
+    ///
+    /// # Exhaustion protocol
+    ///
+    /// An epoch is a change detector: a reader compares two loads for
+    /// equality. It never wraps (a wrapped epoch could repeat a value a reader
+    /// already holds). The protocol has three parts:
+    ///
+    /// 1. **Sentinel.** [`EPOCH_EXHAUSTED`] (`u64::MAX`) is the last value an
+    ///    epoch can take. Once there, a bump leaves it unchanged, and every
+    ///    reader treats a load of the sentinel as "changed, unknown": the
+    ///    snapshot walk always runs its structural single-side check, and the
+    ///    post-only depth scan returns
+    ///    [`PriceLevelError::CounterExhausted`] instead of a verdict. Readers
+    ///    therefore never trust an epoch that stopped moving.
+    /// 2. **Headroom.** Every mutator ([`Self::add_order`],
+    ///    [`Self::update_order`]) and every sweep ([`Self::match_order`])
+    ///    checks, before it changes anything, that both epochs are below
+    ///    [`EPOCH_MUTATION_LIMIT`] (`2^32` below the sentinel) and refuses
+    ///    with [`PriceLevelError::CounterExhausted`] otherwise. An accepted
+    ///    operation bumps each epoch at most once (a sweep bumps the topology
+    ///    epoch once per maker that drains the level), so the post-commit bump
+    ///    only reaches the sentinel if more than `2^32` such bumps were in
+    ///    flight past the check at once.
+    /// 3. **Bump.** The increment itself is a checked CAS, so even in that
+    ///    case it stops at the sentinel instead of wrapping, and part 1 keeps
+    ///    the readers sound. A refused bump therefore needs no error path of
+    ///    its own, which matters because it runs after the mutation committed
+    ///    (and, for a side pin, under a queue shard lock where nothing may be
+    ///    logged).
+    ///
+    /// Recovery is a rebuild: [`Self::from_snapshot`] starts both epochs at 0.
+    #[inline]
+    fn bump_epoch(epoch: &AtomicU64) {
+        // `Release` on success, as before; `Relaxed` on the refused path,
+        // which publishes nothing (the value stays at the sentinel).
+        let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+    }
+
+    /// Refuse an operation, before it changes anything, when either epoch has
+    /// no headroom left (issue #165; see [`Self::bump_epoch`]).
+    #[inline]
+    fn check_epoch_headroom(&self) -> Result<(), PriceLevelError> {
+        if self.topology_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
+            return Err(PriceLevelError::counter_exhausted(
+                ExhaustedCounter::TopologyEpoch,
+            ));
+        }
+        if self.mutation_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
+            return Err(PriceLevelError::counter_exhausted(
+                ExhaustedCounter::MutationEpoch,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Test-only seeding seam (issue #165): place both epochs at the given
+    /// values so the exhaustion protocol can be exercised without `2^64`
+    /// mutations.
+    #[cfg(test)]
+    pub(crate) fn test_seed_epochs(&self, topology: u64, mutation: u64) {
+        self.topology_epoch.store(topology, Ordering::Relaxed);
+        self.mutation_epoch.store(mutation, Ordering::Relaxed);
+    }
+
+    /// Test-only: run one post-commit bump of each epoch (issue #165), to
+    /// exercise the sentinel without passing the headroom check.
+    #[cfg(test)]
+    pub(crate) fn test_bump_epochs(&self) {
+        self.bump_topology_epoch();
+        self.bump_mutation_epoch();
+    }
+
+    /// Test-only read of `(topology_epoch, mutation_epoch)` (issue #165).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_epochs(&self) -> (u64, u64) {
+        (
+            self.topology_epoch.load(Ordering::Relaxed),
+            self.mutation_epoch.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Test-only access to the order queue (issue #165 sequence seams).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_queue(&self) -> &OrderQueue {
+        &self.orders
+    }
+
+    /// Record an order-event statistic after a committed mutation (issue
+    /// #165). The statistics refuse to wrap an exhausted counter and mark
+    /// themselves degraded; the committed mutation stands. Returns the error
+    /// only when this call's own degraded-flag CAS performed the
+    /// `false -> true` transition, so across any number of concurrent
+    /// admissions / cancels exactly one caller logs the anomaly (after all of
+    /// its bookkeeping), not one per event.
+    #[inline]
+    fn record_order_event(
+        &self,
+        record: fn(&PriceLevelStatistics) -> Result<(), OrderEventDrop>,
+    ) -> Option<PriceLevelError> {
+        match record(&self.stats) {
+            Ok(()) => None,
+            Err(drop) if drop.degraded_now => Some(drop.error),
+            Err(_) => None,
+        }
+    }
+
+    /// Log an order-event statistics drop reported by
+    /// [`Self::record_order_event`]. `WARN`: the mutation committed; only the
+    /// advisory counter is saturated, and the sticky degraded flag records it.
+    #[cold]
+    #[inline(never)]
+    fn warn_order_event_dropped(&self, err: &PriceLevelError) {
+        tracing::warn!(
+            price = self.price,
+            error = %err,
+            "order-event statistic not recorded (counter exhausted); level stats marked degraded, mutation unaffected"
+        );
     }
 
     /// Returns `true` if `orders` is empty or every order shares one side — the
@@ -835,7 +981,16 @@ impl PriceLevel {
     /// hidden-quantity, or order-count counter; or
     /// [`PriceLevelError::DuplicateOrderId`] if an order with the same id
     /// already rests at this level. A duplicate id takes precedence over a
-    /// counter overflow. In every case the level is unchanged.
+    /// counter overflow. Returns [`PriceLevelError::CounterExhausted`] if the
+    /// level's topology or mutation epoch has no headroom left, or if the
+    /// queue has no fresh FIFO sequence left (issue #165); a duplicate id also
+    /// takes precedence over an exhausted sequence. In every case the level is
+    /// unchanged.
+    ///
+    /// An exhausted `orders_added` statistic does NOT reject the admission:
+    /// the order is admitted, the counter stays at `usize::MAX`, and the
+    /// statistics are marked degraded (see
+    /// [`PriceLevelStatistics::record_order_added`]).
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
         // Hold the fill-or-kill guard's shared side for this admission so a
         // concurrent fill-or-kill match sees a stable depth (issue #112). This
@@ -844,6 +999,9 @@ impl PriceLevel {
         // Fail fast if a prior panic poisoned the guard (or this very acquisition
         // just recovered one): the level may be half-mutated (issue #130).
         self.poison_check()?;
+        // Refuse, with nothing touched, when an epoch has no headroom left for
+        // this admission's bumps (issue #165).
+        self.check_epoch_headroom()?;
 
         // -------- Admission topology invariants (cheapest checks, no mutation) --------
         //
@@ -1001,12 +1159,19 @@ impl PriceLevel {
             Ok(())
         })?;
 
-        // Update statistics only after a committed admission.
-        self.stats.record_order_added();
-
         // Signal the committed mutation so a racing post-only depth scan retries
         // (issue #130).
         self.bump_mutation_epoch();
+
+        // Update statistics only after a committed admission. The admission
+        // stands even if the advisory `orders_added` counter is exhausted: the
+        // statistics refuse to wrap it and mark themselves degraded (issue
+        // #165), and the first such drop is logged after all bookkeeping.
+        if let Some(err) =
+            self.record_order_event(PriceLevelStatistics::record_order_added_reporting)
+        {
+            self.warn_order_event_dropped(&err);
+        }
 
         Ok(order_arc)
     }
@@ -1090,7 +1255,14 @@ impl PriceLevel {
     /// A resting maker sharing `taker_id` is ignored: the sweep skips it for
     /// self-trade prevention, so it is not liquidity this taker could take, and
     /// the post-only pre-check must agree.
-    fn has_matchable_depth(&self, taker_id: Id) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::MutationEpoch`]) when the mutation epoch is at its
+    /// terminal sentinel (issue #165): the scan can then no longer be
+    /// linearized, so no verdict is produced.
+    fn has_matchable_depth(&self, taker_id: Id) -> Result<bool, PriceLevelError> {
         // Linearize the non-atomic scan against concurrent mutation (issue #130):
         // read the mutation epoch, scan, re-read; retry if it moved. A stable
         // epoch across the scan means no add / cancel / resize committed during
@@ -1101,13 +1273,20 @@ impl PriceLevel {
         // quiesces (the post-only path is cold, so the retry cost is irrelevant).
         loop {
             let epoch_before = self.mutation_epoch.load(Ordering::Acquire);
+            if epoch_before == EPOCH_EXHAUSTED {
+                // An exhausted epoch no longer moves, so a stable read would
+                // prove nothing (issue #165).
+                return Err(PriceLevelError::counter_exhausted(
+                    ExhaustedCounter::MutationEpoch,
+                ));
+            }
             let verdict = self
                 .iter_orders()
                 .any(|order| order.id() != taker_id && order.is_matchable());
             std::sync::atomic::fence(Ordering::Acquire);
             let epoch_after = self.mutation_epoch.load(Ordering::Relaxed);
             if epoch_before == epoch_after {
-                return verdict;
+                return Ok(verdict);
             }
         }
     }
@@ -1155,6 +1334,7 @@ impl PriceLevel {
         let mut dry = DryRun {
             filled: 0,
             trades: 0,
+            replenishes: 0,
             error: None,
         };
         if incoming_quantity == 0 {
@@ -1173,6 +1353,7 @@ impl PriceLevel {
         let mut remaining = incoming_quantity;
         let mut filled: u64 = 0;
         let mut trades: usize = 0;
+        let mut replenishes: u64 = 0;
 
         // Track the level's visible counter as the sweep would evolve it, so the
         // dry run models the #124 replenish-headroom ABORT (issue #130). A
@@ -1267,8 +1448,18 @@ impl PriceLevel {
                     None => break,
                 };
             }
+            // A replenished maker that stays resident is re-sequenced at the
+            // tail: the sweep reserves one fresh FIFO sequence for it (issue
+            // #165), so fill-or-kill can check the sequence headroom up front.
+            if hidden_reduced > 0 && updated_order.is_some() {
+                replenishes = match replenishes.checked_add(1) {
+                    Some(count) => count,
+                    None => break,
+                };
+            }
             dry.filled = filled;
             dry.trades = trades;
+            dry.replenishes = replenishes;
             remaining = new_remaining;
 
             if let Some(updated) = updated_order {
@@ -1566,7 +1757,26 @@ impl PriceLevel {
         // depth committed after it is ordered "later" (behind this taker), so
         // resting is correct at the scan instant. No guard is needed.
         if taker_kind.is_post_only() && incoming_quantity > 0 {
-            let crossable = self.has_matchable_depth(taker_order_id);
+            let crossable = match self.has_matchable_depth(taker_order_id) {
+                Ok(crossable) => crossable,
+                Err(err) => {
+                    // No linearizable verdict (issue #165). Rejecting is the
+                    // safe side: the taker neither takes liquidity nor is told
+                    // it may rest; the typed error says why.
+                    tracing::error!(
+                        taker_order_id = %taker_order_id,
+                        incoming_quantity,
+                        price = self.price,
+                        error = %err,
+                        "post-only taker rejected: depth scan cannot be linearized"
+                    );
+                    let mut result =
+                        MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+                    result.mark_rejected(incoming_quantity);
+                    result.set_error(err);
+                    return result;
+                }
+            };
             // Deterministic race seam (issue #130): fires BETWEEN the depth
             // decision and the commit below so a test can inject an `add_order`
             // in that exact window and confirm PostOnly still emits zero trades
@@ -1599,6 +1809,30 @@ impl PriceLevel {
         // `Some` only for a positive FOK taker; it drops at the end of the
         // method (after the sweep). The non-FOK paths take no fill-or-kill guard.
         let is_fok = matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0;
+
+        // Epoch headroom (issue #165): a sweep bumps the topology epoch when it
+        // drains the level, so it is refused BEFORE any maker is touched once
+        // an epoch has no headroom left (see `bump_epoch`). Fill-or-kill is
+        // killed and every other taker reports no trades; both carry the typed
+        // error, and the level is unchanged.
+        if incoming_quantity > 0
+            && let Err(err) = self.check_epoch_headroom()
+        {
+            tracing::error!(
+                taker_order_id = %taker_order_id,
+                incoming_quantity,
+                price = self.price,
+                error = %err,
+                "match refused before the sweep: level epoch exhausted; level untouched"
+            );
+            let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+            if is_fok {
+                result.mark_killed(incoming_quantity);
+            }
+            result.set_error(err);
+            return result;
+        }
+
         // Steps the fill-or-kill sweep will emit trades for, from the exact dry
         // run below (only meaningful when `is_fok`).
         let mut fok_trades: usize = 0;
@@ -1650,6 +1884,34 @@ impl PriceLevel {
                 );
                 let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
                 result.mark_killed(incoming_quantity);
+                return result;
+            }
+            // Fill-or-kill preflight order, all under the exclusive guard and
+            // before any maker is touched: epoch headroom (above, #165),
+            // dry-run `match_against` error (#169), depth, FIFO sequence
+            // headroom for the dry run's replenishments (#165, here), exact
+            // result storage (#170) and the trade-id block (#168, below).
+            //
+            // Every replenishment the sweep performs re-sequences a maker at
+            // the tail and needs a fresh FIFO sequence (issue #165). Under the
+            // exclusive guard no admission or update can take one, so the dry
+            // run's count is exact: if the queue cannot supply that many, kill
+            // now, before the first maker is touched, instead of stopping the
+            // sweep part-way (which would be a partial fill-or-kill).
+            if dry.replenishes > self.orders.seq_headroom() {
+                drop(guard);
+                let err = PriceLevelError::counter_exhausted(ExhaustedCounter::QueueSequence);
+                tracing::error!(
+                    taker_order_id = %taker_order_id,
+                    incoming_quantity,
+                    replenishes = dry.replenishes,
+                    price = self.price,
+                    error = %err,
+                    "fill-or-kill taker killed: queue sequence exhausted; level untouched"
+                );
+                let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+                result.mark_killed(incoming_quantity);
+                result.set_error(err);
                 return result;
             }
             Some(guard)
@@ -1841,6 +2103,15 @@ impl PriceLevel {
             IdsExhausted {
                 error: PriceLevelError,
             },
+            /// The FIFO-front maker would replenish, but the queue has no fresh
+            /// FIFO sequence left to re-sequence it at the tail (issue #165).
+            /// The sequence is reserved BEFORE any counter moves, so the maker
+            /// is left byte-identical (`SetAside`, a no-op) and the sweep stops
+            /// with the committed prefix, per the #164 failure contract.
+            SequenceExhausted {
+                maker_id: Id,
+                error: PriceLevelError,
+            },
         }
 
         while remaining > 0 {
@@ -1952,6 +2223,28 @@ impl PriceLevel {
 
                 let fully_consumed = updated_order.is_none();
 
+                // Pre-mutation check order for one step (issues #169, #168,
+                // #165, #124). Every check below runs under the entry lock
+                // before this step commits anything, in this fixed order, so
+                // the reported stop cause for a given queue state is
+                // deterministic:
+                //
+                // 1. self-trade skip (parks, sweep continues);
+                // 2. `match_against` error (#169) -> `Failed`;
+                // 3. no-progress guard (parks, sweep continues);
+                // 4. trade-id reservation when `consumed > 0` (#168) ->
+                //    `IdsExhausted`;
+                // 5. FIFO sequence reservation when the maker replenishes and
+                //    stays resident (#165) -> `SequenceExhausted`;
+                // 6. replenish visible-counter headroom (#124) -> `Abort`.
+                //
+                // Steps 2, 4, 5 and 6 each return `SetAside` (a no-op) and stop
+                // the sweep with the committed prefix (#164 contract). A value
+                // reserved by 4 or 5 for a step that a later check stops is
+                // skipped, never reissued. The pure checks come first; the two
+                // reservations then precede the only in-closure counter RMW (6),
+                // which is the first mutation of the step.
+
                 // Reserve this step's trade id BEFORE anything of the step is
                 // committed (issue #168): the replenish branch below publishes
                 // counter deltas and the returned action mutates the maker, so
@@ -1998,6 +2291,20 @@ impl PriceLevel {
                     None => FrontAction::Remove,
                     Some(updated) => {
                         if hidden_reduced > 0 {
+                            // The refreshed tranche is re-sequenced at the tail:
+                            // reserve that sequence FIRST (checked, issue #165),
+                            // before any counter moves, so exhaustion leaves the
+                            // maker and the counters untouched and stops the
+                            // sweep with the committed prefix.
+                            let reserved = match self.orders.try_reserve_seq() {
+                                Ok(reserved) => reserved,
+                                Err(error) => {
+                                    return (
+                                        FrontAction::SetAside,
+                                        StepResult::SequenceExhausted { maker_id, error },
+                                    );
+                                }
+                            };
                             // Replenishment: a fresh tranche moves hidden ->
                             // visible. Apply the visible NET delta
                             // (`- consumed + hidden_reduced`) as ONE checked RMW
@@ -2026,7 +2333,7 @@ impl PriceLevel {
                                 .fetch_sub(hidden_reduced, Ordering::Relaxed);
                             counters_committed = true;
                             // Refreshed tranche loses priority.
-                            FrontAction::ReplaceAtTail(Arc::new(updated))
+                            FrontAction::ReplaceAtTail(Arc::new(updated), reserved)
                         } else {
                             // Pure partial fill: keep priority in place.
                             FrontAction::KeepInPlace(Arc::new(updated))
@@ -2099,6 +2406,22 @@ impl PriceLevel {
                                 remaining,
                                 order_id = %maker_id,
                                 "match sweep: front maker matching arithmetic failed; sweep stopped"
+                            );
+                            sweep_error = Some((error, None));
+                            break;
+                        }
+                        StepResult::SequenceExhausted { maker_id, error } => {
+                            // No fresh FIFO sequence for the front maker's
+                            // replenishment (issue #165). The queue committed a
+                            // no-op and no counter moved, so queue, counters and
+                            // result agree on the committed prefix. Stop here
+                            // (#164 contract): advancing past this front would
+                            // break FIFO. Logged with the result after the sweep.
+                            tracing::debug!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                "match sweep stopping: no FIFO sequence left to re-sequence the replenished front maker"
                             );
                             sweep_error = Some((error, None));
                             break;
@@ -2244,10 +2567,32 @@ impl PriceLevel {
                         // transition under the entry lock (`counters_committed`),
                         // so this post-lock branch is now unreachable for it and
                         // kept only as a defensive no-op.
-                        self.hidden_quantity
-                            .fetch_sub(data.hidden_reduced, Ordering::Relaxed);
-                        self.visible_quantity
-                            .fetch_add(data.hidden_reduced, Ordering::Relaxed);
+                        //
+                        // Both transitions are checked (issue #165): unlike the
+                        // proven committed deltas elsewhere in the sweep, this
+                        // branch has no lock-held reservation behind it, so a
+                        // move that does not fit is refused rather than
+                        // wrapped (the hidden decrement is undone if the
+                        // visible increment cannot land).
+                        if self
+                            .hidden_quantity
+                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+                                h.checked_sub(data.hidden_reduced)
+                            })
+                            .is_ok()
+                            && self
+                                .visible_quantity
+                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                                    v.checked_add(data.hidden_reduced)
+                                })
+                                .is_err()
+                        {
+                            let _ = self.hidden_quantity.fetch_update(
+                                Ordering::Relaxed,
+                                Ordering::Relaxed,
+                                |h| h.checked_add(data.hidden_reduced),
+                            );
+                        }
                     }
                     // Pure partial fill (KeepInPlace, hidden_reduced == 0):
                     // visible already decremented by `consumed` above; the maker
@@ -2414,7 +2759,10 @@ impl PriceLevel {
             let epoch_before = self.topology_epoch.load(Ordering::Acquire);
             let orders = self.snapshot_by_insertion_seq();
             let epoch_after = self.topology_epoch.load(Ordering::Acquire);
-            if epoch_before != epoch_after && !Self::is_single_side(&orders) {
+            // An exhausted epoch no longer moves (issue #165), so treat it as
+            // "moved": the structural single-side check then decides.
+            let epoch_moved = epoch_before != epoch_after || epoch_before == EPOCH_EXHAUSTED;
+            if epoch_moved && !Self::is_single_side(&orders) {
                 tracing::debug!(
                     price = self.price,
                     attempt,
@@ -2538,7 +2886,15 @@ impl PriceLevel {
     /// the order to a different price level, if computing an order's total
     /// quantity overflows `u64`, or if an [`OrderUpdate::UpdateQuantity`] would
     /// overflow the level's visible- or hidden-quantity counter (the maker and
-    /// its queue position are left unchanged in that case).
+    /// its queue position are left unchanged in that case). Returns
+    /// [`PriceLevelError::CounterExhausted`] if the level's topology or
+    /// mutation epoch has no headroom left, or if a quantity increase needs a
+    /// fresh FIFO sequence and none is left (issue #165); the level is
+    /// unchanged in both cases.
+    ///
+    /// An exhausted `orders_removed` statistic does NOT fail a committed
+    /// removal: the counter stays at `usize::MAX` and the statistics are
+    /// marked degraded (see [`PriceLevelStatistics::record_order_removed`]).
     #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,
@@ -2557,13 +2913,22 @@ impl PriceLevel {
         let _fok = self.fok_read();
         // Fail fast on a poisoned level (issue #130).
         self.poison_check()?;
-        let result = self.update_order_inner(update);
+        // Refuse, with nothing touched, when an epoch has no headroom left for
+        // this update's bumps (issue #165).
+        self.check_epoch_headroom()?;
+        let mut stats_drop = None;
+        let result = self.update_order_inner(update, &mut stats_drop);
         // A committed mutation (`Ok(Some(_))` — the order was found and
         // cancelled / resized / moved) bumps the mutation epoch so a racing
         // post-only depth scan retries (issue #130). `Ok(None)` (not found) and
         // `Err` change nothing, so they do not bump.
         if matches!(result, Ok(Some(_))) {
             self.bump_mutation_epoch();
+        }
+        // An exhausted `orders_removed` statistic never fails the committed
+        // removal (issue #165); its first drop is logged after the bookkeeping.
+        if let Some(err) = stats_drop {
+            self.warn_order_event_dropped(&err);
         }
         result
     }
@@ -2575,9 +2940,13 @@ impl PriceLevel {
     /// the same-price `UpdatePriceAndQuantity` / `Replace` branches re-enter it
     /// without taking a second, non-reentrant [`std::sync::RwLock`] read
     /// (issue #112).
+    ///
+    /// `stats_drop` receives the first order-event statistics drop (issue
+    /// #165) so the caller logs it after its own bookkeeping.
     fn update_order_inner(
         &self,
         update: OrderUpdate,
+        stats_drop: &mut Option<PriceLevelError>,
     ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         match update {
             OrderUpdate::UpdatePrice {
@@ -2607,8 +2976,16 @@ impl PriceLevel {
                             self.bump_topology_epoch();
                         }
 
-                        // Update statistics
-                        self.stats.record_order_removed();
+                        // Update statistics (checked, issue #165).
+                        if stats_drop.is_none() {
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        } else {
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        }
                     }
 
                     Ok(order)
@@ -2665,12 +3042,26 @@ impl PriceLevel {
                 }
                 // Undo this call's own `old -> new` reservation (commutative with
                 // concurrent deltas — it reverses exactly what it added).
+                //
+                // Checked (issue #165). Undoing an INCREASE subtracts units this
+                // call added and that are still counted, so it cannot fail.
+                // Undoing a DECREASE re-adds freed units, which a concurrent
+                // admission may already have used; that re-add is not provably
+                // in range, so the caller orders the reservations to make it
+                // unreachable (increases first, see below), and the check
+                // refuses to wrap if it were ever reached.
                 fn unreserve(counter: &std::sync::atomic::AtomicU64, old: u64, new: u64) {
-                    if new >= old {
-                        counter.fetch_sub(new - old, Ordering::Relaxed);
+                    let _ = if new >= old {
+                        let delta = new - old;
+                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                            c.checked_sub(delta)
+                        })
                     } else {
-                        counter.fetch_add(old - new, Ordering::Relaxed);
-                    }
+                        let delta = old - new;
+                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                            c.checked_add(delta)
+                        })
+                    };
                 }
 
                 let visible_counter = &self.visible_quantity;
@@ -2686,6 +3077,7 @@ impl PriceLevel {
                 // reserved with checked math BEFORE the queue commits, so an
                 // update that would overflow a level counter is rejected with the
                 // level (and queue) untouched.
+                let queue = &self.orders;
                 let outcome = self.orders.update_entry(order_id, |live| {
                     let old_visible = live.visible_quantity().as_u64();
                     let old_hidden = live.hidden_quantity().as_u64();
@@ -2707,22 +3099,42 @@ impl PriceLevel {
                         }
                     })?;
 
+                    // Priority policy from the LIVE total (cannot be stale). A
+                    // demotion needs a fresh tail sequence: reserve it FIRST
+                    // (checked, issue #165), before any level counter moves, so
+                    // an exhausted sequence rejects the update with nothing to
+                    // roll back and the maker keeps its place.
+                    let demote = if new_total > live_total {
+                        Some(queue.try_reserve_seq()?)
+                    } else {
+                        None
+                    };
+
                     // Validate + reserve the level counters before mutating the
-                    // queue. On a hidden overflow, roll the visible reservation
-                    // back so a rejected update leaves the counters unchanged.
-                    reserve(visible_counter, old_visible, new_visible)?;
-                    if let Err(err) = reserve(hidden_counter, old_hidden, new_hidden) {
-                        unreserve(visible_counter, old_visible, new_visible);
+                    // queue. Increases go first (issue #165): if the second
+                    // reservation fails, the rollback of the first then only
+                    // ever subtracts units this call added, which is proven in
+                    // range. A decrease is only rolled back when both
+                    // components shrink, which needs a counter below its own
+                    // live contribution (unreachable, see `reserve`).
+                    let visible = (visible_counter, old_visible, new_visible);
+                    let hidden = (hidden_counter, old_hidden, new_hidden);
+                    let (first, second) = if new_visible < old_visible && new_hidden > old_hidden {
+                        (hidden, visible)
+                    } else {
+                        (visible, hidden)
+                    };
+                    reserve(first.0, first.1, first.2)?;
+                    if let Err(err) = reserve(second.0, second.1, second.2) {
+                        unreserve(first.0, first.1, first.2);
                         return Err(err);
                     }
 
-                    // Priority policy from the LIVE total (cannot be stale).
                     let arc = Arc::new(new_order);
-                    if new_total > live_total {
-                        Ok(UpdateDecision::ReplaceAtTail(arc))
-                    } else {
-                        Ok(UpdateDecision::KeepInPlace(arc))
-                    }
+                    Ok(match demote {
+                        Some(reserved) => UpdateDecision::ReplaceAtTail(arc, reserved),
+                        None => UpdateDecision::KeepInPlace(arc),
+                    })
                 });
 
                 match outcome {
@@ -2758,8 +3170,16 @@ impl PriceLevel {
                             self.bump_topology_epoch();
                         }
 
-                        // Update statistics
-                        self.stats.record_order_removed();
+                        // Update statistics (checked, issue #165).
+                        if stats_drop.is_none() {
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        } else {
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        }
                     }
                     Ok(order)
                 } else {
@@ -2767,10 +3187,13 @@ impl PriceLevel {
                     // logic). Call the guard-free inner body — we already hold
                     // the fill-or-kill shared guard, and a second `fok_read`
                     // here would be a non-reentrant recursive read (issue #112).
-                    self.update_order_inner(OrderUpdate::UpdateQuantity {
-                        order_id,
-                        new_quantity,
-                    })
+                    self.update_order_inner(
+                        OrderUpdate::UpdateQuantity {
+                            order_id,
+                            new_quantity,
+                        },
+                        stats_drop,
+                    )
                 }
             }
 
@@ -2796,8 +3219,16 @@ impl PriceLevel {
                         self.bump_topology_epoch();
                     }
 
-                    // Update statistics
-                    self.stats.record_order_removed();
+                    // Update statistics (checked, issue #165).
+                    if stats_drop.is_none() {
+                        *stats_drop = self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        );
+                    } else {
+                        let _ = self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        );
+                    }
                 }
 
                 Ok(order)
@@ -2832,8 +3263,16 @@ impl PriceLevel {
                             self.bump_topology_epoch();
                         }
 
-                        // Update statistics
-                        self.stats.record_order_removed();
+                        // Update statistics (checked, issue #165).
+                        if stats_drop.is_none() {
+                            *stats_drop = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        } else {
+                            let _ = self.record_order_event(
+                                PriceLevelStatistics::record_order_removed_reporting,
+                            );
+                        }
                     }
 
                     Ok(order)
@@ -2842,10 +3281,13 @@ impl PriceLevel {
                     // guard-free inner body — we already hold the fill-or-kill
                     // shared guard, and a second `fok_read` here would be a
                     // non-reentrant recursive read (issue #112).
-                    self.update_order_inner(OrderUpdate::UpdateQuantity {
-                        order_id,
-                        new_quantity: quantity,
-                    })
+                    self.update_order_inner(
+                        OrderUpdate::UpdateQuantity {
+                            order_id,
+                            new_quantity: quantity,
+                        },
+                        stats_drop,
+                    )
                 }
             }
         }

@@ -114,7 +114,10 @@ fn match_full(config: &Config) -> ScenarioReport {
     });
     // Reset so the assertion below covers only the measured loop, not the
     // warmup fills that also executed against this same level.
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,
@@ -187,7 +190,10 @@ fn match_partial(config: &Config) -> ScenarioReport {
             &generator,
         );
     }
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,
@@ -271,7 +277,10 @@ fn many_fill_sweep(config: &Config) -> ScenarioReport {
             &generator,
         )
     });
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure(samples, |i| {
         level.match_order(
@@ -336,7 +345,10 @@ fn iceberg_replenish(config: &Config) -> ScenarioReport {
             &generator,
         )
     });
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure(config.samples, |i| {
         level.match_order(
@@ -398,7 +410,10 @@ fn reserve_replenish(config: &Config) -> ScenarioReport {
             &generator,
         )
     });
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure(config.samples, |i| {
         level.match_order(

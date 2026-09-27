@@ -185,6 +185,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trade-id count before touching any maker and is `Killed` with the error set
   and the level unchanged when the generator cannot supply them.
 
+- **Internal counters refuse to wrap (#165).** New
+  `PriceLevelError::CounterExhausted { counter }` variant and
+  `ExhaustedCounter` enum (fixed payload, allocation-free; exhaustive matches
+  need a new arm).
+  - `PriceLevelStatistics::record_order_added()` /
+    `record_order_removed()` now return `Result<(), PriceLevelError>`. At
+    `usize::MAX` they keep the counter (it used to wrap to 0), set the sticky
+    `stats_degraded` flag and return `CounterExhausted`. `add_order` /
+    `update_order` still succeed in that case: the mutation has committed and
+    the statistic is advisory; the first drop is logged at `WARN`.
+  - `PriceLevelStatistics::reset_at(TimestampMs)` now returns
+    `Result<(), PriceLevelError>`. The seqlock sequence reserves its exit on
+    entry (a section opens only while the sequence is at most
+    `u64::MAX - 2`), so the guard's exit can never wrap. A refused
+    `record_execution` is dropped all-or-nothing and marks the statistics
+    degraded; a refused `reset` / `reset_at` changes nothing.
+  - FIFO sequences are reserved with a checked CAS before anything is
+    committed. `add_order` and a quantity-increasing `update_order` return
+    `CounterExhausted` with the level unchanged (a duplicate id still reports
+    `DuplicateOrderId` first). An iceberg / reserve replenishment inside
+    `match_order` that finds no sequence stops the sweep with the committed
+    prefix and the error in `MatchResult::error` (#164 contract); a
+    fill-or-kill taker whose dry run needs more replenishments than sequences
+    remain is killed before any maker is touched.
+  - Stop-cause precedence within one sweep step is fixed: `match_against`
+    error (#169), then trade id (#168), then FIFO sequence, then visible
+    headroom; every check runs before the step commits. Fill-or-kill checks,
+    before touching any maker: dry-run arithmetic error, depth, sequence
+    headroom, result storage, then the trade-id block.
+  - The topology and mutation epochs are checked and stop at `u64::MAX`,
+    which readers treat as "changed, unknown". `add_order`, `update_order`
+    and `match_order` are refused before mutating once an epoch is within
+    `2^32` of that value. A post-only taker whose depth scan cannot be
+    linearized is rejected with the error.
+  - `impl From<Vec<Arc<OrderType<()>>>> for OrderQueue`, which silently
+    dropped orders it could not insert, is replaced by `TryFrom`, which
+    returns the first `DuplicateOrderId` / `CounterExhausted`.
+  The 64-bit limits (FIFO sequence, epochs, statistics seqlock sequence) are
+  out of reach at any practical operation rate. The `usize` counters
+  `orders_added` / `orders_removed` are reachable on 32-bit targets (about
+  4.29 billion events, roughly 12 hours at 100k events/s); there the
+  statistics become degraded while trading continues. All limits are
+  exercised through internal near-limit fixtures. No hot-path allocation was
+  added.
+
 ### Added
 
 - `UuidGenerator::EXHAUSTED`, `UuidGenerator::is_exhausted`,

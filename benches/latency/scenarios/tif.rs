@@ -78,7 +78,10 @@ fn full_match_with_tif(config: &Config, tif: TimeInForce, name: &'static str) ->
         )
     });
     // Reset so the health assertion below covers only the measured loop.
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,

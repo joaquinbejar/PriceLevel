@@ -184,7 +184,10 @@ fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
         "small_taker_at_depth({depth}): matching a front maker's quantity down must never \
          change order_count()"
     );
-    level.stats().reset_at(TimestampMs::new(0));
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
 
     let (durations_ns, results) = measure(samples, |i| {
         level.match_order(

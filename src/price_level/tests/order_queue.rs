@@ -340,16 +340,23 @@ mod tests {
         let orders = vec![order1.clone(), order2.clone()];
 
         // Create a queue from the vector
-        let queue = OrderQueue::from_vec(orders.clone());
+        let queue = OrderQueue::try_from_vec(orders.clone()).unwrap();
 
         // Verify the queue contains the orders
         assert_eq!(queue.to_vec().len(), 2);
         assert!(queue.to_vec().contains(&order1));
         assert!(queue.to_vec().contains(&order2));
 
-        // Test the From implementation
-        let queue_from_trait: OrderQueue = orders.clone().into();
+        // Test the TryFrom implementation (issue #165: fallible, never drops).
+        let queue_from_trait = OrderQueue::try_from(orders.clone()).unwrap();
         assert_eq!(queue_from_trait.to_vec().len(), 2);
+
+        // A repeated id is rejected rather than silently dropped.
+        let dup = vec![order1.clone(), order1.clone()];
+        assert!(matches!(
+            OrderQueue::try_from(dup),
+            Err(crate::errors::PriceLevelError::DuplicateOrderId(_))
+        ));
 
         // Test the Into implementation
         let orders_from_queue: Vec<Arc<OrderType<()>>> = queue.into();
@@ -638,9 +645,10 @@ mod tests {
                     // Demote the resident maker to a fresh tail sequence, over and
                     // over. It stays resident the whole time.
                     let _ = queue.update_entry(Id::from_u64(1), |_live| {
-                        Ok(UpdateDecision::ReplaceAtTail(StdArc::new(
-                            create_test_order(1, 1_000, 100),
-                        )))
+                        Ok(UpdateDecision::ReplaceAtTail(
+                            StdArc::new(create_test_order(1, 1_000, 100)),
+                            queue.try_reserve_seq()?,
+                        ))
                     });
                 }
             })
@@ -681,9 +689,10 @@ mod tests {
         queue.push(Arc::new(create_test_order(3, 1_000, 30))); // seq 2
 
         let replaced = queue.update_entry(Id::from_u64(2), |_live| {
-            Ok(UpdateDecision::ReplaceAtTail(Arc::new(create_test_order(
-                2, 1_000, 25,
-            ))))
+            Ok(UpdateDecision::ReplaceAtTail(
+                Arc::new(create_test_order(2, 1_000, 25)),
+                queue.try_reserve_seq()?,
+            ))
         });
         assert!(
             matches!(replaced, Some(Ok(_))),
@@ -737,9 +746,10 @@ mod tests {
                         // Continuously demote a mid maker; once it is popped this
                         // returns `None` (id gone) and simply spins.
                         let _ = queue.update_entry(Id::from_u64(N / 2), |_live| {
-                            Ok(UpdateDecision::ReplaceAtTail(StdArc::new(
-                                create_test_order(N / 2, 1_000, 10),
-                            )))
+                            Ok(UpdateDecision::ReplaceAtTail(
+                                StdArc::new(create_test_order(N / 2, 1_000, 10)),
+                                queue.try_reserve_seq()?,
+                            ))
                         });
                     }
                 })

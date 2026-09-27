@@ -899,7 +899,7 @@ let now = TimestampMs::try_from_system_time(read_by_caller)?;
 let stats = PriceLevelStatistics::new_at(TimestampMs::new(1_716_000_000_000));
 stats.record_execution(10, 100, 0, 1_716_000_000_000)?;
 assert_eq!(stats.time_since_last_execution_at(now)?, Some(500));
-stats.reset_at(now);
+stats.reset_at(now)?;
 
 // Injected clock path: a fixed clock that cannot panic.
 struct FixedClock(TimestampMs);
@@ -1119,6 +1119,58 @@ assert!(matches!(
     Err(PriceLevelError::CapacityExceeded { resource: CapacityResource::IdSequence, .. })
 ));
 ```
+
+### Migration Guide (internal counters refuse to wrap — breaking)
+
+Monotonic internal counters no longer wrap at their maximum (#165); each
+now has a typed, allocation-free outcome instead of a silent wrap to zero.
+The 64-bit counters (the FIFO sequence, the epochs and the statistics
+seqlock sequence) are out of reach at any practical operation rate. The
+`usize` statistics counters `orders_added` / `orders_removed` are not on
+32-bit targets: they reach `usize::MAX` after about 4.29 billion events
+(roughly 12 hours at 100k events/s), after which the statistics are marked
+degraded while admissions and cancels continue.
+
+| v0.9 | v0.10 |
+|------|-------|
+| `stats.record_order_added()` | [`stats.record_order_added()`](PriceLevelStatistics::record_order_added) `-> Result<(), _>` |
+| `stats.record_order_removed()` | [`stats.record_order_removed()`](PriceLevelStatistics::record_order_removed) `-> Result<(), _>` |
+| `stats.reset_at(ts)` | [`stats.reset_at(ts)`](PriceLevelStatistics::reset_at) `-> Result<(), _>` |
+| `OrderQueue::from(vec)` / `vec.into()` | [`OrderQueue::try_from(vec)`](OrderQueue) `-> Result<OrderQueue, _>` |
+| — | [`PriceLevelError::CounterExhausted`] `{ counter: `[`ExhaustedCounter`]` }` |
+
+- **Statistics order-event counters** keep `usize::MAX`, set the sticky
+  `stats_degraded` flag and return `CounterExhausted`. The engine's
+  admissions and removals still succeed (the queue mutation has
+  committed; the counters are advisory).
+- **Statistics seqlock.** A write section opens only while its sequence
+  can also close without wrapping. A refused `record_execution` drops the
+  execution all-or-nothing and marks the statistics degraded (the match is
+  unaffected); a refused `reset` / `reset_at` changes nothing. A restored or
+  cloned statistics object starts a fresh sequence.
+- **FIFO sequences** are reserved before any commit.
+  [`PriceLevel::add_order`] and a quantity-increasing
+  [`PriceLevel::update_order`] return `CounterExhausted` with the level
+  unchanged; [`PriceLevel::match_order`] stops at a replenishment that
+  finds no sequence, reporting the committed prefix and the error in
+  [`MatchResult::error`] (fill-or-kill is killed before any maker is
+  touched).
+- **Stop-cause precedence in one sweep step.** Before a step commits
+  anything, the sweep checks, in this fixed order: the maker's
+  `match_against` arithmetic (`InvalidOperation`, #169), the trade id
+  (`CapacityExceeded { resource: IdSequence }`, #168), the FIFO sequence
+  for a replenishment (`CounterExhausted { counter: QueueSequence }`), and
+  the level's visible headroom. The first failure stops the sweep with the
+  committed prefix. A fill-or-kill taker checks the same causes up front:
+  dry-run arithmetic error, depth, sequence headroom, result storage, then
+  the trade-id block.
+- **Epochs** stop at `u64::MAX`, which readers treat as unknown; mutations
+  and sweeps are refused before they start once an epoch is within `2^32`
+  of it. A post-only taker that cannot linearize its depth scan is
+  rejected with the error. Rebuild the level from a snapshot to reset the
+  epochs and sequences.
+- `OrderQueue`'s `From<Vec<_>>` silently dropped orders it could not
+  insert (a repeated id); `TryFrom` rejects instead.
 
 
  ## Setup Instructions
