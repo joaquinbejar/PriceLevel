@@ -24,6 +24,7 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
         match_empty(config),
         match_full(config),
         match_partial(config),
+        match_maker_partial(config),
         many_fill_sweep(config),
         iceberg_replenish(config),
         reserve_replenish(config),
@@ -232,6 +233,75 @@ fn match_partial(config: &Config) -> ScenarioReport {
         "PriceLevel::match_order — taker larger than one dedicated maker",
         durations_ns,
         format!("{partial}/{} PartiallyFilled", config.samples),
+    )
+}
+
+/// `match_order` where each call partially fills the same huge front maker of
+/// a 1,000-deep level (issue #148): one trade per call, no maker fully
+/// consumed, so the result records no filled order id. The level's depth
+/// never changes, so the reported depth is exact for every sample.
+fn match_maker_partial(config: &Config) -> ScenarioReport {
+    const DEPTH: u64 = 1_000;
+    const TAKER_QTY: u64 = 10;
+    let level = fixtures::deep_level_with_large_front(DEPTH);
+    let generator = fixtures::trade_id_generator();
+
+    warmup(config.warmup, |i| {
+        level.match_order(
+            TAKER_QTY,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        )
+    });
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
+
+    let (durations_ns, results) = measure(config.samples, |i| {
+        level.match_order(
+            TAKER_QTY,
+            Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        )
+    });
+
+    let exact = results
+        .iter()
+        .filter(|r| {
+            r.outcome() == MatchOutcome::Filled
+                && r.trades().len() == 1
+                && r.filled_order_ids().is_empty()
+        })
+        .count();
+    assert_eq!(
+        exact, config.samples,
+        "match_maker_partial: every call must fill with one trade and no filled maker"
+    );
+    assert_eq!(
+        level.order_count(),
+        DEPTH as usize,
+        "match_maker_partial: the front maker must never be fully consumed"
+    );
+    fixtures::assert_stats_healthy(
+        &level,
+        config.samples as u64 * TAKER_QTY,
+        "match_maker_partial",
+    );
+
+    ScenarioReport::from_samples(
+        "match_maker_partial",
+        "match",
+        DEPTH,
+        "PriceLevel::match_order — partial fill of one large front maker, deep level",
+        durations_ns,
+        format!("{exact}/{} Filled (1 trade, 0 filled ids)", config.samples),
     )
 }
 

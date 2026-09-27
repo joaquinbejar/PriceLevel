@@ -63,6 +63,13 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
         measure_match_full(config),
         measure_uuid_try_next(config),
         measure_match_sweep_100(config),
+        // Issue #148: result-buffer sizing per match shape.
+        measure_match_zero_trade(config),
+        measure_match_maker_partial_deep(config),
+        measure_match_fok_maker_partial(config),
+        measure_match_iceberg_replenish(config),
+        measure_match_iceberg_multi(config),
+        measure_match_reserve_replenish(config),
         measure_snapshot_capture(config),
         measure_checksum_validate(config),
         measure_restore(config),
@@ -360,4 +367,153 @@ fn measure_restore(config: &Config) -> AllocReport {
         reps,
         totals: after.since(before),
     }
+}
+
+/// Shared shape for the issue #148 result-sizing measurements: `reps`
+/// `match_order` calls of `qty` against one pre-built `level` whose state
+/// supports every repetition (a huge front maker / hidden tranche), each
+/// expected to emit exactly `trades_per_call` trades and fully consume
+/// `filled_per_call` makers. Only `match_order` runs inside the counted
+/// window; the results buffer is pre-sized before and dropped after it.
+fn measure_match_shared(
+    name: &'static str,
+    reps: usize,
+    level: &PriceLevel,
+    qty: u64,
+    tif: TimeInForce,
+    trades_per_call: usize,
+    filled_per_call: usize,
+) -> AllocReport {
+    let generator = fixtures::trade_id_generator();
+    let mut results = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for i in 0..reps {
+        results.push(level.match_order(
+            qty,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            tif,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        ));
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+
+    for r in &results {
+        assert!(
+            r.error().is_none(),
+            "alloc measurement ({name}): no match may stop early"
+        );
+        assert_eq!(
+            r.trades().len(),
+            trades_per_call,
+            "alloc measurement ({name}): unexpected trade count"
+        );
+        assert_eq!(
+            r.filled_order_ids().len(),
+            filled_per_call,
+            "alloc measurement ({name}): unexpected filled-maker count"
+        );
+    }
+    drop(results);
+
+    AllocReport {
+        name,
+        reps,
+        totals: after.since(before),
+    }
+}
+
+/// Zero-trade match against an empty level (issue #148).
+fn measure_match_zero_trade(config: &Config) -> AllocReport {
+    let level = PriceLevel::new(LEVEL_PRICE);
+    measure_match_shared(
+        "match_zero_trade",
+        config.alloc_reps,
+        &level,
+        10,
+        TimeInForce::Gtc,
+        0,
+        0,
+    )
+}
+
+/// Repeated partial fills of one large maker on a deep level (issue #148):
+/// each call emits one trade and fully consumes no maker.
+fn measure_match_maker_partial_deep(config: &Config) -> AllocReport {
+    let level = fixtures::deep_level_with_large_front(1_000);
+    measure_match_shared(
+        "match_maker_partial",
+        config.alloc_reps,
+        &level,
+        10,
+        TimeInForce::Gtc,
+        1,
+        0,
+    )
+}
+
+/// Fill-or-kill variant of [`measure_match_maker_partial_deep`]: the exact
+/// dry-run preflight path (issue #148). The dry run's own resting-order
+/// snapshot is part of this path and is included as-is.
+fn measure_match_fok_maker_partial(config: &Config) -> AllocReport {
+    let level = fixtures::deep_level_with_large_front(1_000);
+    measure_match_shared(
+        "match_fok_partial",
+        config.alloc_reps,
+        &level,
+        10,
+        TimeInForce::Fok,
+        1,
+        0,
+    )
+}
+
+/// One iceberg maker, taker equal to its visible tranche: one trade, one
+/// replenishment, no filled id (issue #148).
+fn measure_match_iceberg_replenish(config: &Config) -> AllocReport {
+    let level = fixtures::seeded_iceberg_level(1, Side::Sell, 10, 1_000_000_000);
+    measure_match_shared(
+        "match_iceberg_1x",
+        config.alloc_reps,
+        &level,
+        10,
+        TimeInForce::Gtc,
+        1,
+        0,
+    )
+}
+
+/// One iceberg maker, taker five times its visible tranche: five trades from
+/// one resting order (the trade count exceeds the order-count estimate), no
+/// filled id (issue #148).
+fn measure_match_iceberg_multi(config: &Config) -> AllocReport {
+    let level = fixtures::seeded_iceberg_level(1, Side::Sell, 10, 1_000_000_000);
+    measure_match_shared(
+        "match_iceberg_5x",
+        config.alloc_reps,
+        &level,
+        50,
+        TimeInForce::Gtc,
+        5,
+        0,
+    )
+}
+
+/// One reserve maker, taker equal to its visible tranche (issue #148).
+fn measure_match_reserve_replenish(config: &Config) -> AllocReport {
+    let level = fixtures::seeded_reserve_level(1, Side::Sell, 10, 1_000_000_000, 1, 10);
+    measure_match_shared(
+        "match_reserve_1x",
+        config.alloc_reps,
+        &level,
+        10,
+        TimeInForce::Gtc,
+        1,
+        0,
+    )
 }
