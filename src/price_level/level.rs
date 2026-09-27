@@ -355,7 +355,8 @@ fn fire_sweep_start_hook() {
 }
 
 // Deterministic seam between the terminal self-match lookup and the
-// fill-or-kill exclusive-guard acquisition (issue #164 review): a test can
+// fill-or-kill exclusive-guard acquisition (issue #164 review), and so also
+// before the guard's hand-off wait for announced mutators (issue #206): a test can
 // admit an order sharing the taker id in exactly the window a concurrent
 // mutator could, on the matcher thread and with no lock held, so the dry run
 // then sees (and parks) it. Production builds compile none of this.

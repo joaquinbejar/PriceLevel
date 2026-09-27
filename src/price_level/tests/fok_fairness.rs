@@ -8,6 +8,17 @@
 //! while the exclusive side is held, the hand-off tallies count what the
 //! protocol did, and every cross-thread step waits on an atomic condition,
 //! never on a sleep.
+//!
+//! Hook order changed with the hand-off: the pre-fill-or-kill-lock hook
+//! (`set_pre_fok_lock_hook`, issue #164) still fires before the exclusive
+//! guard is requested, which now also means before the hand-off wait, so a
+//! mutator announced by that hook is waited for by the same call.
+//!
+//! The looping test counts sections that run while a mutator is announced;
+//! each announcement can overlap at most one (the one whose counter check
+//! preceded it). The mutator's full wait, counted from its failed
+//! `try_read`, can also include the section in progress at that moment,
+//! hence the documented bound of two.
 
 #[cfg(test)]
 mod tests {

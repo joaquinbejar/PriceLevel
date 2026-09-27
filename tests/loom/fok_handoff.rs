@@ -23,6 +23,21 @@
 //!   the budget did not run out, that mutator's critical section completed
 //!   before the matcher's exclusive section began.
 //!
+//! # Limits of the model
+//!
+//! - loom's `RwLock` is not writer-preferring, and loom explores schedules
+//!   rather than wake-up latency, so the model proves the hand-off's safety
+//!   and its drained-implies-admitted property, not the two-section bound or
+//!   any timing.
+//! - One matcher. With several fill-or-kill matchers (unsupported) the
+//!   bound degrades to about one section per matcher; that is not modelled.
+//! - No unwind or poison case: the mutator and matcher recover a poisoned
+//!   lock but nothing here panics while holding it.
+//! - `fok_guard.rs`'s test tallies are `std` thread-locals, and loom runs
+//!   its threads as coroutines on one OS thread, so the tallies are shared
+//!   across loom threads. The deltas read here are still exact because the
+//!   matcher is the only thread that writes `HANDOFF_TALLY`.
+//!
 //! Run with:
 //! ```text
 //! RUSTFLAGS="--cfg loom" cargo test --release --test loom_fok_handoff

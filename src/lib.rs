@@ -114,17 +114,23 @@
 //!   at depth 10,000). A mutator whose shared acquisition would block now
 //!   announces itself, and a `Fok` match that sees an announcement waits,
 //!   holding no lock, until every announced mutator holds the shared side or a
-//!   fixed budget (64 spin hints, then 256 `yield_now` calls) runs out. A
-//!   blocked mutator therefore waits for at most one fill-or-kill section plus
-//!   its own scheduling delay, unless it cannot run for the whole budget (for
-//!   example, it is preempted), in which case that section proceeds and the wait
-//!   repeats; the budget likewise bounds what a `Fok` match can lose to a stream
-//!   of mutators. The announcement is a scheduling hint only: exclusion,
+//!   fixed budget (64 spin hints, then 256 `yield_now` calls) runs out. With
+//!   the supported **one matcher per level**, a blocked mutator therefore waits
+//!   for at most two fill-or-kill sections (the one in progress, and one more
+//!   if the matcher rechecks between the mutator's failed attempt and its
+//!   announcement) plus its own scheduling delay, unless it cannot run for the
+//!   whole budget (for example, it is preempted), in which case that section
+//!   proceeds and the wait repeats. With `k` concurrent `Fok` matchers on a
+//!   level (unsupported) the wait can grow to about `k` sections. The budget
+//!   counts rounds, not time: on an oversubscribed host each yield can cost a
+//!   scheduler slice, so one hand-off can then take hundreds of milliseconds,
+//!   but the `Fok` match always proceeds once it is spent; it likewise bounds
+//!   what a `Fok` match can lose to a stream of mutators. The announcement is a scheduling hint only: exclusion,
 //!   all-or-nothing and the failure contract still come from the lock alone.
 //!   Uncontended calls take the same path as before plus one counter read. The
-//!   unit of wait is still one section, so a `Fok` that must walk a deep level
+//!   unit of wait is still a section, so a `Fok` that must walk a deep level
 //!   (a kill, or a fill far into the queue) makes each blocked mutator wait up
-//!   to its `O(depth log depth)` duration: callers that need tight admission or
+//!   to twice its `O(depth log depth)` duration: callers that need tight admission or
 //!   cancel latency should not loop such takers on one deep level from a hot
 //!   thread, and should prefer `Ioc` where all-or-nothing is not required.
 //!   Measurements are in `BENCH.md` ("Writer starvation behind a looping FOK

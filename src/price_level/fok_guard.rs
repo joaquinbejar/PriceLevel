@@ -8,7 +8,8 @@
 //! yet running when the matcher's next `write()` finds the lock free. Measured
 //! on the rejected-FOK loop at depth 10,000 (a ~170 µs exclusive section), a
 //! writer's p99 wait was 1.2 to 4.5 s and single waits reached 14.5 s; with
-//! the hand-off, p99 is about one section (~190 µs). See `BENCH.md`.
+//! the hand-off, p99 is about one section (~190 µs) and the worst single
+//! wait measured was under two. See `BENCH.md`.
 //!
 //! [`FokGuard`] adds one counter, `waiting_mutators`, to that lock:
 //!
@@ -27,6 +28,31 @@
 //! waiting but cannot break exclusion. The matcher never waits while holding
 //! the lock, and its wait is bounded, so the hand-off cannot deadlock and a
 //! stream of mutators cannot starve the matcher either.
+//!
+//! # Bounds and assumptions
+//!
+//! - **One matcher per level.** The bounds below assume the crate's supported
+//!   model: at most one thread runs `match_order` on a level at a time. With
+//!   `k` concurrent fill-or-kill matchers (unsupported) a mutator can wait
+//!   about `k` sections: while matcher A spends its budget, a matcher B
+//!   already queued in `write()` holds readers off on writer-preferring
+//!   `RwLock` implementations (the Linux futex lock, for one).
+//! - **At most two sections.** A blocked mutator waits for at most two
+//!   exclusive sections plus its own wake-up: between its failed `try_read`
+//!   and its announcement, the matcher can finish the section in progress,
+//!   read a zero counter and take one more. Every later request sees the
+//!   announcement.
+//! - **The budget counts rounds, not time.** It is 64 `spin_loop` hints and
+//!   256 `yield_now` calls. On an idle core a yield returns in about a
+//!   microsecond, but on an oversubscribed host each yield can cost a
+//!   scheduler time slice, so one hand-off can then take hundreds of
+//!   milliseconds. The matcher still always progresses: after the budget it
+//!   requests the exclusive side regardless. A mutator that cannot run for
+//!   the whole budget (for example, it is preempted) lets that section
+//!   proceed and waits for another.
+//! - **Section length is unchanged.** The hand-off bounds how many sections
+//!   a mutator waits for, not how long each lasts; a fill-or-kill that walks
+//!   a deep level holds the lock for `O(depth log depth)`.
 
 // Every primitive comes through `fok_sync` so the loom model
 // (`tests/loom/fok_handoff.rs`) can compile this very file against loom's
@@ -174,12 +200,13 @@ impl FokGuard {
         spins: u32,
         yields: u32,
     ) -> LockResult<RwLockWriteGuard<'_, ()>> {
-        // SeqCst pairs with the announcement's SeqCst increment: the two
-        // sides form a store-then-load pattern on different locations (the
-        // mutator announces then reads the lock state; the matcher releases
-        // the lock then reads the counter), which only a single total order
-        // keeps from missing each other. On aarch64 this is the same `ldar`
-        // an Acquire load compiles to; on x86_64 a plain load.
+        // The counter is a hint, so any ordering is correct, `Relaxed`
+        // included: a missed announcement costs the mutator one more
+        // section, never exclusion. SeqCst on the counter alone does not rule
+        // out that miss either, because the lock operations it races are
+        // only Acquire / Release; it is kept as a cheap choice (the same
+        // `ldar` as an Acquire load on aarch64, a plain load on x86_64) that
+        // makes the counter's own operations totally ordered.
         if self.waiting_mutators.load(Ordering::SeqCst) != 0 {
             self.hand_off(spins, yields);
         }

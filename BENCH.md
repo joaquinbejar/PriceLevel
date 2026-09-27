@@ -1385,10 +1385,18 @@ decrement once it holds the shared side. A FOK that sees a non-zero
 counter before it requests the exclusive side waits, holding no lock, for
 up to 64 `spin_loop` hints and then 256 `yield_now` calls, until the counter
 is zero. The lock is free during that wait, so each announced mutator only
-needs to be scheduled; the FOK's `write()` then queues behind it. A blocked
-mutator therefore waits for at most one section, the one whose counter
-check preceded its announcement, plus its own wake-up, unless it cannot run
-for the whole budget.
+needs to be scheduled; the FOK's `write()` then queues behind it. With one
+matcher per level (the supported model, and the one measured here), a
+blocked mutator therefore waits for at most two sections plus its own
+wake-up: the section in progress, and one more if the matcher rechecks the
+counter between the mutator's failed `try_read` and its announcement. That
+holds unless the mutator cannot run for the whole budget. With `k`
+concurrent FOK matchers on a level (unsupported), a queued matcher holds
+readers off on writer-preferring locks such as the Linux futex `RwLock`,
+and the wait can grow to about `k` sections. The budget counts rounds, not
+time: on an oversubscribed host each `yield_now` can cost a scheduler
+slice, so one hand-off can take hundreds of milliseconds, though the FOK
+always proceeds once it is spent.
 
 Environment: Apple M5 Max (18 logical cores), macOS arm64, Rust 1.98.1,
 `bench` profile, system allocator, unpinned shared host, load averages 2.7
@@ -1444,10 +1452,10 @@ Uncontended cost, Criterion (`PriceLevel - FOK depth`, `Add Orders`,
 
 - A writer behind a looping rejected FOK at depth 10,000 now waits p99
   187 to 195 µs, about one exclusive section, and its worst single wait in
-  three rounds was 338 µs, instead of p99 4.5 s and max 14.5 s. At
-  depth 100 the p99 drops from 1.4 ms to 12 µs. The writer's own wait is
-  still one section long, so it scales with the FOK's walk: the hand-off
-  bounds the number of sections, not their length.
+  three rounds was 338 µs, under the two-section bound, instead of p99 4.5 s
+  and max 14.5 s. At depth 100 the p99 drops from 1.4 ms to 12 µs. The
+  writer's wait is still measured in sections, so it scales with the FOK's
+  walk: the hand-off bounds the number of sections, not their length.
 - The matcher gives way only while a mutator is blocked. In the contended
   rejected case it ran about 5,000 to 65,000 calls per second during the
   writer's short window, against 5,800 to 285,000 on base, where it never
@@ -1463,9 +1471,11 @@ Uncontended cost, Criterion (`PriceLevel - FOK depth`, `Add Orders`,
   points at code layout rather than extra work.
 - The first-maker FOK and GTC cases are unchanged: their sections are so
   short that a woken writer usually wins the lock on its own.
-- Remaining caveat: a mutator that cannot run for the whole budget (for
+- Remaining caveats: a mutator that cannot run for the whole budget (for
   example, it is preempted while the host is oversubscribed) lets that
-  section proceed and waits for another one. The budget also bounds what a
+  section proceed and waits for another one, and on such a host the
+  round-counted budget itself can stretch to hundreds of milliseconds. The
+  bounds assume one matcher per level. The budget also bounds what a
   FOK can lose to a stream of mutators, so neither side can starve the
   other. Callers that need tight admission or cancel latency should still
   not loop large FOK takers on one deep level from a hot thread; prefer IOC

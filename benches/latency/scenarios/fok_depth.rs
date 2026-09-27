@@ -280,9 +280,9 @@ impl MatcherMode {
 /// matcher consumes every maker ahead of `W`, `W` becomes the true front and
 /// is filled, and the late cancel finds nothing. That is correct FIFO under
 /// starvation, not a FIFO violation. The guard's bounded hand-off (#206)
-/// limits a blocked writer to about one exclusive section unless it cannot
-/// run for the whole hand-off budget, so these events stay possible on an
-/// oversubscribed host; both are counted and reported in the outcome note
+/// limits a blocked writer to at most two exclusive sections (one matcher
+/// per level) unless it cannot run for the whole hand-off budget, so these
+/// events stay possible on an oversubscribed host; both are counted and reported in the outcome note
 /// (and so in `manifest.json`):
 ///
 /// * `writer-owned consumed`: a matcher call filled a writer order;

@@ -87,13 +87,21 @@ public methods:
   counter (`src/price_level/fok_guard.rs`); a `Fok` match that sees an
   announcement waits, holding no lock, until every announced mutator holds
   the shared side or a fixed budget (64 spin hints, then 256 `yield_now`
-  calls) runs out. A blocked mutator then waits for at most one fill-or-kill
-  section plus its own scheduling delay, unless it cannot run for the whole
-  budget; the budget also bounds what a `Fok` match can lose to a stream of
-  mutators. The counter is a scheduling hint only: exclusion and
+  calls) runs out. With the supported one matcher per level, a blocked
+  mutator then waits for at most two fill-or-kill sections (the one in
+  progress, plus one if the matcher rechecks between the mutator's failed
+  `try_read` and its announcement) and its own scheduling delay, unless it
+  cannot run for the whole budget. With `k` concurrent `Fok` matchers
+  (unsupported) a queued matcher holds readers off on writer-preferring
+  locks, so the wait grows to about `k` sections. The budget counts rounds,
+  not time: under oversubscription each `yield_now` can cost a scheduler
+  slice, so a hand-off can take hundreds of milliseconds, but the `Fok`
+  match always proceeds once it is spent; the budget also bounds what a
+  `Fok` match can lose to a stream of mutators. The counter is a scheduling hint only: exclusion and
   all-or-nothing still come from the lock alone. The protocol is model
   checked by `tests/loom/fok_handoff.rs`, which compiles the production
-  `fok_guard.rs` against loom. One section is still the unit of wait: a
+  `fok_guard.rs` against loom (single matcher; see that file for the
+  model's limits). A section is still the unit of wait: a
   `Fok` that must walk the level (a kill, or a fill deep into the queue)
   holds it for `O(depth log depth)`, so a caller that needs tight mutator
   latency on a deep level should not loop such takers on it from a hot
