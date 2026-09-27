@@ -119,22 +119,42 @@ and tests.
 | `match_order` post-only reject `debug!` | none | none |
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
 | `match_order` FOK kill `error!` with an error (dry-run stop, sequence headroom, result storage, trade ids, dry-run working snapshot and park set reservations, #164) | none (guard dropped first) | none |
-| `snapshot` recollection `debug!` (rejected walk: mixed sides or aggregate overflow) and attempts-exhausted `warn!` (#162) | `fok_guard` **shared (read) side**, held for the whole bounded recollection | none: a rejected walk is discarded and the level is never mutated by `snapshot`. An unwind releases the read guard without poisoning it; synchronous reentry into a `Fok` `match_order` on the same level blocks behind that read guard (covered by the global no-reentry obligation) |
+| `snapshot` recollection `debug!` (rejected walk: mixed sides or aggregate overflow) and attempts-exhausted `warn!` (#162) | none since the pre-release hardening: each rejection is recorded in a fixed per-attempt slot under the shared guard and logged after the guard is released | none: a rejected walk is discarded and the level is never mutated by `snapshot` |
+| `add_order` statistics-drop `warn!` (#165) | none since the pre-release hardening (recorded under the shared guard, emitted after it is released) | the admission is committed |
+| `add_order` refused rollback `error!` (checked visible / hidden rollback after a failed reservation or pin; pre-release hardening) | none (deferred as above) | the admission was rejected; the counter that refused kept its value (it already disagreed with the queue) and the level is poisoned before the event |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
 | sweep park refusal (`SweepScratch`, #164; logged with the sweep stop `error!`) | as the set-aside row | this step is a no-op: `SetAside` mutates nothing and the parked-sequence set's refused reservation leaves it unchanged. **Earlier steps are committed**, as above. The first live park uses an inline slot that frees itself when its key goes stale (cancel, readmission, demotion), so a single live parked maker never allocates; this needs two simultaneously live parks |
 | sweep post-lock replenish counter refusal `error!` (#128 defensive branch, #164; unreachable today; also reported by the sweep stop `error!`) | as the set-aside row | the maker was re-sequenced with its new split but the level counters could not follow, so the level is poisoned before the event. **The step and earlier steps are committed** |
+| sweep counter refusal `error!` (checked visible decrement of a fill, checked hidden decrement of a replenish or of stranded hidden depth; pre-release hardening) | as the set-aside row | the step committed; the refusing counter kept its value (it already disagreed with the queue), the level is poisoned and the sweep stops after this step with a typed error. **The step and earlier steps are committed** |
 | sweep resting-order count refusal `debug!` (`TopologyUnderflow`, #163) | as the set-aside row | this step is a no-op: the count check ran inside the step's `match_front` entry critical section and refused the full consume before `Remove` committed; the error is built after the entry lock is released. **Earlier steps are committed**, as above |
 | sweep post-removal release failure (#163; logged with the sweep stop `error!`) | as the set-aside row | the maker is removed and the step's counters moved; the topology count could not be released (it already disagreed with the queue), so the level is poisoned before the event. **The step and earlier steps are committed** |
-| removal count refusal `warn!` (`update_order` cancel / price move, #163) | `fok_guard` **shared (read) side** (held by `update_order`); no `DashMap` lock | none: the count check ran inside `OrderQueue::remove_if`'s entry critical section, refused, and released the entry lock before the error is built and logged |
-| removal post-release failure `error!` (`update_order` cancel / price move, #163) | `fok_guard` shared side; no `DashMap` lock | the order is removed and the quantity counters moved; the level is already poisoned (the event reports it) |
-| update counter-rollback failure `error!` (`update_order` resize, #163) | `fok_guard` shared side; no `DashMap` lock (logged after `update_entry_with` returned) | the resize was rejected with the queue untouched; one level counter could not be restored and the level is already poisoned |
+| removal count refusal `warn!` (`update_order` cancel / price move, #163) | none since the pre-release hardening: recorded under the `fok_guard` shared side and emitted by `update_order` after releasing it; no `DashMap` lock | none: the count check ran inside `OrderQueue::remove_if`'s entry critical section, refused, and released the entry lock before the error is built |
+| removal post-release failure `error!` (`update_order` cancel / price move, #163) | none (deferred as above) | the order is removed and the quantity counters moved; the level is already poisoned (the event reports it) |
+| removal counter refusal `error!` (`update_order` cancel / price move; checked visible / hidden decrement, pre-release hardening) | none (deferred as above) | the order is removed; the refusing counter kept its value and the level is poisoned; the call returns a typed error instead of the order |
+| update counter-rollback failure `error!` (`update_order` resize, #163) | none (deferred as above) | the resize was rejected with the queue untouched; one level counter could not be restored and the level is already poisoned |
+| `update_order` statistics-drop `warn!` (#165) | none (deferred as above) | the removal is committed |
 | `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a `setup_logger` call from this event's `on_event` returns it instead of blocking |
 |  `setup_logger` → `set_global_default` → `Dispatch` construction: callsite-interest rebuild invoking live subscribers' `register_callsite` / `max_level_hint` | **`LOGGER_INIT_RESULT` `OnceLock` initialization in progress** | none yet (the global default is not set until these return). a callback that calls `setup_logger` blocks on the same initialization and deadlocks; **re-entry from registration callbacks is prohibited**. A panic unwinds out of `get_or_init`, leaving it uninitialized |
 
 No event is emitted inside the `OrderQueue::match_front` /
 `update_entry_with` / `remove_if` / `try_push_with` closures, so none runs
 under a `DashMap` shard write lock.
+
+Since the pre-release hardening, `add_order`, `update_order` and `snapshot`
+emit nothing while they hold the `fok_guard` shared side: their events are
+recorded in fixed, non-allocating slots (`DeferredEvents`, the per-attempt
+snapshot rejections) and emitted after the guard is released. The one
+remaining event under that guard is `mark_poisoned`'s `error!`, raised while
+the acquisition itself recovers an already-poisoned guard.
+
+The match sweep's events for a `Fok` taker still run under the exclusive
+guard (rows above). Deferring them was not straightforward: a sweep can
+raise one event per visited maker, so collecting them would need an
+unbounded buffer (an allocation on the hot path, or a fallible reservation
+that can fail after trades are committed) or would drop events. They are
+kept in place and documented instead; the consequence of a subscriber panic
+there is described below.
 
 #### Removal event boundaries (issue #163)
 
@@ -146,8 +166,11 @@ A cancel or price-moving `update_order` removes through
    no allocation, no event), then remove the map entry or refuse. An absent id
    returns before any check or error construction.
 2. **After the entry lock:** remove the index key, move the quantity
-   counters, release the topology count (`release_after_removal`).
-3. **Last:** build any error and emit any event.
+   counters (checked decrements; a refusal poisons the level), release the
+   topology count (`release_after_removal`).
+3. **Last:** build any error. Events are recorded and emitted by
+   `update_order` after it releases the `fok_guard` shared side
+   (pre-release hardening).
 
 A full consume in the sweep follows the same boundary: the count check runs in
 the `match_front` decision closure, in the entry critical section that commits
@@ -181,6 +204,14 @@ duplicate-id set, `PriceLevelData`, snapshot `try_clone`, package JSON, the
 hex checksum, decoded order vectors and checksum strings, and the text
 parsers (#174).
 
+The restore duplicate-id check and the `MatchResult` filled-id duplicate
+check are hasher-free since the pre-release hardening: the ids are copied
+into one `try_reserve_exact` scratch vector (resources `RestoreScratch` /
+`ValidationScratch`), sorted with the in-place `sort_unstable` on a total
+order (variant tag, 16 id bytes, position) and scanned for adjacent equal
+keys. The former `HashSet` built a `RandomState`, which is a panic source
+(below) on caller-controlled input.
+
 The dry run's replenished-tranche buffer (#143) starts empty and grows one
 element at a time through the fallible `try_push_back_deque` helper,
 holding residuals by value (no `Arc`); a residual is only buffered when
@@ -206,6 +237,50 @@ An allocator failure in any of these is a process-wide abort
 does not promise recovery from it. The derived `Clone` of
 `PriceLevelSnapshot` / `PriceLevelSnapshotPackage` is kept for convenience
 and aborts the same way; use their `try_clone`.
+
+### Irreducible dependency limits (pre-release hardening)
+
+These are panic or abort paths inside the standard library or a dependency
+that the crate cannot remove without a redesign. They are documented rather
+than claimed away:
+
+- **`DashMap` / `SkipMap` growth is infallible.** Neither offers a
+  concurrent `try_reserve` / fallible insert, so order admission, restore and
+  re-keying grow them infallibly. Allocator failure aborts the process
+  (`handle_alloc_error`), it does not panic. `hashbrown`'s capacity-overflow
+  panic inside `DashMap` requires more entries than `isize::MAX` bytes can
+  address, which allocator failure precedes, so it is unreachable in
+  practice.
+- **`RandomState` can panic.** `DashMap` (order storage) and the sweep's
+  `ParkedSeqs` spill set hash with the default `RandomState`. Building one
+  reads a thread-local key and, the first time on a thread, the OS random
+  source; on some platforms that panics if the OS RNG fails, and it panics
+  when a thread-local is accessed during thread-local destruction. The
+  randomized hasher is kept deliberately: both maps are keyed by
+  caller-controlled `Id`s and need HashDoS resistance, which a fixed or
+  non-randomized hasher would give up. Input-validation duplicate checks
+  (restore, `MatchResult` decode) no longer hash at all (above).
+- **`FokGuard` is not re-entrant.** It wraps `std::sync::RwLock`, which may
+  deadlock or panic when the thread holding one side acquires the guard
+  again. The level acquires it exactly once per public call and never while
+  it is already held; re-entry can only come from caller code (the
+  subscriber during a `Fok` sweep, an iterator body), which the global
+  no-re-entry obligation above rules out.
+- **`sha2` debug overflow.** SHA-256 counts the processed length in bits;
+  the counter overflows (a debug-build panic in the dependency) only after
+  about 2^61 bytes, far beyond any snapshot the crate can materialize.
+- **`tracing-subscriber`'s fmt layer uses `BUF.with`.** The formatting layer
+  that `setup_logger` installs keeps a thread-local buffer accessed with
+  `LocalKey::with`, so an event emitted during thread-local destruction
+  panics inside the dependency. The crate emits no event from a `Drop` impl
+  or a thread-local destructor, but a caller that drops a level (or calls
+  into it) from its own thread-local destructor with that layer installed
+  can hit it.
+
+The crate's own `cfg(test)` seams compiled into production functions use
+`LocalKey::try_with` and `RefCell::try_borrow(_mut)` (`utils::test_tls`) and
+treat a failure as "no hook / not armed", so they add no panic source of
+their own.
 
 ## Automated enforcement scope and its limits (issue #173)
 

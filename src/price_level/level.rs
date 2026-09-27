@@ -1912,6 +1912,17 @@ impl PriceLevel {
     /// the order is admitted, the counter stays at `usize::MAX`, and the
     /// statistics are marked degraded (see
     /// [`PriceLevelStatistics::record_order_added`]).
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (the statistics-drop `WARN`, a refused
+    /// counter rollback `ERROR`) is emitted after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
         let mut events = DeferredEvents::default();
         let result = {
@@ -4104,6 +4115,17 @@ impl PriceLevel {
     /// [`CapacityResource::OrderSnapshot`]) at once, without recollecting, if
     /// the orders vector cannot be reserved (issue #164). The level is left
     /// unchanged.
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (one `DEBUG` per rejected walk, the
+    /// attempts-exhausted `WARN`) is emitted after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     pub fn snapshot(&self) -> Result<PriceLevelSnapshot, PriceLevelError> {
         // Per-attempt rejection reasons, recorded under the guard and logged
         // after it is released (pre-release hardening, following #172). A
@@ -4332,6 +4354,18 @@ impl PriceLevel {
     /// An exhausted `orders_removed` statistic does NOT fail a committed
     /// removal: the counter stays at `usize::MAX` and the statistics are
     /// marked degraded (see [`PriceLevelStatistics::record_order_removed`]).
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (statistics drop, removal refusal,
+    /// post-removal release failure, counter rollback failure) is emitted
+    /// after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,

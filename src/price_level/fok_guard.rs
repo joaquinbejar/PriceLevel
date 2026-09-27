@@ -163,6 +163,17 @@ impl FokGuard {
     /// Acquire the shared (mutator) side, announcing this mutator to a looping
     /// fill-or-kill matcher only when the acquisition would block.
     ///
+    /// # Re-entrancy
+    ///
+    /// Must not be called by a thread that already holds either side of this
+    /// guard. `std::sync::RwLock` is not re-entrant: a second shared
+    /// acquisition can deadlock behind a queued writer, and taking the
+    /// exclusive side while holding the shared one may deadlock or panic
+    /// (the standard library leaves it unspecified). The level acquires the
+    /// guard exactly once per public call and emits no `tracing` event while
+    /// holding it outside the documented sweep sites, so re-entry can only
+    /// come from caller code (see `doc/panic-boundaries.md`).
+    ///
     /// # Errors
     ///
     /// The lock's poison, exactly as [`RwLock::read`] reports it.
@@ -191,6 +202,11 @@ impl FokGuard {
 
     /// Acquire the exclusive (fill-or-kill) side, first yielding to announced
     /// mutators for a bounded budget.
+    ///
+    /// # Re-entrancy
+    ///
+    /// As for [`Self::read`]: never while the calling thread holds either
+    /// side; `RwLock::write` may deadlock or panic on re-entrant use.
     ///
     /// # Errors
     ///
