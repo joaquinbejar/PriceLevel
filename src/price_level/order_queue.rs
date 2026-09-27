@@ -797,7 +797,14 @@ impl OrderQueue {
                     // (either `occupied.remove()` consumes it, or an explicit
                     // `drop`), so the deferred `set_aside` insert and the evicted
                     // order's drop below never run under the shard lock.
-                    match &action {
+                    //
+                    // The action is consumed BY VALUE (issue #144): the
+                    // residual / refreshed `Arc` the decision minted is MOVED
+                    // into the slot, so the commit performs no reference-count
+                    // increment / decrement pair. Only the evicted old `Arc`
+                    // (a caller-visible order whose last-reference drop runs
+                    // payload `Drop`) is carried out of the lock.
+                    match action {
                         FrontAction::Remove => {
                             // Full consume: remove the entry under the lock, then
                             // drop its index entry. A cancel cannot also remove it
@@ -811,10 +818,7 @@ impl OrderQueue {
                             // Partial fill keeping priority: swap the stored value
                             // to the residual in place, keeping the same
                             // sequence/index entry. Still under the entry lock.
-                            evicted = Some(std::mem::replace(
-                                &mut occupied.get_mut().1,
-                                residual.clone(),
-                            ));
+                            evicted = Some(std::mem::replace(&mut occupied.get_mut().1, residual));
                             drop(occupied);
                         }
                         FrontAction::ReplaceAtTail(refreshed, reserved) => {
@@ -830,7 +834,7 @@ impl OrderQueue {
                             {
                                 let slot = occupied.get_mut();
                                 slot.0 = new_seq;
-                                evicted = Some(std::mem::replace(&mut slot.1, refreshed.clone()));
+                                evicted = Some(std::mem::replace(&mut slot.1, refreshed));
                             }
                             // `occupied` still holds the per-entry lock here, so
                             // re-keying the index — a different structure
