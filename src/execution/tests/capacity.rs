@@ -168,6 +168,22 @@ mod tests {
         assert_eq!(CapacityResource::Trades.to_string(), "trades");
     }
 
+    /// Issue #168: generator exhaustion reuses the fixed-size capacity error.
+    #[test]
+    fn id_sequence_capacity_error_displays_and_round_trips() {
+        let err = PriceLevelError::capacity_exceeded(CapacityResource::IdSequence, 1);
+        assert_eq!(
+            err.to_string(),
+            "Capacity exceeded: could not reserve 1 more id sequence entries"
+        );
+        let json = serde_json::to_string(&CapacityResource::IdSequence).expect("json");
+        assert_eq!(json, "\"id_sequence\"");
+        let back: PriceLevelError =
+            serde_json::from_str(&serde_json::to_string(&err).expect("json")).expect("decode");
+        assert_eq!(back, err);
+        assert_eq!(err.try_clone().expect("try_clone"), err);
+    }
+
     #[test]
     fn try_clone_matches_clone() {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(10));

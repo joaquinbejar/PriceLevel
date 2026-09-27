@@ -11,7 +11,7 @@ use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
     try_reserve_str,
 };
-use crate::utils::{Price, Quantity, TimestampMs};
+use crate::utils::{IdBlock, Price, Quantity, TimestampMs};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -1343,7 +1343,9 @@ impl PriceLevel {
     ///   statistics. It is threaded in from the caller so the match path never
     ///   reads the wall clock — guaranteeing a deterministic, replayable trade
     ///   stream for a fixed input.
-    /// * `trade_id_generator`: An atomic counter used to generate unique trade IDs.
+    /// * `trade_id_generator`: The [`UuidGenerator`] trade ids are reserved
+    ///   from (one checked sequence value per emitted trade; see the failure
+    ///   contract for exhaustion). It may be shared across levels and threads.
     ///
     /// [`Trade`]: crate::execution::Trade
     /// [`TimeInForce`]: crate::orders::TimeInForce
@@ -1362,9 +1364,10 @@ impl PriceLevel {
     /// # Failure contract (#164)
     ///
     /// This method never returns a bare error and never drops a committed
-    /// fill. If a fallible step fails (today: growing the result's trade /
-    /// filled-id storage; later issues plug trade-id reservation, counter
-    /// exhaustion and arithmetic failures into the same slot), the sweep stops
+    /// fill. If a fallible step fails (growing the result's trade / filled-id
+    /// storage, or reserving a trade id from an exhausted
+    /// [`UuidGenerator`] (#168); later issues plug counter exhaustion and
+    /// arithmetic failures into the same slot), the sweep stops
     /// and the returned result carries the typed failure in
     /// [`MatchResult::error`](crate::execution::MatchResult::error):
     ///
@@ -1380,15 +1383,27 @@ impl PriceLevel {
     ///   level bookkeeping is still completed, `remaining_quantity` reflects the
     ///   committed fill, the unrecordable trade is logged at `ERROR` with all
     ///   its fields, and the sweep stops with the error set.
+    ///   The trade id of each trade-emitting step is reserved from
+    ///   `trade_id_generator` while the step is still a pure decision (under
+    ///   the maker's entry lock, before the maker mutation or any counter delta
+    ///   is committed). If the generator is exhausted the maker is left
+    ///   untouched and the sweep stops the same way: committed prefix,
+    ///   true remainder, consistent level, error set. Every later call against
+    ///   crossable depth with that generator stops at its first fill with no
+    ///   trades.
     /// - **Fill-or-kill takers.** The dry run under the exclusive guard counts
-    ///   the exact number of trades the sweep will emit, and that storage is
-    ///   reserved before the first maker is touched. A reservation failure
-    ///   kills the taker ([`MatchResult::was_killed`]) with no trades, the full
-    ///   remaining quantity, the level unchanged, and the error set; a
-    ///   successful reservation leaves the sweep no fallible growth.
+    ///   the exact number of trades the sweep will emit; that storage and
+    ///   exactly that many trade ids (all or nothing) are reserved before the
+    ///   first maker is touched. A reservation failure kills the taker
+    ///   ([`MatchResult::was_killed`]) with no trades, the full remaining
+    ///   quantity, the level unchanged, and the error set; a successful
+    ///   reservation leaves the sweep no fallible growth and no id
+    ///   reservation on the shared generator.
     ///
     /// Resource failures are reported as the allocation-free
-    /// [`PriceLevelError::CapacityExceeded`]
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::IdSequence`](crate::CapacityResource::IdSequence)
+    /// for trade-id exhaustion)
     /// and logged at `ERROR` (after the fill-or-kill guard is released).
     ///
     /// # Concurrency
@@ -1668,6 +1683,9 @@ impl PriceLevel {
         // * Every other taker treats the pre-size as a hint: if it cannot be
         //   reserved the sweep starts from an empty result and the per-step
         //   reservation below is authoritative.
+        // Trade ids pre-reserved for a fill-or-kill sweep (issue #168); `None`
+        // for every other taker, which reserves one id per trade-emitting step.
+        let mut fok_ids: Option<IdBlock> = None;
         let mut result = if is_fok {
             let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             if let Err(err) = result.try_reserve_exact(fok_trades) {
@@ -1685,6 +1703,29 @@ impl PriceLevel {
                 result.mark_killed(incoming_quantity);
                 result.set_error(err);
                 return result;
+            }
+            // Reserve EXACTLY `fok_trades` trade ids, all or nothing, before the
+            // first maker mutation (issue #168). The sweep then draws each id
+            // from this block instead of the shared generator, so an exhausted
+            // (or nearly exhausted) generator kills the taker here with the
+            // level untouched, rather than stopping a fill-or-kill sweep midway.
+            // Reserved after the result storage: if that failed, no id was taken.
+            match trade_id_generator.try_reserve_block(fok_trades) {
+                Ok(block) => fok_ids = Some(block),
+                Err(err) => {
+                    drop(fok_guard);
+                    tracing::error!(
+                        taker_order_id = %taker_order_id,
+                        incoming_quantity,
+                        trades = fok_trades,
+                        price = self.price,
+                        error = %err,
+                        "fill-or-kill taker killed: trade ids could not be reserved; level untouched"
+                    );
+                    result.mark_killed(incoming_quantity);
+                    result.set_error(err);
+                    return result;
+                }
             }
             result
         } else {
@@ -1749,6 +1790,11 @@ impl PriceLevel {
             /// #128). The post-lock body then skips re-applying them so the
             /// counters move exactly once.
             counters_committed: bool,
+            /// The trade-id sequence value reserved for this step's trade
+            /// (issue #168): `Some` exactly when `consumed > 0`, i.e. when the
+            /// step emits a trade. Reserved under the entry lock BEFORE the
+            /// maker mutation is committed.
+            trade_seq: Option<u64>,
         }
 
         // Either the maker progressed (carrying `StepData`), was parked
@@ -1785,6 +1831,14 @@ impl PriceLevel {
             /// error (#164 contract).
             Failed {
                 maker_id: Id,
+                error: PriceLevelError,
+            },
+            /// The step would emit a trade but no trade id could be reserved
+            /// (the generator is exhausted, issue #168). Detected BEFORE any
+            /// mutation of the step: the maker is left byte-identical (queue
+            /// action `SetAside`, no counter moved) and the sweep stops with the
+            /// error set on the result.
+            IdsExhausted {
                 error: PriceLevelError,
             },
         }
@@ -1898,6 +1952,37 @@ impl PriceLevel {
 
                 let fully_consumed = updated_order.is_none();
 
+                // Reserve this step's trade id BEFORE anything of the step is
+                // committed (issue #168): the replenish branch below publishes
+                // counter deltas and the returned action mutates the maker, so
+                // an exhausted generator must be detected here, while the step
+                // is still a pure decision. Only a trade-emitting step
+                // (`consumed > 0`) takes an id, so parked / non-trading steps
+                // never consume sequence values. The reservation is one
+                // allocation-free CAS (or a plain block take for fill-or-kill);
+                // no event is emitted under the entry lock. A value reserved
+                // here for a step that then aborts on visible-counter overflow
+                // is skipped, never reissued (uniqueness is preserved). For a
+                // fill-or-kill taker that stops early, the unused remainder of
+                // its pre-reserved block is skipped the same way.
+                let trade_seq = if consumed > 0 {
+                    let reserved = match fok_ids.as_mut().and_then(IdBlock::take) {
+                        Some(value) => Ok(value),
+                        // Non-fill-or-kill steps (and, defensively, a
+                        // fill-or-kill block the dry run under-counted) reserve
+                        // from the shared generator.
+                        None => trade_id_generator.try_reserve_one(),
+                    };
+                    match reserved {
+                        Ok(value) => Some(value),
+                        Err(error) => {
+                            return (FrontAction::SetAside, StepResult::IdsExhausted { error });
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 // Compute the action. For a replenishment, PUBLISH this step's
                 // level-counter transition HERE — under the maker's entry lock,
                 // before returning the action (issue #128) — so a concurrent
@@ -1960,6 +2045,7 @@ impl PriceLevel {
                     hidden_stranded,
                     new_remaining,
                     counters_committed,
+                    trade_seq,
                 };
 
                 (action, StepResult::Progressed(data))
@@ -2031,6 +2117,14 @@ impl PriceLevel {
                             );
                             continue;
                         }
+                        StepResult::IdsExhausted { error } => {
+                            // No trade id could be reserved for this step. The
+                            // queue committed a no-op (`SetAside`) and no counter
+                            // moved, so the result already describes the level
+                            // exactly: stop and report (logged after the sweep).
+                            sweep_error = Some((error, None));
+                            break;
+                        }
                         StepResult::Progressed(data) => data,
                     };
                     let new_remaining = data.new_remaining;
@@ -2045,7 +2139,7 @@ impl PriceLevel {
                     // counter not yet adjusted.
                     let mut stats_drop = None;
 
-                    if data.consumed > 0 {
+                    if let Some(trade_seq) = data.trade_seq {
                         // Update visible quantity counter. `Relaxed`: advisory
                         // counter (issue #68); the queue mutation committed
                         // inside `match_front` carries the real happens-before,
@@ -2060,7 +2154,9 @@ impl PriceLevel {
                                 .fetch_sub(data.consumed, Ordering::Relaxed);
                         }
 
-                        let trade_id = Id::from_uuid(trade_id_generator.next());
+                        // The id was reserved under the entry lock before the
+                        // maker mutation; building its UUID is pure.
+                        let trade_id = Id::from_uuid(trade_id_generator.uuid_for(trade_seq));
 
                         // A resting maker can never be the taker here: a maker
                         // sharing the taker id is skipped (`SelfTradeSkipped`)

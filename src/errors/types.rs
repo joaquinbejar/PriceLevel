@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter, Result};
 
-/// The storage a [`PriceLevelError::CapacityExceeded`] failure could not grow.
+/// The storage or finite sequence a [`PriceLevelError::CapacityExceeded`]
+/// failure could not grow or advance.
 ///
 /// A fixed, `Copy`, payload-free tag so reporting an allocation / capacity
 /// failure never needs to allocate (a `String` message built after a failed
@@ -21,6 +22,11 @@ pub enum CapacityResource {
     ValidationScratch,
     /// A text buffer (for example a message copied by a fallible clone).
     Text,
+    /// The deterministic sequence of a [`UuidGenerator`](crate::UuidGenerator)
+    /// (issue #168): the generator cannot reserve the requested number of
+    /// further sequence values without wrapping, so no identifier is minted.
+    /// `additional` is the number of identifiers that were requested.
+    IdSequence,
 }
 
 impl CapacityResource {
@@ -33,6 +39,7 @@ impl CapacityResource {
             Self::FilledOrderIds => "filled order ids",
             Self::ValidationScratch => "validation scratch",
             Self::Text => "text",
+            Self::IdSequence => "id sequence",
         }
     }
 }
