@@ -212,6 +212,37 @@ impl serde::de::Visitor<'_> for Hash32Visitor {
     {
         self.visit_str(&v)
     }
+
+    /// UTF-8 byte input, accepted exactly as `String`'s visitor accepts it
+    /// (the pre-#201 `String::deserialize` path): invalid UTF-8 is an
+    /// `invalid_value` error naming the bytes, valid text goes through
+    /// [`Hash32::from_hex`]. `char` input needs no override: the default
+    /// `visit_char` forwards to `visit_str`.
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Hash32, E>
+    where
+        E: serde::de::Error,
+    {
+        match std::str::from_utf8(v) {
+            Ok(s) => self.visit_str(s),
+            Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
+        }
+    }
+
+    /// Borrowed UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_borrowed_bytes<E>(self, v: &[u8]) -> Result<Hash32, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(v)
+    }
+
+    /// Owned UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Hash32, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(&v)
+    }
 }
 
 impl<'de> Deserialize<'de> for Hash32 {

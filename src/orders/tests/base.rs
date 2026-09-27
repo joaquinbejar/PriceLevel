@@ -188,6 +188,35 @@ mod tests_hash32_issue_201 {
     }
 
     #[test]
+    fn test_hash32_deserialize_bytes_and_char_match_pre_201_string_path() {
+        use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+        let valid = reference_hex(&Hash32::new([0xa7; 32]));
+        let plus = with_first_replaced(&valid, "+");
+        for text in [
+            valid.as_str(),
+            valid.to_uppercase().as_str(),
+            plus.as_str(),
+            "zz",
+            "",
+        ] {
+            assert_byte_and_char_parity::<Hash32>(text.as_bytes(), &[]);
+        }
+        let mut invalid_utf8 = valid.clone().into_bytes();
+        invalid_utf8[0] = 0xff;
+        assert_byte_and_char_parity::<Hash32>(&invalid_utf8, &['a', '0', 'é']);
+    }
+
+    #[test]
+    fn test_hash32_deserialize_bytes_accepts_utf8_like_base() {
+        use serde::Deserialize;
+        use serde::de::value::{BytesDeserializer, Error as ValueError};
+        let hash = Hash32::new([0x3c; 32]);
+        let hex = reference_hex(&hash);
+        let de = BytesDeserializer::<ValueError>::new(hex.as_bytes());
+        assert_eq!(Hash32::deserialize(de).ok(), Some(hash));
+    }
+
+    #[test]
     fn test_hash32_escaped_json_round_trips() {
         let hash = Hash32::new([0x5a; 32]);
         // `5` is `5`: forces serde_json's unescaping scratch path.

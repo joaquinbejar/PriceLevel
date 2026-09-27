@@ -61,6 +61,89 @@ pub(crate) fn encode_hash32_hex<'b>(
     std::str::from_utf8(buf).map_err(|_| fmt::Error)
 }
 
+/// Test-only serde harness for the `Id` / `Hash32` visitors (issue #201
+/// review): drives every string-like deserializer entry point and compares
+/// each outcome with the pre-#201 `String::deserialize` + `FromStr` path.
+#[cfg(test)]
+pub(crate) mod serde_parity {
+    use serde::Deserialize;
+    use serde::de::value::{
+        BorrowedBytesDeserializer, BytesDeserializer, CharDeserializer, Error as ValueError,
+    };
+    use serde::de::{Deserializer, IntoDeserializer, Visitor};
+    use std::fmt::Display;
+    use std::str::FromStr;
+
+    /// A deserializer that hands out an owned `Vec<u8>` (`visit_byte_buf`),
+    /// like a `ByteBuf`-producing format.
+    pub(crate) struct OwnedBytesDeserializer(pub(crate) Vec<u8>);
+
+    impl<'de> Deserializer<'de> for OwnedBytesDeserializer {
+        type Error = ValueError;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, ValueError> {
+            visitor.visit_byte_buf(self.0)
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map struct enum identifier ignored_any
+        }
+    }
+
+    /// The pre-#201 behaviour: `String::deserialize`, then `FromStr` with the
+    /// error wrapped through `de::Error::custom`.
+    fn base<'de, T, D>(deserializer: D) -> Result<T, String>
+    where
+        T: FromStr,
+        T::Err: Display,
+        D: Deserializer<'de, Error = ValueError>,
+    {
+        let s = String::deserialize(deserializer).map_err(|e| e.to_string())?;
+        T::from_str(&s).map_err(|e| <ValueError as serde::de::Error>::custom(e).to_string())
+    }
+
+    fn new<'de, T, D>(deserializer: D) -> Result<T, String>
+    where
+        T: Deserialize<'de>,
+        D: Deserializer<'de, Error = ValueError>,
+    {
+        T::deserialize(deserializer).map_err(|e| e.to_string())
+    }
+
+    /// Asserts transient, borrowed and owned byte input plus `char` input
+    /// behave exactly like the pre-#201 path for `T` (value or error text).
+    pub(crate) fn assert_byte_and_char_parity<T>(bytes: &[u8], chars: &[char])
+    where
+        T: for<'de> Deserialize<'de> + FromStr + PartialEq + std::fmt::Debug,
+        T::Err: Display,
+    {
+        let transient = || BytesDeserializer::<ValueError>::new(bytes);
+        assert_eq!(
+            new::<T, _>(transient()),
+            base::<T, _>(transient()),
+            "bytes {bytes:?}"
+        );
+        let borrowed = || BorrowedBytesDeserializer::<ValueError>::new(bytes);
+        assert_eq!(
+            new::<T, _>(borrowed()),
+            base::<T, _>(borrowed()),
+            "borrowed {bytes:?}"
+        );
+        let owned = || OwnedBytesDeserializer(bytes.to_vec());
+        assert_eq!(
+            new::<T, _>(owned()),
+            base::<T, _>(owned()),
+            "byte_buf {bytes:?}"
+        );
+        for &c in chars {
+            let de = || -> CharDeserializer<ValueError> { c.into_deserializer() };
+            assert_eq!(new::<T, _>(de()), base::<T, _>(de()), "char {c:?}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

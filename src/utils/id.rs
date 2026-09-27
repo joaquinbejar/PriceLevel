@@ -183,6 +183,37 @@ impl serde::de::Visitor<'_> for IdVisitor {
     {
         self.visit_str(&v)
     }
+
+    /// UTF-8 byte input, accepted exactly as `String`'s visitor accepts it
+    /// (the pre-#201 `String::deserialize` path): invalid UTF-8 is an
+    /// `invalid_value` error naming the bytes, valid text goes through
+    /// [`Id::from_str`]. `char` input needs no override: the default
+    /// `visit_char` forwards to `visit_str`.
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        match std::str::from_utf8(v) {
+            Ok(s) => self.visit_str(s),
+            Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
+        }
+    }
+
+    /// Borrowed UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_borrowed_bytes<E>(self, v: &[u8]) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(v)
+    }
+
+    /// Owned UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(&v)
+    }
 }
 
 impl<'de> Deserialize<'de> for Id {
@@ -986,6 +1017,40 @@ mod tests {
             assert_eq!(
                 err.as_deref(),
                 Some("invalid type: integer `42`, expected a string at line 1 column 2")
+            );
+        }
+
+        #[test]
+        fn test_deserialize_bytes_and_char_match_pre_201_string_path() {
+            use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+            let texts = [
+                reference_text(Id::sequential(1)),
+                reference_text(Id::sequential(u64::MAX)),
+                reference_text(Id::from_uuid(Uuid::from_u128(0x0123_4567_89ab_cdef))),
+                reference_text(Id::from_ulid(Ulid(u128::MAX >> 2))),
+                "00000000000000000000000000".to_string(),
+                "+7".to_string(),
+                "not-an-id".to_string(),
+                String::new(),
+            ];
+            for text in &texts {
+                assert_byte_and_char_parity::<Id>(text.as_bytes(), &[]);
+            }
+            // Invalid UTF-8 and single-char input.
+            assert_byte_and_char_parity::<Id>(&[0xff, b'1'], &['7', '0', 'x', 'é']);
+            assert_byte_and_char_parity::<Id>(&[b'1', 0xc3], &[]);
+        }
+
+        #[test]
+        fn test_deserialize_bytes_accepts_utf8_like_base() {
+            use serde::Deserialize;
+            use serde::de::value::{BytesDeserializer, Error as ValueError};
+            let de = BytesDeserializer::<ValueError>::new(b"1");
+            assert_eq!(Id::deserialize(de).ok(), Some(Id::sequential(1)));
+            let bad = BytesDeserializer::<ValueError>::new(&[0xff]);
+            assert_eq!(
+                Id::deserialize(bad).err().map(|e| e.to_string()).as_deref(),
+                Some("invalid value: byte array, expected a string")
             );
         }
 
