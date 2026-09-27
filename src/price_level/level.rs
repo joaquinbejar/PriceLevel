@@ -667,7 +667,10 @@ fn update_counter_overflow() -> PriceLevelError {
 /// fit the dry run's lazy budget, and `O(depth log depth)` past it (issue
 /// #143) — so it stays all-or-nothing against
 /// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
-/// the full argument (issue #112).
+/// the full argument (issue #112). A blocked mutator announces itself, and a
+/// fill-or-kill match yields to announced mutators for a bounded budget before
+/// it retakes the exclusive side, so a matcher looping fill-or-kill calls
+/// cannot starve them (issue #206; see `price_level::fok_guard`).
 ///
 /// # Topology
 ///
@@ -759,6 +762,14 @@ pub struct PriceLevel {
     /// mid-operation, which may have left the level half-mutated, so the recovery
     /// also trips [`Self::level_poisoned`] and the level then fails fast rather
     /// than silently reopening (issue #130).
+    ///
+    /// `std::sync::RwLock` promises no fairness, so the lock is wrapped in a
+    /// [`FokGuard`] that adds a bounded hand-off (issue #206): a mutator whose
+    /// shared acquisition would block announces itself, and a fill-or-kill
+    /// match that sees an announcement waits, holding no lock, until every
+    /// announced mutator holds the shared side or its budget runs out. The
+    /// announcement count is a scheduling hint only; exclusion still comes
+    /// from the lock alone.
     fok_guard: FokGuard,
 
     /// Sticky fail-fast flag set when a poisoned [`Self::fok_guard`] is recovered
@@ -1521,7 +1532,9 @@ impl PriceLevel {
 
     /// Acquire the fill-or-kill guard's **exclusive (write)** side — held across
     /// a fill-or-kill dry-run + sweep so no mutator can change the matchable
-    /// depth mid-decision. A poisoned lock is recovered (see [`Self::fok_read`]).
+    /// depth mid-decision. First yields, for a bounded budget, to mutators
+    /// already blocked on the shared side (issue #206). A poisoned lock is
+    /// recovered (see [`Self::fok_read`]).
     #[inline]
     fn fok_write(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
         self.fok_guard.write().unwrap_or_else(|poison| {
@@ -4765,7 +4778,7 @@ impl Ord for PriceLevel {
 impl std::fmt::Debug for PriceLevel {
     /// Snapshot-then-write (issue #172): the atomics are loaded and the queue is
     /// formatted through [`OrderQueue`]'s own materializing `Debug`, and the
-    /// `fok_guard` is deliberately omitted — `RwLock`'s `Debug` would hold a
+    /// `fok_guard` is deliberately omitted — the `RwLock`'s `Debug` would hold a
     /// read guard while writing into the caller's formatter, which could
     /// deadlock a destination that re-enters this level's fill-or-kill path.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -275,12 +275,15 @@ impl MatcherMode {
 /// its add and its cancel, and a qty-1 taker never reaches it. But the
 /// cancel takes the fill-or-kill guard's shared side, and `std::sync::RwLock`
 /// gives it no fairness against a matcher that retakes the exclusive side in
-/// a loop: on `origin/main` (a full-depth dry run per FOK) the cancel was
+/// a loop: before #143 (a full-depth dry run per FOK) the cancel was
 /// observed to wait about 1.5 s, roughly depth × FOK time. Meanwhile the
 /// matcher consumes every maker ahead of `W`, `W` becomes the true front and
 /// is filled, and the late cancel finds nothing. That is correct FIFO under
-/// starvation, not a FIFO violation, so both events are counted and
-/// reported in the outcome note (and so in `manifest.json`):
+/// starvation, not a FIFO violation. The guard's bounded hand-off (#206)
+/// limits a blocked writer to about one exclusive section unless it cannot
+/// run for the whole hand-off budget, so these events stay possible on an
+/// oversubscribed host; both are counted and reported in the outcome note
+/// (and so in `manifest.json`):
 ///
 /// * `writer-owned consumed`: a matcher call filled a writer order;
 /// * `cancel found nothing`: a writer cancel returned `Ok(None)`.
