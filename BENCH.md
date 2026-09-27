@@ -1470,7 +1470,9 @@ Uncontended cost, Criterion (`PriceLevel - FOK depth`, `Add Orders`,
   p99 4.5 s and max 14.5 s. These are this workload's tails on this host,
   not a bound for other FOK workloads or other schedulers. At depth 100 the p99 drops from 1.4 ms to 12 µs. The
   writer's wait is still measured in sections, so it scales with the FOK's
-  walk: the hand-off bounds the number of sections, not their length.
+  walk: in the measured workload the hand-off reduced the number of
+  sections a writer waited through, not their length; it does not bound
+  either (total acquisition delay remains scheduler-dependent).
 - The matcher gives way only while a mutator is blocked. In the contended
   rejected case it ran about 5,000 to 65,000 calls per second during the
   writer's short window, against 5,800 to 285,000 on base, where it never
