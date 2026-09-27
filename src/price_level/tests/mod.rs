@@ -1,4 +1,5 @@
 mod caller_boundaries;
+mod counter_exhaustion;
 mod entry;
 mod id_exhaustion;
 mod level;

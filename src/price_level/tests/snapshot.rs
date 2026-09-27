@@ -108,9 +108,9 @@ mod tests {
         // Build statistics with distinct, non-zero values in every counter so a
         // dropped or mis-mapped field fails the assertions below.
         let stats = PriceLevelStatistics::new();
-        stats.record_order_added();
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         // execution_timestamp (5_000) is after the maker arrival (1_000), so the
         // recorded waiting time is positive and deterministic.
         stats

@@ -100,13 +100,13 @@ mod tests {
 
         // Test recording added orders
         for _ in 0..5 {
-            stats.record_order_added();
+            stats.record_order_added().unwrap();
         }
         assert_eq!(stats.orders_added(), 5);
 
         // Test recording removed orders
         for _ in 0..3 {
-            stats.record_order_removed();
+            stats.record_order_removed().unwrap();
         }
         assert_eq!(stats.orders_removed(), 3);
 
@@ -268,9 +268,9 @@ mod tests {
     #[test]
     fn test_failed_reset_leaves_statistics_unchanged() {
         let stats = PriceLevelStatistics::new_at(TimestampMs::new(NOW - 10_000));
-        stats.record_order_added();
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         assert!(stats.record_execution(10, 100, NOW - 5_000, NOW).is_ok());
         stats.mark_degraded();
         let before = stats.to_string();
@@ -300,8 +300,8 @@ mod tests {
     #[test]
     fn test_reset_at_is_clock_free() {
         let stats = PriceLevelStatistics::new();
-        stats.record_order_added();
-        stats.reset_at(TimestampMs::new(42));
+        stats.record_order_added().unwrap();
+        stats.reset_at(TimestampMs::new(42)).unwrap();
         assert_eq!(stats.orders_added(), 0);
         assert_eq!(stats.first_arrival_time(), 42);
     }
@@ -311,8 +311,8 @@ mod tests {
         let stats = PriceLevelStatistics::new();
 
         // Add some data
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         assert!(
             stats
                 .record_execution(10, 100, 0, 1_716_000_000_000)
@@ -343,8 +343,8 @@ mod tests {
         let stats = PriceLevelStatistics::new();
 
         // Add some data
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         assert!(
             stats
                 .record_execution(10, 100, 0, 1_716_000_000_000)
@@ -407,8 +407,8 @@ mod tests {
         let stats = PriceLevelStatistics::new();
 
         // Add some data
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         assert!(
             stats
                 .record_execution(10, 100, 0, 1_716_000_000_000)
@@ -483,8 +483,8 @@ mod tests {
             let stats_clone = Arc::clone(&stats_arc);
             let handle = thread::spawn(move || {
                 for _ in 0..100 {
-                    stats_clone.record_order_added();
-                    stats_clone.record_order_removed();
+                    stats_clone.record_order_added().unwrap();
+                    stats_clone.record_order_removed().unwrap();
                     if let Err(error) = stats_clone.record_execution(1, 100, 0, 1_716_000_000_000) {
                         panic!("record_execution failed in thread: {error}");
                     }
@@ -511,9 +511,9 @@ mod tests {
         let stats = PriceLevelStatistics::new();
 
         // Add some data
-        stats.record_order_added();
-        stats.record_order_added();
-        stats.record_order_removed();
+        stats.record_order_added().unwrap();
+        stats.record_order_added().unwrap();
+        stats.record_order_removed().unwrap();
         assert!(
             stats
                 .record_execution(10, 100, 0, 1_716_000_000_000)
@@ -829,7 +829,7 @@ mod tests {
         assert!(!stats.mark_degraded(), "second drop is silent");
         assert!(!stats.mark_degraded(), "still silent");
         // A reset re-arms the transition.
-        stats.reset_at(TimestampMs::new(NOW));
+        stats.reset_at(TimestampMs::new(NOW)).unwrap();
         assert!(!stats.stats_degraded());
         assert!(stats.mark_degraded(), "post-reset drop transitions again");
     }

@@ -1,4 +1,4 @@
-use crate::errors::PriceLevelError;
+use crate::errors::{ExhaustedCounter, PriceLevelError};
 use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{TimestampMs, UnixClock};
 use portable_atomic::AtomicU128;
@@ -85,6 +85,36 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// still open, so readers also wait on that formatting and allocator work. A
 /// panicking writer closes the section through the guard's `Drop`.
 ///
+/// # Counter exhaustion (issue #165)
+///
+/// No counter here wraps. The additive aggregates are checked RMWs (see
+/// [`record_execution`](Self::record_execution)); `orders_added` /
+/// `orders_removed` are checked too:
+/// [`record_order_added`](Self::record_order_added) and
+/// [`record_order_removed`](Self::record_order_removed) refuse to move a
+/// counter already at `usize::MAX`, leave it there, set the sticky
+/// [`stats_degraded`](Self::stats_degraded) flag and return
+/// [`PriceLevelError::CounterExhausted`]. They run from any thread, outside the
+/// seqlock write section, so the exhaustion path uses only multi-writer-safe
+/// operations (a CAS loop on the counter, a CAS on the flag) and takes no part
+/// in the single-writer protocol. The engine records them after its queue
+/// mutation has committed; the mutation stands, and the flag is the typed
+/// signal that the counters under-count.
+///
+/// The seqlock sequence is 64 bits and is never reused (a reader that saw an
+/// old value again could accept a torn copy). A writer reserves its whole
+/// section on entry: it opens only if the even sequence `s` satisfies
+/// `s <= u64::MAX - 2`, so the exit increment to `s + 2` is always in range
+/// and `Drop` can neither fail nor wrap. A refused entry mutates nothing but
+/// the degraded flag: [`record_execution`](Self::record_execution) drops the
+/// execution all-or-nothing, marks the statistics degraded and returns
+/// [`PriceLevelError::CounterExhausted`];
+/// [`reset_at`](Self::reset_at) / [`reset`](Self::reset) return the same
+/// error and change nothing. A single flag store is a one-field change, so a
+/// concurrent multi-field reader still copies a state the statistics held.
+/// Recovery is a rebuild: [`Clone`] and every decode path start a fresh
+/// sequence at zero (so does `PriceLevel::from_snapshot`).
+///
 /// # `value_executed` width (issue #140)
 ///
 /// `value_executed` accumulates `quantity * price`, the same product that
@@ -150,22 +180,51 @@ pub struct PriceLevelStatistics {
 /// increment. Using a guard keeps the section correct across the early returns
 /// in [`PriceLevelStatistics::record_execution`].
 ///
-/// Entry is an unconditional increment, not an exclusive acquire: the guard
-/// assumes the single-writer contract (issue #153) and does not serialize two
+/// Entry is a checked increment, not an exclusive acquire: the guard assumes
+/// the single-writer contract (issue #153) and does not serialize two
 /// overlapping writers.
+///
+/// # Exhaustion (issue #165)
+///
+/// Entry reserves the whole section: it refuses to open unless the sequence
+/// is at most [`STATS_SEQ_ENTRY_LIMIT`], so the entry value `s + 1` and the
+/// exit value `s + 2` both fit `u64`. Under the single-writer contract nothing
+/// else moves the sequence while the section is open, so the exit increment
+/// is proven in range and `Drop` never fails or wraps.
 struct WriteSeqGuard<'a> {
     seq: &'a AtomicU64,
 }
 
+/// Largest sequence value from which a write section may open (issue #165):
+/// entry moves it to at most `u64::MAX - 1` and exit to at most `u64::MAX`.
+const STATS_SEQ_ENTRY_LIMIT: u64 = u64::MAX - 2;
+
 impl<'a> WriteSeqGuard<'a> {
+    /// Opens a write section, or returns `Err` with the sequence untouched
+    /// when it has no headroom for both the entry and the exit increment.
     #[inline]
-    fn new(seq: &'a AtomicU64) -> Self {
-        // Enter: even -> odd. `Relaxed` RMW plus a `Release` fence so the field
-        // writes that follow cannot be reordered before the odd marker a reader
-        // watches for.
-        seq.fetch_add(1, Ordering::Relaxed);
+    fn try_new(seq: &'a AtomicU64) -> Result<Self, PriceLevelError> {
+        // Enter: even -> odd. A `Relaxed` checked RMW (a CAS loop; one
+        // iteration under the single-writer contract) plus a `Release` fence
+        // so the field writes that follow cannot be reordered before the odd
+        // marker a reader watches for. Same ordering as the previous
+        // `fetch_add(1, Relaxed)`; only the range check is new.
+        if seq
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+                if s <= STATS_SEQ_ENTRY_LIMIT {
+                    s.checked_add(1)
+                } else {
+                    None
+                }
+            })
+            .is_err()
+        {
+            return Err(PriceLevelError::counter_exhausted(
+                ExhaustedCounter::StatisticsSequence,
+            ));
+        }
         std::sync::atomic::fence(Ordering::Release);
-        Self { seq }
+        Ok(Self { seq })
     }
 }
 
@@ -174,7 +233,14 @@ impl Drop for WriteSeqGuard<'_> {
     fn drop(&mut self) {
         // Exit: odd -> even, `Release` so every field write in the section
         // happens-before a reader's `Acquire` load of the (now even) sequence.
-        self.seq.fetch_add(1, Ordering::Release);
+        // Proven in range: entry admitted `s <= u64::MAX - 2`, so the value
+        // here is at most `u64::MAX - 1` under the single-writer contract. The
+        // increment is still checked, so even a contract violation (an
+        // overlapping writer) cannot wrap the sequence; in that unsupported
+        // case a refused exit leaves it where it is.
+        let _ = self
+            .seq
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |s| s.checked_add(1));
     }
 }
 
@@ -407,20 +473,55 @@ impl PriceLevelStatistics {
 
     /// Record a new order being added.
     ///
-    /// A single `Relaxed` increment outside the seqlock write section; safe to
-    /// call from any number of threads concurrently with the matcher (see the
-    /// struct-level "Writer contract").
-    pub fn record_order_added(&self) {
-        self.orders_added.fetch_add(1, Ordering::Relaxed);
+    /// A single checked `Relaxed` increment outside the seqlock write section;
+    /// safe to call from any number of threads concurrently with the matcher
+    /// (see the struct-level "Writer contract").
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::OrdersAdded`]) if `orders_added` is already
+    /// `usize::MAX` (issue #165). The counter keeps that value instead of
+    /// wrapping to zero, and the sticky [`stats_degraded`](Self::stats_degraded)
+    /// flag is set because the count now under-counts admissions.
+    pub fn record_order_added(&self) -> Result<(), PriceLevelError> {
+        self.record_order_event(&self.orders_added, ExhaustedCounter::OrdersAdded)
     }
 
     /// Record an order being removed without execution.
     ///
-    /// A single `Relaxed` increment outside the seqlock write section; safe to
-    /// call from any number of threads concurrently with the matcher (see the
-    /// struct-level "Writer contract").
-    pub fn record_order_removed(&self) {
-        self.orders_removed.fetch_add(1, Ordering::Relaxed);
+    /// A single checked `Relaxed` increment outside the seqlock write section;
+    /// safe to call from any number of threads concurrently with the matcher
+    /// (see the struct-level "Writer contract").
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::OrdersRemoved`]) if `orders_removed` is already
+    /// `usize::MAX` (issue #165). The counter keeps that value instead of
+    /// wrapping to zero, and the sticky [`stats_degraded`](Self::stats_degraded)
+    /// flag is set because the count now under-counts removals.
+    pub fn record_order_removed(&self) -> Result<(), PriceLevelError> {
+        self.record_order_event(&self.orders_removed, ExhaustedCounter::OrdersRemoved)
+    }
+
+    /// Checked `+= 1` on an order-event counter (issue #165). Multi-writer
+    /// safe: a `Relaxed` CAS loop that refuses to pass `usize::MAX`, then, on
+    /// refusal, a CAS on the degraded flag. Allocation-free on both paths.
+    #[inline]
+    fn record_order_event(
+        &self,
+        counter: &AtomicUsize,
+        kind: ExhaustedCounter,
+    ) -> Result<(), PriceLevelError> {
+        if counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .is_ok()
+        {
+            return Ok(());
+        }
+        self.mark_degraded();
+        Err(PriceLevelError::counter_exhausted(kind))
     }
 
     /// Record an order execution.
@@ -473,7 +574,11 @@ impl PriceLevelStatistics {
     /// accumulations overflow (`value_executed` is a `u128` accumulator, issue
     /// #140), if the value (`quantity * price`) overflows `u128`, or if
     /// `order_timestamp` is strictly greater than `execution_timestamp` (a
-    /// maker arriving in the future of execution).
+    /// maker arriving in the future of execution). Returns
+    /// [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::StatisticsSequence`]) if the seqlock sequence has
+    /// no headroom left for another write section (issue #165). Every failure
+    /// leaves the aggregates untouched and sets the degraded flag.
     pub fn record_execution(
         &self,
         quantity: u64,
@@ -490,7 +595,17 @@ impl PriceLevelStatistics {
         // the single-writer contract (issue #153) does. The guard's `Drop`
         // closes the section (back to even) on EVERY return path below,
         // including the early validation errors.
-        let _write = WriteSeqGuard::new(&self.stats_seq);
+        //
+        // An exhausted sequence (issue #165) refuses the section before any
+        // counter moves: the execution is dropped all-or-nothing like any
+        // other rejected record, and the degraded flag makes the drop visible.
+        let _write = match WriteSeqGuard::try_new(&self.stats_seq) {
+            Ok(guard) => guard,
+            Err(err) => {
+                self.mark_degraded();
+                return Err(err);
+            }
+        };
 
         // Validate everything that can fail BEFORE mutating any counter, so a
         // rejected record leaves the statistics untouched. Any failure marks the
@@ -780,7 +895,9 @@ impl PriceLevelStatistics {
     ///
     /// # Errors
     ///
-    /// Returns the clock's error unchanged; the statistics are untouched.
+    /// Returns the clock's error unchanged, or the
+    /// [`reset_at`](Self::reset_at) error; the statistics are untouched in
+    /// both cases.
     ///
     /// # Quiescence contract
     ///
@@ -790,12 +907,22 @@ impl PriceLevelStatistics {
         C: UnixClock + ?Sized,
     {
         let started_at = clock.try_now_ms()?;
-        self.reset_at(started_at);
-        Ok(())
+        self.reset_at(started_at)
     }
 
     /// Reset all statistics to zero and set `first_arrival_time` to the
-    /// caller-supplied `started_at`. Infallible and clock-free.
+    /// caller-supplied `started_at`. Clock-free.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::StatisticsSequence`]) if the seqlock sequence has
+    /// no headroom left for another write section (issue #165). Nothing is
+    /// changed: the counters, timestamps and degraded flag keep their values,
+    /// and the degraded flag is not set, because no execution was dropped. The
+    /// sequence itself is never reset (a reused value could let a reader accept
+    /// a torn copy); rebuild the statistics (for example through a snapshot
+    /// restore) to start a fresh sequence.
     ///
     /// # Quiescence contract
     ///
@@ -816,10 +943,11 @@ impl PriceLevelStatistics {
     /// [`record_order_added`](Self::record_order_added) /
     /// [`record_order_removed`](Self::record_order_removed) are single-counter
     /// increments that the reset may or may not include.
-    pub fn reset_at(&self, started_at: TimestampMs) {
+    pub fn reset_at(&self, started_at: TimestampMs) -> Result<(), PriceLevelError> {
         // Seqlock write section: a concurrent multi-field reader retries rather
-        // than capture a half-reset copy.
-        let _write = WriteSeqGuard::new(&self.stats_seq);
+        // than capture a half-reset copy. Refused with nothing mutated when the
+        // sequence has no headroom (issue #165).
+        let _write = WriteSeqGuard::try_new(&self.stats_seq)?;
 
         self.orders_added.store(0, Ordering::Relaxed);
         self.orders_removed.store(0, Ordering::Relaxed);
@@ -831,6 +959,30 @@ impl PriceLevelStatistics {
             .store(started_at.as_u64(), Ordering::Relaxed);
         self.sum_waiting_time.store(0, Ordering::Relaxed);
         self.stats_degraded.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Test-only seeding seam (issue #165): place the seqlock sequence at
+    /// `value` so the exhaustion protocol can be exercised without an
+    /// astronomical number of write sections.
+    #[cfg(test)]
+    pub(crate) fn test_seed_stats_seq(&self, value: u64) {
+        self.stats_seq.store(value, Ordering::Relaxed);
+    }
+
+    /// Test-only seeding seam (issue #165): place `orders_added` /
+    /// `orders_removed` near their limit.
+    #[cfg(test)]
+    pub(crate) fn test_seed_order_events(&self, added: usize, removed: usize) {
+        self.orders_added.store(added, Ordering::Relaxed);
+        self.orders_removed.store(removed, Ordering::Relaxed);
+    }
+
+    /// Test-only read of the seqlock sequence (issue #165).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_stats_seq(&self) -> u64 {
+        self.stats_seq.load(Ordering::Relaxed)
     }
 }
 

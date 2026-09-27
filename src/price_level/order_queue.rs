@@ -1,4 +1,4 @@
-use crate::errors::PriceLevelError;
+use crate::errors::{ExhaustedCounter, PriceLevelError};
 use crate::orders::{Id, OrderType};
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
@@ -41,8 +41,35 @@ pub struct OrderQueue {
     /// Ordered index `sequence -> Id`. The lowest sequence is the front
     /// (oldest) order, so iteration / pop honours strict time priority.
     index: SkipMap<u64, Id>,
-    /// Monotonic source of insertion sequences.
+    /// Monotonic source of insertion sequences: the next value to hand out.
+    ///
+    /// Advanced only through [`OrderQueue::try_reserve_seq`], a checked CAS
+    /// that never wraps (issue #165). Values `0 ..= u64::MAX - 1` can be
+    /// minted; once this holds `u64::MAX` every further reservation fails with
+    /// [`PriceLevelError::CounterExhausted`] and the counter stays put, so a
+    /// sequence is never reused and an index entry is never overwritten.
     next_seq: AtomicU64,
+}
+
+/// A fresh FIFO insertion sequence reserved from [`OrderQueue::try_reserve_seq`]
+/// (issue #165).
+///
+/// The field is private to this module, so the only way to obtain one is a
+/// successful checked reservation: code that re-sequences a maker must reserve
+/// first, before it commits anything, and can then no longer fail on
+/// exhaustion. A reserved sequence that ends up unused (the caller refused the
+/// operation for another reason) is simply skipped; sequences only need to be
+/// unique and increasing, not dense.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReservedSeq(u64);
+
+impl ReservedSeq {
+    /// The reserved sequence value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get(self) -> u64 {
+        self.0
+    }
 }
 
 /// The mutation a matcher decides to apply to the front maker it is currently
@@ -64,9 +91,9 @@ pub(crate) enum FrontAction {
     /// value to the residual in place under the per-entry lock.
     KeepInPlace(Arc<OrderType<()>>),
     /// Iceberg / reserve replenishment: the refreshed tranche loses time
-    /// priority, so remove the old entry and re-queue the new order at the tail
-    /// with a fresh insertion sequence.
-    ReplaceAtTail(Arc<OrderType<()>>),
+    /// priority, so it is re-sequenced at the tail under the sequence the
+    /// decision closure reserved BEFORE committing anything (issue #165).
+    ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
     /// The maker made no progress this sweep (a degenerate zero-progress shape).
     /// Leave it untouched in `orders`/`index`; the caller sets its sequence
     /// aside so the sweep advances to the maker behind it without re-popping it.
@@ -82,11 +109,12 @@ pub(crate) enum UpdateDecision {
     /// its existing insertion sequence, keeping its price-time position.
     KeepInPlace(Arc<OrderType<()>>),
     /// Increase in total: demote the resized order to a fresh tail sequence
-    /// (losing time priority) by minting a new sequence, swapping the stored
-    /// `(seq, order)` pair in place, and re-keying the index — all under the
-    /// entry lock the update already holds. Same shape as the
-    /// [`FrontAction::ReplaceAtTail`] the match sweep commits.
-    ReplaceAtTail(Arc<OrderType<()>>),
+    /// (losing time priority) by swapping the stored `(seq, order)` pair in
+    /// place and re-keying the index — all under the entry lock the update
+    /// already holds. The sequence is reserved by the decision closure before
+    /// it reserves any level counter (issue #165), so the commit cannot fail.
+    /// Same shape as the [`FrontAction::ReplaceAtTail`] the match sweep commits.
+    ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
 }
 
 /// The outcome of a single [`OrderQueue::match_front`] step, reported back to
@@ -115,6 +143,61 @@ impl OrderQueue {
         }
     }
 
+    /// Reserve the next FIFO insertion sequence with a checked CAS (issue
+    /// #165).
+    ///
+    /// `Relaxed` is sufficient: only the uniqueness and monotonicity of the
+    /// counter matter. The happens-before ordering between concurrent
+    /// producers / consumers is provided by the `index` (`SkipMap`) / `orders`
+    /// (`DashMap`) structures, not by this counter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CounterExhausted`] (counter
+    /// [`ExhaustedCounter::QueueSequence`]) once every sequence below
+    /// `u64::MAX` has been handed out. The counter is left unchanged.
+    #[inline]
+    pub(crate) fn try_reserve_seq(&self) -> Result<ReservedSeq, PriceLevelError> {
+        self.next_seq
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map(ReservedSeq)
+            .map_err(|_| PriceLevelError::counter_exhausted(ExhaustedCounter::QueueSequence))
+    }
+
+    /// Number of FIFO sequences that can still be reserved (issue #165).
+    /// Exact while no concurrent admission or update reserves one (the
+    /// fill-or-kill sweep holds the level's exclusive guard when it asks).
+    #[inline]
+    #[must_use]
+    pub(crate) fn seq_headroom(&self) -> u64 {
+        // `next_seq <= u64::MAX` always, so the difference is in range.
+        u64::MAX - self.next_seq.load(Ordering::Relaxed)
+    }
+
+    /// Test-only seeding seam (issue #165): place the sequence counter at
+    /// `next` so exhaustion can be exercised without `2^64` insertions.
+    #[cfg(test)]
+    pub(crate) fn test_seed_next_seq(&self, next: u64) {
+        self.next_seq.store(next, Ordering::Relaxed);
+    }
+
+    /// Test-only read of the sequence counter (issue #165).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_next_seq(&self) -> u64 {
+        self.next_seq.load(Ordering::Relaxed)
+    }
+
+    /// Test-only: the stored insertion sequence of `order_id`, if it rests
+    /// here (issue #165).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_seq_of(&self, order_id: Id) -> Option<u64> {
+        self.orders.get(&order_id).map(|slot| slot.value().0)
+    }
+
     /// Add an order to the tail of the queue (newest time priority),
     /// **unconditionally overwriting** any existing entry for the same id.
     ///
@@ -126,13 +209,16 @@ impl OrderQueue {
     /// leave the id-keyed map and the ordered index disagreeing, so it is
     /// deliberately not part of the public API — like [`OrderQueue::reinsert`],
     /// it is `#[cfg(test)]`.
+    ///
+    /// Sequences come from the checked [`OrderQueue::try_reserve_seq`] like
+    /// every other site (issue #165); on exhaustion the fixture inserts
+    /// nothing.
     #[cfg(test)]
     pub(crate) fn push(&self, order: Arc<OrderType<()>>) {
-        // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
-        // counter matter. The happens-before ordering between concurrent
-        // producers/consumers is provided by the `index` (`SkipMap`) / `orders` (`DashMap`)
-        // structures, not by this counter, so no synchronization rides on it.
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let Ok(seq) = self.try_reserve_seq() else {
+            return;
+        };
+        let seq = seq.get();
         let order_id = order.id();
         self.orders.insert(order_id, (seq, order));
         self.index.insert(seq, order_id);
@@ -175,12 +261,16 @@ impl OrderQueue {
     ///    transient side effect (e.g. an inflated level counter) for another
     ///    thread to observe, and why a duplicate at counter capacity reports
     ///    `DuplicateOrderId` rather than a spurious overflow.
-    /// 2. **Then `reserve` runs**, still under the shard lock, now that the id
-    ///    is known free. If it returns `Err`, propagate it with nothing
-    ///    inserted — the caller is responsible for leaving its own state
-    ///    unchanged on `Err` (e.g. rolling back a partial multi-counter
-    ///    reservation before returning).
-    /// 3. **Then publish, holding the shard lock across the index insert.** The
+    /// 2. **Then the insertion sequence is reserved** with the checked
+    ///    [`OrderQueue::try_reserve_seq`] (issue #165). An exhausted sequence
+    ///    returns [`PriceLevelError::CounterExhausted`] with nothing touched:
+    ///    `reserve` has not run, so the caller has no counter to roll back.
+    /// 3. **Then `reserve` runs**, still under the shard lock, now that the id
+    ///    is known free and a sequence is held. If it returns `Err`, propagate
+    ///    it with nothing inserted — the caller is responsible for leaving its
+    ///    own state unchanged on `Err` (e.g. rolling back a partial
+    ///    multi-counter reservation before returning).
+    /// 4. **Then publish, holding the shard lock across the index insert.** The
     ///    map value is inserted (its returned guard keeps the shard write lock),
     ///    the `seq -> id` index entry is added while that guard is still held,
     ///    and only then is the guard dropped. Holding the lock across both
@@ -192,9 +282,13 @@ impl OrderQueue {
     ///    uses. `self.index` is a separate structure (`SkipMap`), so inserting
     ///    into it under the `DashMap` shard lock cannot deadlock.
     ///
-    /// The insertion sequence is minted **inside** the `Vacant` arm, after
-    /// `reserve` succeeds, so neither a rejected duplicate nor a failed
-    /// reservation consumes a sequence (no gaps) and the index entry is added
+    /// The insertion sequence is reserved **inside** the `Vacant` arm, so a
+    /// rejected duplicate consumes no sequence and a duplicate id is reported
+    /// as [`PriceLevelError::DuplicateOrderId`] even when the sequence is
+    /// exhausted (identity first). It is reserved **before** `reserve` so the
+    /// last fallible step of admission is the caller's own reservation: a
+    /// failed `reserve` skips the reserved value (a harmless gap: sequences
+    /// only need to be unique and increasing), and the index entry is added
     /// only for the order that actually landed in the map.
     ///
     /// `reserve` runs while the shard lock is held, so it MUST NOT call back
@@ -204,7 +298,9 @@ impl OrderQueue {
     /// # Errors
     ///
     /// Returns [`PriceLevelError::DuplicateOrderId`] if an order with the same
-    /// id already rests in the queue, or whatever error `reserve` returns.
+    /// id already rests in the queue,
+    /// [`PriceLevelError::CounterExhausted`] if no insertion sequence is left,
+    /// or whatever error `reserve` returns.
     #[must_use = "a rejected admission must be handled, not ignored"]
     pub(crate) fn try_push_with<F>(
         &self,
@@ -219,15 +315,15 @@ impl OrderQueue {
             Entry::Occupied(_) => Err(PriceLevelError::DuplicateOrderId(order_id.to_string())),
             Entry::Vacant(slot) => {
                 // Identity is already decided (this arm means the id is free).
+                // Reserve the sequence first (checked, issue #165): on
+                // exhaustion nothing has been touched, and the caller's
+                // counter reservation below never has to be undone for it.
+                let seq = self.try_reserve_seq()?.get();
                 // Run the caller's reservation before publishing; on failure
-                // nothing has been inserted and no sequence minted, so the
-                // level stays byte-identical once the caller unwinds its own
-                // partial reservation.
+                // nothing has been inserted, so the level stays byte-identical
+                // once the caller unwinds its own partial reservation (the
+                // reserved sequence is skipped).
                 reserve()?;
-                // Mint the sequence only now that the id is free and the
-                // reservation committed, so neither a rejected duplicate nor a
-                // failed reservation leaves a gap in the sequence.
-                let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
                 // Hold the shard lock across BOTH publications: the map insert
                 // returns a guard that keeps the lock, the index entry is added
                 // while it is held, and only then is the guard dropped.
@@ -321,8 +417,11 @@ impl OrderQueue {
     ///
     /// `decide` is the pure match decision (e.g. [`OrderType::match_against`]
     /// plus trade bookkeeping). It runs while the per-entry lock is held, so it
-    /// MUST NOT call back into this queue (that would deadlock on the same
-    /// shard) and MUST NOT block. It receives the maker's insertion `seq` and an
+    /// MUST NOT call back into this queue's storage (that would deadlock on the
+    /// same shard) and MUST NOT block. The one queue call it may make is
+    /// [`OrderQueue::try_reserve_seq`], which touches only the sequence atomic:
+    /// a [`FrontAction::ReplaceAtTail`] carries a sequence the closure reserved
+    /// before it committed any level counter (issue #165). It receives the maker's insertion `seq` and an
     /// immutable borrow of the resident order; the borrow ends before any commit
     /// mutates the entry, so the decision must return OWNED action data and no
     /// reference may escape it.
@@ -434,15 +533,16 @@ impl OrderQueue {
                             ));
                             drop(occupied);
                         }
-                        FrontAction::ReplaceAtTail(refreshed) => {
+                        FrontAction::ReplaceAtTail(refreshed, reserved) => {
                             // Replenished tranche loses time priority, but the
                             // maker keeps the SAME id and must stay resident in
                             // `orders` so a concurrent cancel cannot slip into a
-                            // remove-then-push gap. So: mint a fresh tail sequence
-                            // and swap BOTH the value and its stored sequence in
-                            // place under the entry lock; only the index is
-                            // re-keyed (old seq -> new seq) afterwards.
-                            let new_seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                            // remove-then-push gap. So: take the fresh tail
+                            // sequence the decision reserved (checked, issue
+                            // #165) and swap BOTH the value and its stored
+                            // sequence in place under the entry lock; only the
+                            // index is re-keyed (old seq -> new seq) afterwards.
+                            let new_seq = reserved.get();
                             {
                                 let slot = occupied.get_mut();
                                 slot.0 = new_seq;
@@ -508,10 +608,15 @@ impl OrderQueue {
     /// - `Some(Ok(new_order))` with the committed order on success.
     ///
     /// Both commits happen under the single entry lock this method already
-    /// holds: `KeepInPlace` swaps the stored value; `ReplaceAtTail` mints a fresh
-    /// tail sequence, swaps the `(seq, order)` pair, and re-keys the index in
-    /// place (delegating to a separate re-sequence method here would deadlock on
-    /// the same shard lock).
+    /// holds: `KeepInPlace` swaps the stored value; `ReplaceAtTail` swaps the
+    /// `(seq, order)` pair to the tail sequence the closure reserved and
+    /// re-keys the index in place (delegating to a separate re-sequence method
+    /// here would deadlock on the same shard lock). Like
+    /// [`OrderQueue::match_front`]'s closure, `decide` may call
+    /// [`OrderQueue::try_reserve_seq`] (sequence atomic only) but nothing else
+    /// on this queue; it must reserve the sequence before it reserves any
+    /// level counter, so an exhausted sequence is rejected with nothing to
+    /// roll back (issue #165).
     #[must_use = "the caller must handle committed / rejected / absent outcomes"]
     pub(crate) fn update_entry<F>(
         &self,
@@ -533,7 +638,8 @@ impl OrderQueue {
                 };
                 debug_assert_eq!(
                     match &decision {
-                        UpdateDecision::KeepInPlace(o) | UpdateDecision::ReplaceAtTail(o) => o.id(),
+                        UpdateDecision::KeepInPlace(o) | UpdateDecision::ReplaceAtTail(o, _) =>
+                            o.id(),
                     },
                     order_id,
                     "update_entry: the decided order must keep the id it is stored under"
@@ -549,8 +655,10 @@ impl OrderQueue {
                             std::mem::replace(&mut occupied.get_mut().1, new_order.clone());
                         (new_order, evicted)
                     }
-                    UpdateDecision::ReplaceAtTail(new_order) => {
-                        let new_seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+                    UpdateDecision::ReplaceAtTail(new_order, reserved) => {
+                        // Reserved by the decision before any level counter
+                        // moved (checked, issue #165).
+                        let new_seq = reserved.get();
                         let (old_seq, evicted) = {
                             let slot = occupied.get_mut();
                             let old_seq = slot.0;
@@ -757,49 +865,36 @@ impl OrderQueue {
             })
             .collect();
         // Unstable sort is deterministic here because sequences are unique
-        // across live orders (the tail-appending paths mint distinct seqs via
-        // `fetch_add`; an in-place update keeps the order's own seq).
+        // across live orders (the tail-appending paths take distinct seqs from
+        // the checked `try_reserve_seq`; an in-place update keeps the order's
+        // own seq).
         pairs.sort_unstable_by_key(|(seq, _)| *seq);
         out.clear();
         out.extend(pairs.into_iter().map(|(_, order)| order));
     }
 
-    /// Creates a new `OrderQueue` instance and populates it with orders from the provided vector.
+    /// Builds a queue holding `orders` in vector order (the first element is
+    /// the front), rejecting instead of dropping anything that cannot be
+    /// inserted (issue #165).
     ///
-    /// This function takes ownership of a vector of order references (wrapped in `Arc`) and constructs
-    /// a new `OrderQueue` by iteratively pushing each order into the queue. The resulting queue
-    /// maintains the insertion order of the original vector.
+    /// Every order goes through [`OrderQueue::try_push`], and the first error
+    /// is returned: a repeated id is
+    /// [`PriceLevelError::DuplicateOrderId`], and an exhausted sequence is
+    /// [`PriceLevelError::CounterExhausted`] (unreachable from a fresh queue,
+    /// since a `Vec` holds fewer than `u64::MAX` elements, but reported rather
+    /// than assumed). No order is ever silently discarded. This replaces the
+    /// former keep-first `from_vec` / `From<Vec<_>>`, which ignored
+    /// `try_push` errors.
     ///
-    /// # Parameters
+    /// # Errors
     ///
-    /// * `orders` - A vector of atomic reference counted (`Arc`) order instances representing
-    ///   the orders to be added to the new queue.
-    ///
-    /// # Returns
-    ///
-    /// A new `OrderQueue` instance containing all the orders from the input vector.
-    ///
-    /// Note: this infallible constructor drops later orders that repeat an id
-    /// already inserted (keep-first), so the queue's id-keyed map and its
-    /// ordered index always stay 1:1. Callers that must *reject* a
-    /// duplicate-bearing vector (e.g. snapshot restore) validate uniqueness
-    /// upstream where a `Result` can be returned.
-    ///
-    /// `pub(crate)`: a keep-first constructor that silently drops duplicates is
-    /// not a safe public entry point (a caller could restore counters computed
-    /// over a copy the queue then discards). The public path is
-    /// [`PriceLevel::from_snapshot`](crate::price_level::PriceLevel), which
-    /// rejects duplicates; this stays crate-internal for tests and the
-    /// upstream-validated restore.
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn from_vec(orders: Vec<Arc<OrderType<()>>>) -> Self {
+    /// See above; on `Err` the partially built queue is dropped.
+    pub(crate) fn try_from_vec(orders: Vec<Arc<OrderType<()>>>) -> Result<Self, PriceLevelError> {
         let queue = OrderQueue::new();
         for order in orders {
-            // Keep-first on a duplicate id: the index must stay 1:1.
-            let _ = queue.try_push(order);
+            queue.try_push(order)?;
         }
-        queue
+        Ok(queue)
     }
 
     /// Check if the queue is empty
@@ -908,16 +1003,16 @@ impl Display for OrderQueue {
     }
 }
 
-impl From<Vec<Arc<OrderType<()>>>> for OrderQueue {
-    /// Infallible conversion: a repeated id is dropped (keep-first) so the map
-    /// and index stay 1:1. Restore paths that must reject duplicates validate
-    /// uniqueness upstream (see [`crate::price_level::PriceLevel::from_snapshot`]).
-    fn from(orders: Vec<Arc<OrderType<()>>>) -> Self {
-        let queue = OrderQueue::new();
-        for order in orders {
-            let _ = queue.try_push(order);
-        }
-        queue
+impl TryFrom<Vec<Arc<OrderType<()>>>> for OrderQueue {
+    type Error = PriceLevelError;
+
+    /// Builds a queue holding `orders` in vector order (the first element is
+    /// the front). Fallible (issue #165): the first order that cannot be
+    /// inserted ends the conversion with its error, a repeated id as
+    /// [`PriceLevelError::DuplicateOrderId`] or an exhausted sequence as
+    /// [`PriceLevelError::CounterExhausted`]. No order is silently dropped.
+    fn try_from(orders: Vec<Arc<OrderType<()>>>) -> Result<Self, Self::Error> {
+        Self::try_from_vec(orders)
     }
 }
 
