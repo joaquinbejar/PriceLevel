@@ -120,7 +120,8 @@ and tests.
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
-| `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a re-entrant `setup_logger` call returns it instead of blocking |
+| `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a `setup_logger` call from this event's `on_event` returns it instead of blocking |
+| `setup_logger` → `set_global_default` → `Dispatch` construction: callsite-interest rebuild invoking live subscribers' `register_callsite` / `max_level_hint` | **`LOGGER_INIT_RESULT` `OnceLock` initialization in progress** | none yet (the global default is not set until these return) | a callback that calls `setup_logger` blocks on the same initialization and deadlocks; **re-entry from registration callbacks is prohibited**. A panic unwinds out of `get_or_init`, leaving it uninitialized |
 
 No event is emitted inside the `OrderQueue::match_front` / `update_entry` /
 `try_push_with` closures, so none runs under a `DashMap` shard write lock.

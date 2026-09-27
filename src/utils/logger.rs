@@ -92,10 +92,15 @@ static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// synchronously, on the calling thread, into whichever subscriber the process
 /// installed (this one or the caller's own). That subscriber is external code
 /// and **must not panic** or call back into the level that emitted the event.
-/// No subscriber code runs while this function's one-time initialization is
-/// in progress: the confirmation event is emitted after it completes, so a
-/// subscriber that calls `setup_logger` again gets the cached result instead
-/// of blocking. The library does not catch a subscriber panic; see
+/// The confirmation event is emitted after the one-time initialization
+/// completes, so a subscriber's `on_event` for that event may call
+/// `setup_logger` again and gets the cached result. That is the only
+/// re-entry guarantee. Installing the subscriber (`set_global_default`)
+/// still runs other subscribers' registration callbacks
+/// (`register_callsite`, `max_level_hint`) **while the initialization is in
+/// progress**; those callbacks **must not call `setup_logger`**, which would
+/// block on the same initialization and deadlock. The library does not catch
+/// a subscriber panic; see
 /// `PriceLevel::match_order` and `doc/panic-boundaries.md` for where events
 /// are emitted relative to locks and mutations.
 ///

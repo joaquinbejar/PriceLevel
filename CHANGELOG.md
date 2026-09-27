@@ -81,8 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   poison a level whose state is intact. The statistics-drop warning is emitted
   after the step's queue, counter and topology bookkeeping, not before it.
   `setup_logger` emits its confirmation event after its one-time
-  initialization completes, so a subscriber that re-enters `setup_logger`
-  gets the cached result instead of blocking on the in-progress init.
+  initialization completes, so a subscriber's `on_event` for that event can
+  re-enter `setup_logger` and get the cached result. Subscriber registration
+  callbacks (`register_callsite`, `max_level_hint`) still run during the
+  initialization, while `set_global_default` builds the dispatcher; calling
+  `setup_logger` from them deadlocks and is documented as prohibited.
 
 ### Documentation
 
