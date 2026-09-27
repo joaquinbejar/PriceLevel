@@ -136,6 +136,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and so a fill-or-kill verdict, can now differ from 0.9 and matches what the
   sweep executes.
 
+- **`PriceLevel::snapshot` is fallible (#162).** It now returns
+  `Result<PriceLevelSnapshot, PriceLevelError>`. The shard walk has no
+  transaction over the whole level, so a same-side quantity transfer between
+  two shards during the walk could capture orders whose visible or hidden sum
+  overflows `u64` although every committed state fits. Debug builds then
+  panicked on a `debug_assert!`; release builds stored the live atomic counter,
+  an aggregate that disagreed with the snapshot's own orders. Both are gone: a
+  walk that overflows, or that comes back mixed-side across a side transition
+  (previously an unbounded retry), is recollected at most 8 times in total,
+  after which the call returns `PriceLevelError::InvalidOperation` and leaves
+  the level unchanged. A returned snapshot is coherent: its aggregates equal the
+  checked sums over its own orders. It is still not a linearizable
+  point-in-time view. `snapshot_package()` and `snapshot_to_json()` keep their
+  signatures and propagate the new error. Snapshot format v4, checksums and
+  restore order are unchanged for every successful snapshot.
+
 ### Added
 
 - `MatchResult::try_reserve`, `MatchResult::try_clone`,
@@ -161,6 +177,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporary `String` (#152). `Id::as_bytes` (sequential) and `Id::from_u64`
   build their fixed arrays from `to_be_bytes` without slicing or shifts; both
   byte layouts are unchanged.
+- **`PriceLevelSnapshot::refresh_aggregates` is transactional (#162).** It
+  computes all three aggregates with checked arithmetic before committing any
+  of them; an overflow no longer leaves `order_count` updated while the
+  quantity fields keep their old values.
+
 - **No caller code under level guards or mid-bookkeeping (#172).**
   `PriceLevel` and `OrderQueue` `Debug` impls are now hand-written: they
   materialize the orders before writing, so a formatter destination no longer
