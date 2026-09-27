@@ -161,6 +161,16 @@ bench-json: check-cargo-criterion
 bench-clean:
 	rm -rf target/criterion
 
+# Isolated operation / tail-latency harness (issue #142) — a separate,
+# harness=false bench target from `bench` above; see `benches/latency/main.rs`.
+# Every knob is an env var (`benches/latency/config.rs`), e.g. a short
+# validation run:
+#   PL_LATENCY_SAMPLES=200 PL_LATENCY_WARMUP=50 PL_LATENCY_CONTENTION_OPS=200 \
+#     PL_LATENCY_ALLOC_REPS=200 make bench-latency
+.PHONY: bench-latency
+bench-latency:
+	cargo bench --bench latency
+
 
 .PHONY: workflow-coverage
 workflow-coverage:
