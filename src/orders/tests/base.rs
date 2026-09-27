@@ -116,3 +116,85 @@ mod tests_side {
         }
     }
 }
+
+// Issue #201: `Hash32` text / serde through a stack buffer and a borrowed
+// visitor must be byte-identical to the pre-#201 allocating forms.
+#[cfg(test)]
+mod tests_hash32_issue_201 {
+    use crate::orders::Hash32;
+    use proptest::prelude::*;
+    use std::str::FromStr;
+
+    /// The pre-#201 allocating `to_hex` form (test-only reference).
+    fn reference_hex(hash: &Hash32) -> String {
+        hash.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// `hex` with its first character replaced by `prefix`.
+    fn with_first_replaced(hex: &str, prefix: &str) -> String {
+        let mut chars = hex.chars();
+        chars.next();
+        format!("{prefix}{}", chars.as_str())
+    }
+
+    fn hex_like_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            any::<[u8; 32]>().prop_map(|b| reference_hex(&Hash32::new(b))),
+            any::<[u8; 32]>().prop_map(|b| reference_hex(&Hash32::new(b)).to_uppercase()),
+            // `from_hex` keeps `u8::from_str_radix`'s leading `+` per pair.
+            any::<[u8; 32]>()
+                .prop_map(|b| with_first_replaced(&reference_hex(&Hash32::new(b)), "+")),
+            "[0-9a-fA-F]{62,66}",
+            ".{0,70}",
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 2048, ..ProptestConfig::default() })]
+
+        #[test]
+        fn prop_hash32_text_and_json_are_byte_identical(bytes in any::<[u8; 32]>()) {
+            let hash = Hash32::new(bytes);
+            let expected = reference_hex(&hash);
+            prop_assert_eq!(hash.to_string(), expected.clone());
+            prop_assert_eq!(hash.to_hex(), expected.clone());
+            let json = serde_json::to_string(&hash)
+                .map_err(|e| TestCaseError::fail(e.to_string()))?;
+            prop_assert_eq!(json, format!("\"{expected}\""));
+        }
+
+        #[test]
+        fn prop_hash32_deserialize_matches_from_hex(text in hex_like_text()) {
+            let expected = Hash32::from_str(&text).ok();
+            let json = serde_json::to_string(&text)
+                .map_err(|e| TestCaseError::fail(e.to_string()))?;
+            // Borrowed (`visit_str`), reader scratch, and owned (`visit_string`).
+            prop_assert_eq!(serde_json::from_str::<Hash32>(&json).ok(), expected);
+            prop_assert_eq!(serde_json::from_reader::<_, Hash32>(json.as_bytes()).ok(), expected);
+            let value = serde_json::Value::String(text.clone());
+            prop_assert_eq!(serde_json::from_value::<Hash32>(value).ok(), expected);
+        }
+    }
+
+    #[test]
+    fn test_hash32_deserialize_rejects_non_string() {
+        let err = serde_json::from_str::<Hash32>("7")
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            err.as_deref(),
+            Some("invalid type: integer `7`, expected a string at line 1 column 1")
+        );
+    }
+
+    #[test]
+    fn test_hash32_escaped_json_round_trips() {
+        let hash = Hash32::new([0x5a; 32]);
+        // `5` is `5`: forces serde_json's unescaping scratch path.
+        let json = format!(
+            "\"{}\"",
+            with_first_replaced(&reference_hex(&hash), "\\u0035")
+        );
+        assert_eq!(serde_json::from_str::<Hash32>(&json).ok(), Some(hash));
+    }
+}

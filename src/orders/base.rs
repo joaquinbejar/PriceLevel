@@ -1,6 +1,7 @@
 //! Base order definitions
 
 use crate::errors::PriceLevelError;
+use crate::utils::encode::{HASH32_HEX_LEN, encode_hash32_hex};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -98,10 +99,13 @@ impl Hash32 {
         &mut self.0
     }
 
-    /// Converts the hash to a hexadecimal string.
+    /// Converts the hash to a lowercase hexadecimal string (64 characters).
+    ///
+    /// Allocates exactly the returned `String`; the digits are produced in a
+    /// stack buffer first (issue #201).
     #[must_use]
     pub fn to_hex(&self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+        self.to_string()
     }
 
     /// Creates a `Hash32` from a hexadecimal string.
@@ -138,7 +142,13 @@ impl Hash32 {
 
 impl fmt::Display for Hash32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_hex())
+        let mut buf = [0u8; HASH32_HEX_LEN];
+        match encode_hash32_hex(&self.0, &mut buf) {
+            Ok(hex) => f.write_str(hex),
+            // Unreachable in practice; write byte by byte so `to_string`
+            // never observes an encoder error.
+            Err(fmt::Error) => self.0.iter().try_for_each(|b| write!(f, "{b:02x}")),
+        }
     }
 }
 
@@ -163,20 +173,54 @@ impl From<Hash32> for [u8; 32] {
 }
 
 impl Serialize for Hash32 {
+    /// Serializes the lowercase hex text through a stack buffer: no per-hash
+    /// heap allocation (issue #201). The wire form is unchanged.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.to_hex())
+        let mut buf = [0u8; HASH32_HEX_LEN];
+        let hex = encode_hash32_hex(&self.0, &mut buf)
+            .map_err(|_| serde::ser::Error::custom("failed to encode Hash32 hex"))?;
+        serializer.serialize_str(hex)
+    }
+}
+
+/// Serde visitor for [`Hash32`]: parses the borrowed string through
+/// [`Hash32::from_hex`] without copying it.
+struct Hash32Visitor;
+
+impl serde::de::Visitor<'_> for Hash32Visitor {
+    type Value = Hash32;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a string")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Hash32, E>
+    where
+        E: serde::de::Error,
+    {
+        Hash32::from_hex(v).map_err(E::custom)
+    }
+
+    /// Owned-string fallback for deserializers that only hand out `String`s;
+    /// parses in place without a further copy.
+    fn visit_string<E>(self, v: String) -> Result<Hash32, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_str(&v)
     }
 }
 
 impl<'de> Deserialize<'de> for Hash32 {
+    /// Deserializes through a borrowing `str` visitor: input is parsed in
+    /// place (issue #201) with the exact [`Hash32::from_hex`] grammar.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Self::from_hex(&s).map_err(serde::de::Error::custom)
+        deserializer.deserialize_str(Hash32Visitor)
     }
 }

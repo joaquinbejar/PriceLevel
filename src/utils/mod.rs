@@ -5,6 +5,7 @@
 ******************************************************************************/
 
 pub(crate) mod alloc;
+pub(crate) mod encode;
 mod entropy;
 mod id;
 mod logger;
