@@ -384,7 +384,7 @@ allocations on the hot path. Use `snapshot_orders()` when a materialized `Vec` i
 | v0.6 | v0.7 |
 |------|------|
 | `level.iter_orders() -> Vec<Arc<OrderType<()>>>` | [`level.iter_orders()`](PriceLevel::iter_orders) `-> impl Iterator` |
-| (no equivalent) | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Vec<Arc<OrderType<()>>>` |
+| (no equivalent) | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Vec<Arc<OrderType<()>>>` (a `Result` since v0.10, #164) |
 
 #### Snapshot Persistence and Recovery
 
@@ -930,7 +930,8 @@ almost every malformed input. Two contracts tightened:
 Segmentation is unchanged, and an element that fails to parse is still
 reported before a bracket imbalance, so errors for other malformed input
 are the same. A parser that cannot grow its output vector reports
-[`PriceLevelError::InvalidOperation`] instead of aborting.
+[`PriceLevelError::CapacityExceeded`] instead of aborting (resource `Text`; an
+`InvalidOperation` before #164).
 
 ```rust
 use pricelevel::{PriceLevelError, TradeList};
@@ -1012,11 +1013,22 @@ carries the failure that stopped a match early (#164 contract).
 - [`PriceLevel::match_order`] still returns [`MatchResult`]. When a step
   fails, the sweep stops and [`MatchResult::error`] is `Some`; the trades,
   filled ids and remaining quantity describe exactly what the level
-  committed, and the level's counters agree with its queue. A fill-or-kill
-  taker reserves its exact storage before touching any maker: on failure it
-  is [`MatchOutcome::Killed`] with the error set and the level unchanged.
-  Callers that used to treat every result as a natural end should check
-  `result.error()` before resting a remainder.
+  committed. The stop causes are: maker arithmetic (#169), the
+  resting-order count (#163), result growth (#170), trade-id exhaustion
+  (#168), FIFO sequence exhaustion (#165), a parked-sequence set that
+  cannot grow (#164), and, after a committed step, a failed count release
+  (#163) or a refused post-lock replenish counter transition (#128
+  fallback, #164). For every cause except the last two the level's
+  counters agree with its queue; the last two **poison the level**
+  (counters known to disagree): later mutators return `InvalidOperation`,
+  matching is refused, and the caller must treat the level as failed and
+  reconstruct it from a snapshot. See the `match_order` failure contract.
+  A fill-or-kill taker checks or reserves everything before touching any
+  maker: on failure it is [`MatchOutcome::Killed`] with the error set and
+  the level unchanged. Callers that used to treat every result as a
+  natural end **must** check `result.error()` before resting a remainder:
+  a stopped sweep's remainder is not "no more liquidity", and resting it
+  after a self-trade race can duplicate an id at the level.
 - [`PriceLevel::matchable_quantity`] now replays the resting queue in
   insertion-sequence (sweep) order rather than `(timestamp, sequence)`
   order, the order `match_order` actually consumes it. This is a correctness
@@ -1218,6 +1230,74 @@ No public signature changes; the observable behavior below is new.
   The match pre-size hint uses a checked `usize::try_from` of the taker
   quantity: a quantity above `usize::MAX` sizes by the order count instead
   of truncating.
+
+### Migration Guide (fallible collection growth — breaking)
+
+Every owned collection the engine and the snapshot / serialization paths
+grow is now reserved through `try_reserve*` before any state mutation
+(#164). A refused reservation is reported as the fixed-size
+[`PriceLevelError::CapacityExceeded`] (its [`CapacityResource`] tag is
+`Copy`, so reporting it never allocates) instead of aborting the process.
+`CapacityResource` gains `OrderSnapshot`, `SweepScratch`,
+`RestoreScratch` and `SerializationBuffer` (it is `#[non_exhaustive]`).
+
+| Before | After |
+|--------|-------|
+| `level.snapshot_orders() -> Vec<_>` | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Result<Vec<_>, PriceLevelError>` |
+| `level.snapshot_by_insertion_seq() -> Vec<_>` | [`level.snapshot_by_insertion_seq()`](PriceLevel::snapshot_by_insertion_seq) `-> Result<Vec<_>, _>` |
+| `level.snapshot_by_seq_into(&mut out)` | [`level.snapshot_by_seq_into(&mut out)`](PriceLevel::snapshot_by_seq_into) `-> Result<(), _>`; `out` is untouched on `Err` |
+| `level.matchable_quantity(q, id) -> u64` | [`level.matchable_quantity(q, id)`](PriceLevel::matchable_quantity) `-> Result<u64, _>` |
+| `queue.snapshot_vec()` / `queue.to_vec() -> Vec<_>` | [`OrderQueue::snapshot_vec`] / [`OrderQueue::to_vec`] `-> Result<Vec<_>, _>` |
+| `Vec::from(queue)` / `queue.into()` | `Vec::try_from(queue)` / `queue.try_into()` |
+| `PriceLevelData::from(&level)` / `(&level).into()` | `PriceLevelData::try_from(&level)` |
+| `snapshot.clone()` / `package.clone()` (infallible, kept) | also [`PriceLevelSnapshot::try_clone`] / [`PriceLevelSnapshotPackage::try_clone`] |
+
+Behavior:
+
+- **Sorting.** [`OrderQueue::snapshot_vec`] (and
+  [`PriceLevel::snapshot_orders`]) sort in place with an unstable sort on
+  the unique `(timestamp, sequence)` key: same order as before, no hidden
+  stable-sort scratch buffer.
+- **Matching.** The sweep's parked-sequence set holds its first live key
+  inline (no allocation; the self-trade skip, the only park that fires
+  today, has at most one live key, and the slot frees itself when that key
+  goes stale through a cancel, readmission or demotion) and grows fallibly
+  beyond it. A fill-or-kill dry run can predict a park (a maker sharing the
+  taker id admitted between the self-match lookup and the exclusive
+  guard). A park
+  that cannot be recorded stops a non-fill-or-kill sweep with the
+  committed prefix and [`MatchResult::error`] carrying the original
+  `SweepScratch` error. A fill-or-kill taker reserves its dry-run working
+  copy and its park set before the first mutation; a refusal kills it with
+  the level untouched, the error set and an `ERROR` event.
+  [`PriceLevel::matchable_quantity`] returns `Err` only when its working
+  copy cannot be reserved (a silent `0` would under-report depth).
+  Callers **must** check `result.error()` before resting a taker's
+  remainder: a stopped sweep's remainder is not "no more liquidity", and
+  resting it after a self-trade race can duplicate an id at the level.
+- **Snapshots.** [`PriceLevel::snapshot`] returns the capacity error at
+  once (no recollection). The checksum payload is streamed into SHA-256
+  (no payload buffer; checksums are byte-identical), the hex string and
+  [`PriceLevelSnapshotPackage::to_json`] output grow fallibly, and decoded
+  order vectors / checksum strings are reserved fallibly (a refusal while
+  decoding surfaces as `DeserializationError` through `serde`). Legacy
+  payloads decode unchanged.
+- **Formatting.** `Display` / `Debug` for [`PriceLevel`] and
+  [`OrderQueue`] never return `fmt::Error` on a refused materialization
+  (that would make `to_string` panic): they write an `orders=!<error>` /
+  `<unavailable: ..>` marker, which the `FromStr` parsers reject.
+- **Text parsers.** A refused parser buffer is now `CapacityExceeded`
+  (resource `Text`) instead of an `InvalidOperation` whose message was
+  allocated after the failure.
+- **Poisoning.** The defensive post-lock replenish counter branch (#128,
+  unreachable today) no longer ignores a refused counter transition: it
+  logs at `ERROR`, poisons the level and stops the sweep with
+  `InvalidOperation`, like the #163 failed rollback. The result still
+  reports the committed trades exactly, but the level's counters are known
+  to disagree with its queue: treat the level as failed.
+- **Not covered.** `DashMap` / `SkipMap` node insertion and `Arc::new` have
+  no stable fallible API; an allocator failure there aborts the process
+  (not a Rust panic). See `doc/panic-boundaries.md`.
 
 
  ## Setup Instructions

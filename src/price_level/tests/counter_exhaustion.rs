@@ -96,6 +96,7 @@ mod tests {
         LevelState {
             orders: level
                 .snapshot_by_insertion_seq()
+                .expect("materialize")
                 .iter()
                 .map(|o| {
                     (
@@ -474,6 +475,7 @@ mod tests {
         );
         let ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();

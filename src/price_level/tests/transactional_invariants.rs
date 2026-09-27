@@ -68,6 +68,7 @@ mod tests {
     fn fifo(level: &PriceLevel) -> Vec<OrderType<()>> {
         level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| **o)
             .collect()
@@ -76,6 +77,7 @@ mod tests {
     fn fifo_ids(level: &PriceLevel) -> Vec<Id> {
         level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect()
@@ -318,7 +320,12 @@ mod tests {
         let before = fifo(&level);
 
         // Dry-run parity: the prediction stops where the sweep would.
-        assert_eq!(level.matchable_quantity(15, Id::from_u64(TAKER)), 5);
+        assert_eq!(
+            level
+                .matchable_quantity(15, Id::from_u64(TAKER))
+                .expect("dry run"),
+            5
+        );
 
         let result = level.match_order(
             15,
@@ -415,7 +422,12 @@ mod tests {
         queue.push(Arc::new(standard(1, 10)));
         queue.push(Arc::new(standard(2, 20)));
         queue.push(Arc::new(standard(3, 30)));
-        let before: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        let before: Vec<Id> = queue
+            .to_vec()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect();
 
         for demote in [false, true] {
             let mut reserved = false;
@@ -440,7 +452,12 @@ mod tests {
                 Some(Err(PriceLevelError::InvalidOperation { .. }))
             ));
             assert!(!reserved, "reserve must not run for a rejected decision");
-            let after: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+            let after: Vec<Id> = queue
+                .to_vec()
+                .expect("materialize")
+                .iter()
+                .map(|o| o.id())
+                .collect();
             assert_eq!(after, before);
             assert_eq!(
                 queue.find(Id::from_u64(2)).map(|o| *o),
@@ -474,7 +491,12 @@ mod tests {
             },
         );
         assert!(matches!(outcome, Some(Err(_))));
-        let ids: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        let ids: Vec<Id> = queue
+            .to_vec()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect();
         assert_eq!(ids, vec![Id::from_u64(1), Id::from_u64(2)]);
         assert_eq!(
             queue.find(Id::from_u64(1)).map(|o| *o),
@@ -679,7 +701,12 @@ mod tests {
         });
         assert!(matches!(outcome, RemoveOutcome::Refused));
         assert_eq!(seen, Some(Id::from_u64(1)));
-        let ids: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        let ids: Vec<Id> = queue
+            .to_vec()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect();
         assert_eq!(ids, vec![Id::from_u64(1), Id::from_u64(2)]);
         assert!(queue.debug_map_index_consistent());
 
@@ -688,7 +715,12 @@ mod tests {
             RemoveOutcome::Removed(order) => assert_eq!(*order, standard(1, 10)),
             other => panic!("expected Removed, got {other:?}"),
         }
-        let ids: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        let ids: Vec<Id> = queue
+            .to_vec()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect();
         assert_eq!(ids, vec![Id::from_u64(2)]);
         assert!(queue.debug_map_index_consistent());
         assert!(matches!(

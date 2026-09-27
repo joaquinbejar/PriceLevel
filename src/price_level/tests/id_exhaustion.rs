@@ -117,7 +117,7 @@ mod tests {
     }
 
     fn state(level: &PriceLevel) -> LevelState {
-        let orders = level.snapshot_by_insertion_seq();
+        let orders = level.snapshot_by_insertion_seq().expect("materialize");
         LevelState {
             ids: orders.iter().map(|o| o.id()).collect(),
             visible: orders
@@ -208,7 +208,7 @@ mod tests {
                 MatchOutcome::PartiallyFilled
             }
         );
-        let resting = level.snapshot_by_insertion_seq();
+        let resting = level.snapshot_by_insertion_seq().expect("materialize");
         for id in result.filled_order_ids() {
             assert!(resting.iter().all(|o| o.id() != *id));
         }

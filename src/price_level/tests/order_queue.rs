@@ -68,7 +68,7 @@ mod tests {
 
         // Verify the parsed queue
         assert!(!parsed_queue.is_empty());
-        let orders = parsed_queue.to_vec();
+        let orders = parsed_queue.to_vec().expect("materialize");
 
         // Should have both orders
         assert_eq!(orders.len(), 2, "Expected 2 orders in parsed queue");
@@ -90,7 +90,7 @@ mod tests {
 
         // Test round-trip parsing
         let round_trip_queue = OrderQueue::from_str(&display_string).unwrap();
-        let round_trip_orders = round_trip_queue.to_vec();
+        let round_trip_orders = round_trip_queue.to_vec().expect("materialize");
 
         assert_eq!(
             round_trip_orders.len(),
@@ -133,8 +133,8 @@ mod tests {
         let deserialized: OrderQueue = serde_json::from_str(&serialized).unwrap();
 
         // Verify
-        let original_orders = queue.to_vec();
-        let deserialized_orders = deserialized.to_vec();
+        let original_orders = queue.to_vec().expect("materialize");
+        let deserialized_orders = deserialized.to_vec().expect("materialize");
 
         assert_eq!(original_orders.len(), deserialized_orders.len());
 
@@ -167,8 +167,8 @@ mod tests {
         };
 
         // Verify
-        let original_orders = queue.to_vec();
-        let parsed_orders = parsed_queue.to_vec();
+        let original_orders = queue.to_vec().expect("materialize");
+        let parsed_orders = parsed_queue.to_vec().expect("materialize");
 
         assert_eq!(original_orders.len(), parsed_orders.len());
         assert_eq!(original_orders[0].id(), parsed_orders[0].id());
@@ -182,7 +182,7 @@ mod tests {
         let queue = OrderQueue::new();
 
         // test_to_vec on empty queue
-        let vec = queue.to_vec();
+        let vec = queue.to_vec().expect("materialize");
         assert!(vec.is_empty());
 
         // Verify queue is still empty after to_vec
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(queue.len(), 1);
 
         // Verify the order's details
-        let order = &queue.to_vec()[0];
+        let order = &queue.to_vec().expect("materialize")[0];
 
         if let OrderType::<()>::Standard {
             id,
@@ -261,7 +261,7 @@ mod tests {
         let deserialized: OrderQueue = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.len(), 1);
 
-        let deserialized_order = &deserialized.to_vec()[0];
+        let deserialized_order = &deserialized.to_vec().expect("materialize")[0];
 
         if let OrderType::Standard {
             id,
@@ -343,13 +343,13 @@ mod tests {
         let queue = OrderQueue::try_from_vec(orders.clone()).unwrap();
 
         // Verify the queue contains the orders
-        assert_eq!(queue.to_vec().len(), 2);
-        assert!(queue.to_vec().contains(&order1));
-        assert!(queue.to_vec().contains(&order2));
+        assert_eq!(queue.to_vec().expect("materialize").len(), 2);
+        assert!(queue.to_vec().expect("materialize").contains(&order1));
+        assert!(queue.to_vec().expect("materialize").contains(&order2));
 
         // Test the TryFrom implementation (issue #165: fallible, never drops).
         let queue_from_trait = OrderQueue::try_from(orders.clone()).unwrap();
-        assert_eq!(queue_from_trait.to_vec().len(), 2);
+        assert_eq!(queue_from_trait.to_vec().expect("materialize").len(), 2);
 
         // A repeated id is rejected rather than silently dropped.
         let dup = vec![order1.clone(), order1.clone()];
@@ -358,8 +358,8 @@ mod tests {
             Err(crate::errors::PriceLevelError::DuplicateOrderId(_))
         ));
 
-        // Test the Into implementation
-        let orders_from_queue: Vec<Arc<OrderType<()>>> = queue.into();
+        // Test the TryInto implementation (issue #164)
+        let orders_from_queue: Vec<Arc<OrderType<()>>> = queue.try_into().expect("materialize");
         assert_eq!(orders_from_queue.len(), 2);
         assert!(orders_from_queue.contains(&order1));
         assert!(orders_from_queue.contains(&order2));
@@ -377,10 +377,15 @@ mod tests {
         assert!(result.is_ok());
 
         let queue = result.unwrap();
-        assert_eq!(queue.to_vec().len(), 2);
+        assert_eq!(queue.to_vec().expect("materialize").len(), 2);
 
         // Verify the parsed orders have the expected IDs
-        let order_ids: Vec<Id> = queue.to_vec().iter().map(|order| order.id()).collect();
+        let order_ids: Vec<Id> = queue
+            .to_vec()
+            .expect("materialize")
+            .iter()
+            .map(|order| order.id())
+            .collect();
         assert!(order_ids.contains(&Id::from_u64(1)));
         assert!(order_ids.contains(&Id::from_u64(2)));
 
@@ -449,11 +454,12 @@ mod tests {
         let deserialized: OrderQueue = serde_json::from_str(&serialized).unwrap();
 
         // Verify the deserialized queue has the same orders
-        assert_eq!(deserialized.to_vec().len(), 2);
+        assert_eq!(deserialized.to_vec().expect("materialize").len(), 2);
 
         // Verify the order IDs
         let order_ids: Vec<Id> = deserialized
             .to_vec()
+            .expect("materialize")
             .iter()
             .map(|order| order.id())
             .collect();
@@ -627,7 +633,6 @@ mod tests {
         // Under the old remove-then-insert order the maker vanished from the
         // index between the two ops and a scan could miss it.
         use crate::price_level::order_queue::{FrontAction, FrontOutcome, UpdateDecision};
-        use std::collections::HashSet;
         use std::sync::Arc as StdArc;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::thread;
@@ -655,7 +660,7 @@ mod tests {
         };
 
         for _ in 0..200_000 {
-            let mut set_aside = HashSet::new();
+            let mut set_aside = crate::price_level::order_queue::ParkedSeqs::new();
             // A no-op probe: whatever the front is, park it (leaves it resting)
             // and report we found one. The maker always rests, so this must be
             // `Matched`, never `Empty`.

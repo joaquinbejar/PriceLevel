@@ -72,7 +72,7 @@ mod tests {
     }
 
     fn queue(level: &PriceLevel) -> Vec<Arc<OrderType<()>>> {
-        level.snapshot_orders()
+        level.snapshot_orders().expect("materialize")
     }
 
     fn assert_invalid_operation(err: Option<&PriceLevelError>) {
@@ -166,7 +166,12 @@ mod tests {
         let queue_before: Vec<OrderType<()>> = queue(&level).iter().map(|o| **o).collect();
 
         // Dry-run parity: the prediction is exactly the real sweep's prefix.
-        assert_eq!(level.matchable_quantity(10, Id::from_u64(TAKER)), 5);
+        assert_eq!(
+            level
+                .matchable_quantity(10, Id::from_u64(TAKER))
+                .expect("dry run"),
+            5
+        );
 
         let result = level.match_order(
             10,

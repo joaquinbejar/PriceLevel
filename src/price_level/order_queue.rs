@@ -1,5 +1,6 @@
-use crate::errors::{ExhaustedCounter, PriceLevelError};
+use crate::errors::{CapacityResource, ExhaustedCounter, PriceLevelError};
 use crate::orders::{Id, OrderType};
+use crate::utils::alloc::{try_push_vec, try_reserve_exact_vec, try_reserve_set, try_reserve_vec};
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -196,6 +197,162 @@ pub(crate) enum UpdateDecision {
     ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
 }
 
+/// Committed `(stored_seq, order)` pairs collected for a materialization.
+type SeqPairs = Vec<(u64, Arc<OrderType<()>>)>;
+
+// Test-only switch that disables the inline slot of `ParkedSeqs` (issue
+// #164), so a test can drive the spill set's fallible reservation with a
+// single park. Production builds compile none of this.
+#[cfg(test)]
+thread_local! {
+    static PARK_INLINE_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Restores the inline slot when dropped (test seam, issue #164).
+#[cfg(test)]
+pub(crate) struct ParkInlineGuard(bool);
+
+#[cfg(test)]
+impl Drop for ParkInlineGuard {
+    fn drop(&mut self) {
+        PARK_INLINE_DISABLED.with(|cell| cell.set(self.0));
+    }
+}
+
+/// Disables the inline slot of every `ParkedSeqs` on this thread until the
+/// guard drops (test seam, issue #164).
+#[cfg(test)]
+pub(crate) fn disable_park_inline_slot() -> ParkInlineGuard {
+    ParkInlineGuard(PARK_INLINE_DISABLED.with(|cell| cell.replace(true)))
+}
+
+#[cfg(test)]
+fn park_inline_disabled() -> bool {
+    PARK_INLINE_DISABLED.with(std::cell::Cell::get)
+}
+
+/// The insertion sequences of the makers one match sweep has parked (issue
+/// #164; see [`OrderQueue::match_front`]).
+///
+/// The first live park is held in an inline slot, which never allocates; only
+/// further live parks spill into a `HashSet`, growing fallibly. Orders are
+/// id-keyed, so the only park that fires today (the self-trade skip of the
+/// one order sharing the taker id) has at most one LIVE key at a time.
+///
+/// A parked key can go stale without the scan ever revisiting it: a cancel
+/// removes its index key, and a readmission or a quantity-increase demotion
+/// moves the id to a fresh, higher sequence. So when a new park arrives while
+/// the inline slot is occupied, [`OrderQueue::match_front`] first checks the
+/// inline key against the queue with the #155 rule (live iff the index still
+/// maps it to an id whose map entry stores that sequence) and frees the slot
+/// if it is dead. Sequences are never reused and a stored sequence only moves
+/// forward, so a dead key can never become live again and dropping it is
+/// safe. With that, a single live parked maker never allocates; the spill,
+/// and with it the allocation-failure stop cause, is reached only by two
+/// simultaneously live parks, which no current order shape produces.
+#[derive(Debug, Default)]
+pub(crate) struct ParkedSeqs {
+    inline: Option<u64>,
+    spill: HashSet<u64>,
+}
+
+impl ParkedSeqs {
+    /// An empty set; allocates nothing.
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// `true` if `seq` is parked.
+    #[inline]
+    #[must_use]
+    pub(crate) fn contains(&self, seq: u64) -> bool {
+        self.inline == Some(seq) || (!self.spill.is_empty() && self.spill.contains(&seq))
+    }
+
+    /// Unparks `seq` (no-op if absent). Never allocates.
+    #[inline]
+    pub(crate) fn remove(&mut self, seq: u64) {
+        if self.inline == Some(seq) {
+            self.inline = None;
+        } else if !self.spill.is_empty() {
+            self.spill.remove(&seq);
+        }
+    }
+
+    /// Number of parked sequences (test inspection).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.spill.len() + usize::from(self.inline.is_some())
+    }
+
+    /// `true` if nothing is parked (test inspection).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inline.is_none() && self.spill.is_empty()
+    }
+
+    /// The sequence held in the inline slot, if any.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inline_seq(&self) -> Option<u64> {
+        self.inline
+    }
+
+    #[inline]
+    fn inline_available(&self) -> bool {
+        #[cfg(test)]
+        if park_inline_disabled() {
+            return false;
+        }
+        self.inline.is_none()
+    }
+
+    /// Reserves room so the next `additional` parks of new sequences do not
+    /// allocate (the fill-or-kill preflight).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SweepScratch`]); the set is unchanged.
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        let spill = if self.inline_available() {
+            additional.checked_sub(1)
+        } else {
+            Some(additional)
+        };
+        match spill {
+            Some(n) if n > 0 => try_reserve_set(&mut self.spill, n, CapacityResource::SweepScratch),
+            _ => Ok(()),
+        }
+    }
+
+    /// Parks `seq`. Uses the inline slot when free; otherwise grows the spill
+    /// set fallibly (only when it is full).
+    ///
+    /// # Errors
+    ///
+    /// The original [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SweepScratch`]) of the refused reservation; `seq`
+    /// is not parked and the set is unchanged.
+    pub(crate) fn try_insert(&mut self, seq: u64) -> Result<(), PriceLevelError> {
+        if self.contains(seq) {
+            return Ok(());
+        }
+        if self.inline_available() {
+            self.inline = Some(seq);
+            return Ok(());
+        }
+        if self.spill.len() >= self.spill.capacity() {
+            try_reserve_set(&mut self.spill, 1, CapacityResource::SweepScratch)?;
+        }
+        self.spill.insert(seq);
+        Ok(())
+    }
+}
+
 /// The outcome of [`OrderQueue::remove_if`] (issue #163).
 #[derive(Debug)]
 pub(crate) enum RemoveOutcome {
@@ -218,6 +375,14 @@ pub(crate) enum FrontOutcome<R> {
     /// already encoded in that bookkeeping (full consume vs partial vs
     /// replenish), so it is not surfaced separately.
     Matched { result: R },
+    /// The decision closure ran and chose [`FrontAction::SetAside`], but the
+    /// caller's parked-sequence set could not grow to record it (issue #164).
+    /// Nothing was committed (`SetAside` never mutates the queue) and the
+    /// sequence was NOT parked, so re-running the sweep step would re-select
+    /// the same maker: the caller must stop. Carries the closure's result so a
+    /// terminal step (which stops anyway) keeps its own error, and the
+    /// original typed reservation error.
+    ParkRefused { result: R, error: PriceLevelError },
     /// The queue is empty (no front candidate that is not already set aside).
     /// The sweep is done.
     Empty,
@@ -527,11 +692,7 @@ impl OrderQueue {
     /// [`FrontAction::ReplaceAtTail`] re-prioritisation swaps the value and
     /// re-sequences it in place rather than removing-then-re-pushing — so the
     /// lost-cancel window is closed for every action, not just the partial fill.
-    pub(crate) fn match_front<F, R>(
-        &self,
-        set_aside: &mut HashSet<u64>,
-        decide: F,
-    ) -> FrontOutcome<R>
+    pub(crate) fn match_front<F, R>(&self, set_aside: &mut ParkedSeqs, decide: F) -> FrontOutcome<R>
     where
         F: FnOnce(u64, &OrderType<()>) -> (FrontAction, R),
     {
@@ -558,7 +719,7 @@ impl OrderQueue {
                 #[cfg(test)]
                 record_front_scan_visit();
                 let seq = *entry.key();
-                if !set_aside.contains(&seq) {
+                if !set_aside.contains(seq) {
                     front = Some((seq, *entry.value()));
                     break;
                 }
@@ -568,7 +729,7 @@ impl OrderQueue {
                     .is_some_and(|slot| slot.value().0 == seq);
                 if !live {
                     self.index.remove(&seq);
-                    set_aside.remove(&seq);
+                    set_aside.remove(seq);
                 }
             }
             let Some((seq, order_id)) = front else {
@@ -700,15 +861,49 @@ impl OrderQueue {
                     // The entry lock is released on every arm above; a
                     // possibly-allocating scratch-set insert and the evicted
                     // order's drop now run unlocked.
-                    if let Some(seq) = park_seq {
-                        set_aside.insert(seq);
-                    }
+                    //
+                    // The park never allocates for the first live key (inline
+                    // slot) and grows fallibly beyond it (issue #164): a
+                    // refused reservation reports `ParkRefused` with the
+                    // original error and the step still a no-op. A set the
+                    // caller pre-reserved (fill-or-kill) never reaches the
+                    // reservation.
+                    //
+                    // Before a park that would spill, a dead inline key (its
+                    // maker cancelled, readmitted or demoted since it was
+                    // parked, so the scan may never revisit it) is dropped
+                    // with the #155 liveness rule; see `ParkedSeqs`.
                     drop(evicted);
+                    if let Some(seq) = park_seq {
+                        if let Some(old) = set_aside.inline_seq()
+                            && old != seq
+                            && !self.seq_is_live(old)
+                        {
+                            set_aside.remove(old);
+                        }
+                        if let Err(error) = set_aside.try_insert(seq) {
+                            return FrontOutcome::ParkRefused { result, error };
+                        }
+                    }
 
                     return FrontOutcome::Matched { result };
                 }
             }
         }
+    }
+
+    /// `true` iff `seq` is still the live sequence of a resting order: the
+    /// index maps it to an id whose map entry stores exactly `seq` (the #155
+    /// stale-key rule). Takes a `DashMap` shard read lock briefly; call it
+    /// with no queue lock held. A `false` is final: sequences are never
+    /// reused, an index key is removed only after its map entry is gone or
+    /// re-sequenced, and a stored sequence only moves forward.
+    fn seq_is_live(&self, seq: u64) -> bool {
+        self.index.get(&seq).is_some_and(|entry| {
+            self.orders
+                .get(entry.value())
+                .is_some_and(|slot| slot.value().0 == seq)
+        })
     }
 
     /// Single-closure [`OrderQueue::update_entry_with`] with no reservation
@@ -1021,18 +1216,69 @@ impl OrderQueue {
     /// materialize via `snapshot_by_seq` (ascending insertion sequence), so the
     /// live queue order — including the "sizing up loses time priority"
     /// demotion — survives a restore.
-    #[must_use]
-    pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
-        let mut orders: Vec<(u64, Arc<OrderType<()>>)> =
-            self.orders.iter().map(|o| o.value().clone()).collect();
-        orders.sort_by_key(|(seq, o)| (o.timestamp(), *seq));
-        orders.into_iter().map(|(_, o)| o).collect()
+    ///
+    /// Every buffer grows fallibly (issue #164). The sort is the in-place,
+    /// allocation-free `sort_unstable_by_key`: it is deterministic because
+    /// the `(timestamp, sequence)` keys are unique (every live order carries
+    /// its own sequence), so no stable-sort scratch buffer is needed.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if a buffer cannot be reserved.
+    /// The queue is only read.
+    pub fn snapshot_vec(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
+        let mut pairs = self.collect_pairs()?;
+        // Determinism invariant: every collected pair carries a distinct live
+        // sequence (one map entry per id; tail sequences come from the checked
+        // `try_reserve_seq` and are never reused; an in-place update keeps
+        // the order's own sequence). The `(timestamp, seq)` keys are therefore
+        // unique, so the unstable sort has no ties to order arbitrarily. A
+        // change that could store two live orders under one sequence must
+        // revisit this sort.
+        pairs.sort_unstable_by_key(|(seq, o)| (o.timestamp(), *seq));
+        let mut out = Vec::new();
+        try_reserve_exact_vec(&mut out, pairs.len(), CapacityResource::OrderSnapshot)?;
+        out.extend(pairs.into_iter().map(|(_, o)| o));
+        Ok(out)
     }
 
     /// Convert the queue to a vector (for compatibility and snapshots).
-    #[must_use]
-    pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
+    ///
+    /// # Errors
+    ///
+    /// As [`OrderQueue::snapshot_vec`].
+    pub fn to_vec(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
         self.snapshot_vec()
+    }
+
+    /// Collects the committed `(stored_seq, order)` pairs from the `orders`
+    /// map (one entry per id), growing fallibly (issue #164).
+    ///
+    /// The buffer is pre-sized to the current length; a concurrent admission
+    /// that lands during the walk grows it through the same fallible path.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]).
+    fn collect_pairs(&self) -> Result<SeqPairs, PriceLevelError> {
+        let mut pairs: SeqPairs = Vec::new();
+        try_reserve_vec(
+            &mut pairs,
+            self.orders.len(),
+            CapacityResource::OrderSnapshot,
+        )?;
+        for entry in self.orders.iter() {
+            #[cfg(test)]
+            snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
+            try_push_vec(
+                &mut pairs,
+                entry.value().clone(),
+                CapacityResource::OrderSnapshot,
+            )?;
+        }
+        Ok(pairs)
     }
 
     /// Materialize the resting orders in ascending **insertion-sequence** order —
@@ -1060,44 +1306,63 @@ impl OrderQueue {
     /// snapshot round-trip re-enqueues in this consumption order, so exact
     /// price-time priority — including the "sizing up loses time priority"
     /// demotion — is preserved across a restore.
-    #[must_use]
-    pub(crate) fn snapshot_by_seq(&self) -> Vec<Arc<OrderType<()>>> {
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if a buffer cannot be reserved.
+    pub(crate) fn snapshot_by_seq(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
         let mut out = Vec::new();
-        self.snapshot_by_seq_into(&mut out);
-        out
+        self.snapshot_by_seq_into(&mut out)?;
+        Ok(out)
     }
 
     /// Fill `out` with the resting orders in ascending **insertion-sequence**
     /// order — the buffer-reuse variant of [`OrderQueue::snapshot_by_seq`].
     ///
-    /// `out` is cleared first, then extended in place, so a caller can reuse one
-    /// scratch buffer across calls and avoid the per-call allocation of the
-    /// returned `Vec`. Note the internal `(seq, order)` pairs buffer plus its
-    /// sort is still paid on every call — the reuse saves only the output `Vec`
-    /// allocation, not the collect-and-sort. The duplicate-free,
-    /// committed-pair guarantees are identical to
-    /// [`OrderQueue::snapshot_by_seq`]; the only difference is where the result
-    /// lands.
-    pub(crate) fn snapshot_by_seq_into(&self, out: &mut Vec<Arc<OrderType<()>>>) {
+    /// On success `out` holds exactly the materialized orders (its previous
+    /// contents are cleared), so a caller can reuse one scratch buffer across
+    /// calls and avoid the per-call allocation of the returned `Vec`. Note the
+    /// internal `(seq, order)` pairs buffer plus its sort is still paid on
+    /// every call — the reuse saves only the output `Vec` allocation, not the
+    /// collect-and-sort. The duplicate-free, committed-pair guarantees are
+    /// identical to [`OrderQueue::snapshot_by_seq`]; the only difference is
+    /// where the result lands.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the internal buffer or `out`
+    /// cannot grow. Every reservation happens before `out` is touched, so on
+    /// `Err` `out` is left exactly as the caller passed it (issue #164).
+    pub(crate) fn snapshot_by_seq_into(
+        &self,
+        out: &mut Vec<Arc<OrderType<()>>>,
+    ) -> Result<(), PriceLevelError> {
         // Build from the `orders` map (one entry per id) so a concurrent
         // re-sequencing can never surface an order twice or at a mixed
         // priority; see `snapshot_by_seq` for the full rationale.
-        let mut pairs: Vec<(u64, Arc<OrderType<()>>)> = self
-            .orders
-            .iter()
-            .map(|entry| {
-                #[cfg(test)]
-                snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
-                entry.value().clone()
-            })
-            .collect();
-        // Unstable sort is deterministic here because sequences are unique
-        // across live orders (the tail-appending paths take distinct seqs from
-        // the checked `try_reserve_seq`; an in-place update keeps the order's
-        // own seq).
+        let mut pairs = self.collect_pairs()?;
+        // Determinism invariant: the unstable sort is deterministic only
+        // because sequences are unique across live orders (one map entry per
+        // id; the tail-appending paths take distinct seqs from the checked
+        // `try_reserve_seq`, never reused; an in-place update keeps the
+        // order's own seq), so there are no ties. A change that could store
+        // two live orders under one sequence must revisit this sort. It sorts
+        // in place: no scratch allocation.
         pairs.sort_unstable_by_key(|(seq, _)| *seq);
+        // Reserve room for every pair WITHOUT clearing first: `try_reserve`
+        // guarantees `capacity >= len + additional`, so reserving
+        // `pairs.len() - out.len()` (nothing when `out` is already longer:
+        // its capacity then already covers every pair)
+        // makes the clear-and-extend below growth-free, and a refusal leaves
+        // `out` untouched.
+        if let Some(additional) = pairs.len().checked_sub(out.len()) {
+            try_reserve_vec(out, additional, CapacityResource::OrderSnapshot)?;
+        }
         out.clear();
         out.extend(pairs.into_iter().map(|(_, order)| order));
+        Ok(())
     }
 
     /// Builds a queue holding `orders` in vector order (the first element is
@@ -1152,13 +1417,19 @@ impl fmt::Debug for OrderQueue {
     /// (issue #172). A derived impl would format while iterating the shards,
     /// blocking writers to those shards for as long as the destination takes
     /// and deadlocking a destination that re-enters this queue.
+    ///
+    /// If the materialization cannot be reserved (issue #164) the `orders`
+    /// field shows the allocation-free capacity error instead: `Debug` never
+    /// reports a `fmt::Error` of its own, which would make `format!` panic.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let orders = self.snapshot_by_seq();
         let next_seq = self.next_seq.load(Ordering::Relaxed);
-        f.debug_struct("OrderQueue")
-            .field("orders", &orders)
-            .field("next_seq", &next_seq)
-            .finish_non_exhaustive()
+        let mut out = f.debug_struct("OrderQueue");
+        match &orders {
+            Ok(orders) => out.field("orders", orders),
+            Err(err) => out.field("orders", &format_args!("<unavailable: {err}>")),
+        };
+        out.field("next_seq", &next_seq).finish_non_exhaustive()
     }
 }
 
@@ -1180,7 +1451,10 @@ impl Serialize for OrderQueue {
         // own length during a concurrent re-sequencing. Insertion-sequence
         // order keeps the round-trip price-time priority (the DashMap alone has
         // no deterministic iteration order).
-        let ordered = self.snapshot_by_seq();
+        //
+        // The materialization is fallible (issue #164); a refused reservation
+        // is reported through the serializer's own error type.
+        let ordered = self.snapshot_by_seq().map_err(serde::ser::Error::custom)?;
         let mut seq = serializer.serialize_seq(Some(ordered.len()))?;
         for order in &ordered {
             seq.serialize_element(order.as_ref())?;
@@ -1215,11 +1489,21 @@ impl FromStr for OrderQueue {
     }
 }
 
+/// Writes `OrderQueue:orders=[<order>,...]` (timestamp order).
+///
+/// If the order materialization cannot be reserved (issue #164) this writes
+/// `OrderQueue:orders=!<error>` instead: `Display` must not report a
+/// `fmt::Error` of its own (`to_string` would panic), and [`FromStr`] rejects
+/// the marker, so a failed rendering is never parsed back as an empty queue.
 impl Display for OrderQueue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let orders = match self.snapshot_vec() {
+            Ok(orders) => orders,
+            Err(err) => return write!(f, "OrderQueue:orders=!{err}"),
+        };
         write!(f, "OrderQueue:orders=[")?;
         let mut first = true;
-        for order in self.snapshot_vec() {
+        for order in orders {
             if !first {
                 write!(f, ",")?;
             }
@@ -1240,6 +1524,25 @@ impl TryFrom<Vec<Arc<OrderType<()>>>> for OrderQueue {
     /// [`PriceLevelError::CounterExhausted`]. No order is silently dropped.
     fn try_from(orders: Vec<Arc<OrderType<()>>>) -> Result<Self, Self::Error> {
         Self::try_from_vec(orders)
+    }
+}
+
+/// Materializes the queue in `(timestamp, sequence)` order, like
+/// [`OrderQueue::to_vec`].
+///
+/// Fallible since v0.10 (issue #164): this replaces the infallible
+/// `From<OrderQueue> for Vec<Arc<OrderType<()>>>`, whose buffers grew
+/// infallibly (it also lived in `orders/`, which must not depend on
+/// `price_level/`).
+impl TryFrom<OrderQueue> for Vec<Arc<OrderType<()>>> {
+    type Error = PriceLevelError;
+
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the vector cannot be reserved.
+    fn try_from(queue: OrderQueue) -> Result<Self, Self::Error> {
+        queue.to_vec()
     }
 }
 

@@ -1,6 +1,7 @@
 mod caller_boundaries;
 mod counter_exhaustion;
 mod entry;
+mod fallible_growth;
 mod id_exhaustion;
 mod level;
 mod order_math_failures;

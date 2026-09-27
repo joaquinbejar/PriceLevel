@@ -1,9 +1,13 @@
-use crate::errors::PriceLevelError;
+use crate::errors::{CapacityResource, PriceLevelError};
 use crate::orders::OrderType;
 use crate::price_level::statistics::PriceLevelStatistics;
+use crate::utils::alloc::{
+    FallibleWriter, capacity_error, try_copy_str, try_push_vec, try_reserve_exact_vec,
+    try_reserve_string, try_reserve_vec,
+};
 use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{Price, Quantity};
-use serde::de::{self, MapAccess, Visitor};
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
@@ -14,6 +18,16 @@ use std::sync::Arc;
 /// A snapshot of a price level in the order book. This struct provides a summary of the state of a specific price level
 /// at a given point in time, including the price, visible and hidden quantities, order count, the orders
 /// at that level, and the per-level execution statistics.
+///
+/// # Copies and allocation (issue #164)
+///
+/// The derived [`Clone`] copies the orders vector with an infallible
+/// allocation: the standard trait cannot report a refused allocation, so on
+/// allocator failure it aborts the process. It is kept for ergonomic use in
+/// tests and tooling. Code that must survive a refused allocation uses
+/// [`PriceLevelSnapshot::try_clone`], which reserves through
+/// `try_reserve_exact` and returns [`PriceLevelError::CapacityExceeded`]. The
+/// derived [`Default`] allocates nothing (empty vector, zeroed statistics).
 #[derive(Debug, Default, Clone)]
 pub struct PriceLevelSnapshot {
     /// The price of this level, in price ticks.
@@ -141,6 +155,37 @@ impl PriceLevelSnapshot {
     #[must_use]
     pub fn into_orders(self) -> Vec<Arc<OrderType<()>>> {
         self.orders
+    }
+
+    /// Fallible owned copy (issue #164): the orders vector is reserved with
+    /// `try_reserve_exact` before anything is copied (the copy itself only
+    /// clones `Arc` pointers), and the statistics are copied without heap
+    /// allocation.
+    ///
+    /// Prefer this over [`Clone::clone`], which aborts the process if the
+    /// allocator refuses the vector.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the orders vector cannot be
+    /// reserved; `self` is only read.
+    pub fn try_clone(&self) -> Result<Self, PriceLevelError> {
+        let mut orders = Vec::new();
+        try_reserve_exact_vec(
+            &mut orders,
+            self.orders.len(),
+            CapacityResource::OrderSnapshot,
+        )?;
+        orders.extend(self.orders.iter().cloned());
+        Ok(Self {
+            price: self.price,
+            visible_quantity: self.visible_quantity,
+            hidden_quantity: self.hidden_quantity,
+            order_count: self.order_count,
+            orders,
+            statistics: self.statistics.clone(),
+        })
     }
 
     /// Constructs a snapshot with pre-computed aggregates and empty statistics.
@@ -347,6 +392,11 @@ const SUPPORTED_SNAPSHOT_VERSIONS: &[u32] = &[2, 3, 4];
 ///
 /// All fields are private to protect checksum integrity.
 /// Use the provided accessor methods to read package data.
+///
+/// As with [`PriceLevelSnapshot`], the derived [`Clone`] allocates
+/// infallibly (the trait cannot report a refused allocation);
+/// [`PriceLevelSnapshotPackage::try_clone`] is the fallible copy (issue
+/// #164).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceLevelSnapshotPackage {
     /// Version of the serialized snapshot schema to support future migrations.
@@ -354,6 +404,7 @@ pub struct PriceLevelSnapshotPackage {
     /// Captured snapshot data.
     snapshot: PriceLevelSnapshot,
     /// Hex-encoded checksum used to validate the snapshot integrity.
+    #[serde(deserialize_with = "deserialize_checksum")]
     checksum: String,
 }
 
@@ -375,6 +426,24 @@ impl PriceLevelSnapshotPackage {
     pub fn checksum(&self) -> &str {
         &self.checksum
     }
+
+    /// Fallible owned copy (issue #164): the snapshot is copied with
+    /// [`PriceLevelSnapshot::try_clone`] and the checksum string through
+    /// `try_reserve_exact`.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`] or
+    /// [`CapacityResource::SerializationBuffer`]) if a buffer cannot be
+    /// reserved; `self` is only read.
+    pub fn try_clone(&self) -> Result<Self, PriceLevelError> {
+        Ok(Self {
+            version: self.version,
+            snapshot: self.snapshot.try_clone()?,
+            checksum: try_copy_str(&self.checksum, CapacityResource::SerializationBuffer)?,
+        })
+    }
 }
 
 impl PriceLevelSnapshotPackage {
@@ -383,9 +452,11 @@ impl PriceLevelSnapshotPackage {
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if refreshing the snapshot
-    /// aggregates overflows a quantity, or [`PriceLevelError::SerializationError`]
-    /// if the snapshot payload cannot be encoded while computing its SHA-256
-    /// checksum.
+    /// aggregates overflows a quantity, [`PriceLevelError::CapacityExceeded`]
+    /// (resource [`CapacityResource::SerializationBuffer`]) if the hex checksum
+    /// cannot be reserved (issue #164), or
+    /// [`PriceLevelError::SerializationError`] if the snapshot payload cannot
+    /// be encoded while computing its SHA-256 checksum.
     pub fn new(mut snapshot: PriceLevelSnapshot) -> Result<Self, PriceLevelError> {
         snapshot.refresh_aggregates()?;
 
@@ -400,22 +471,50 @@ impl PriceLevelSnapshotPackage {
 
     /// Serializes the package to JSON.
     ///
+    /// The output buffer grows through `try_reserve` (issue #164): a refused
+    /// reservation stops the encoding and is reported as the fixed-size
+    /// [`PriceLevelError::CapacityExceeded`], not as an allocation abort.
+    ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::SerializationError`] if the package cannot be
-    /// encoded to a JSON string.
+    /// Returns [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SerializationBuffer`]) if the output buffer cannot
+    /// grow, and [`PriceLevelError::SerializationError`] if the package cannot
+    /// otherwise be encoded to a JSON string.
     pub fn to_json(&self) -> Result<String, PriceLevelError> {
-        serde_json::to_string(self).map_err(|error| PriceLevelError::SerializationError {
-            message: error.to_string(),
+        let mut writer = FallibleWriter::try_with_capacity(JSON_INITIAL_CAPACITY)?;
+        if let Err(error) = serde_json::to_writer(&mut writer, self) {
+            // A refused reservation is reported as its typed, allocation-free
+            // error; `serde_json`'s own wrapper of the `io::Error` is dropped.
+            if let Some(failure) = writer.take_failure() {
+                return Err(failure);
+            }
+            return Err(PriceLevelError::SerializationError {
+                message: error.to_string(),
+            });
+        }
+        // `serde_json` only emits UTF-8; the conversion reuses the buffer.
+        String::from_utf8(writer.into_inner()).map_err(|error| {
+            PriceLevelError::SerializationError {
+                message: error.to_string(),
+            }
         })
     }
 
     /// Deserializes a package from JSON.
     ///
+    /// The package's own collections (the orders vector and the checksum
+    /// string) are decoded through fallible reservations (issue #164); a
+    /// refusal surfaces through `serde_json`'s error as a
+    /// [`PriceLevelError::DeserializationError`] whose message names the
+    /// capacity failure. Transient buffers internal to `serde_json` are
+    /// outside this crate (see `doc/panic-boundaries.md`).
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::DeserializationError`] if `data` is not a
-    /// valid JSON representation of a snapshot package. The returned package is
+    /// valid JSON representation of a snapshot package, or if one of the
+    /// package's collections cannot be reserved. The returned package is
     /// not yet checksum-validated; call [`Self::validate`] or
     /// [`Self::into_snapshot`] to verify integrity.
     pub fn from_json(data: &str) -> Result<Self, PriceLevelError> {
@@ -431,6 +530,9 @@ impl PriceLevelSnapshotPackage {
     /// Returns [`PriceLevelError::InvalidOperation`] if the package's format
     /// version is not one of the supported versions (v2, v3, v4),
     /// [`PriceLevelError::SerializationError`] if the snapshot payload cannot be re-encoded to recompute the checksum,
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SerializationBuffer`]) if the recomputed hex
+    /// checksum or the copy of the stored one cannot be reserved (issue #164),
     /// and [`PriceLevelError::ChecksumMismatch`] if the recomputed SHA-256
     /// checksum does not match the stored one (tampered or corrupted snapshot).
     // Snapshot restoration / validation is a cold path: keep it out of line.
@@ -447,8 +549,9 @@ impl PriceLevelSnapshotPackage {
 
         let computed = Self::compute_checksum(&self.snapshot)?;
         if computed != self.checksum {
+            // The stored checksum is input-sized: copy it fallibly (#164).
             return Err(PriceLevelError::ChecksumMismatch {
-                expected: self.checksum.clone(),
+                expected: try_copy_str(&self.checksum, CapacityResource::SerializationBuffer)?,
                 actual: computed,
             });
         }
@@ -463,8 +566,9 @@ impl PriceLevelSnapshotPackage {
     /// Returns the same errors as [`Self::validate`]:
     /// [`PriceLevelError::InvalidOperation`] on an unsupported format version,
     /// [`PriceLevelError::SerializationError`] if the payload cannot be
-    /// re-encoded, and [`PriceLevelError::ChecksumMismatch`] if the stored
-    /// checksum does not match the recomputed one.
+    /// re-encoded, [`PriceLevelError::CapacityExceeded`] if a checksum buffer
+    /// cannot be reserved, and [`PriceLevelError::ChecksumMismatch`] if the
+    /// stored checksum does not match the recomputed one.
     pub fn into_snapshot(self) -> Result<PriceLevelSnapshot, PriceLevelError> {
         self.validate()?;
         Ok(self.snapshot)
@@ -474,13 +578,17 @@ impl PriceLevelSnapshotPackage {
     fn compute_checksum(snapshot: &PriceLevelSnapshot) -> Result<String, PriceLevelError> {
         use std::fmt::Write as _;
 
-        let payload =
-            serde_json::to_vec(snapshot).map_err(|error| PriceLevelError::SerializationError {
-                message: error.to_string(),
-            })?;
-
+        // Stream the JSON payload straight into the hasher (issue #164): no
+        // payload buffer is materialized, so there is no growth to fail.
+        // `serde_json::to_vec` is `to_writer` into a `Vec` with the same
+        // compact formatter, so the hashed bytes, and therefore the checksum,
+        // are identical to the former buffered encoding.
         let mut hasher = Sha256::new();
-        hasher.update(payload);
+        serde_json::to_writer(DigestWriter(&mut hasher), snapshot).map_err(|error| {
+            PriceLevelError::SerializationError {
+                message: error.to_string(),
+            }
+        })?;
 
         // `digest` 0.11 returns the digest as a `hybrid_array::Array`, which —
         // unlike the `generic_array::GenericArray` from 0.10 — does not
@@ -488,7 +596,20 @@ impl PriceLevelSnapshotPackage {
         // by hand. The bytes are defined by the algorithm and are unchanged, so
         // the produced checksum string is byte-identical to the 0.10 output.
         let checksum_bytes = hasher.finalize();
-        let mut checksum = String::with_capacity(checksum_bytes.len() * 2);
+        // Two hex digits per byte. The digest length is fixed (32), but the
+        // capacity product is still checked and the buffer reserved fallibly
+        // (issue #164); the writes below then fit the reservation exactly and
+        // never grow the string.
+        let hex_len = checksum_bytes
+            .len()
+            .checked_mul(2)
+            .ok_or_else(|| capacity_error(CapacityResource::SerializationBuffer, usize::MAX))?;
+        let mut checksum = String::new();
+        try_reserve_string(
+            &mut checksum,
+            hex_len,
+            CapacityResource::SerializationBuffer,
+        )?;
         for byte in checksum_bytes {
             // Writing to a `String` is infallible; `{byte:02x}` is the same
             // lowercase, zero-padded, two-hex-digits-per-byte encoding the
@@ -497,6 +618,162 @@ impl PriceLevelSnapshotPackage {
         }
         Ok(checksum)
     }
+}
+
+/// Initial JSON output reservation, matching `serde_json::to_string`.
+const JSON_INITIAL_CAPACITY: usize = 128;
+
+/// An [`std::io::Write`] adapter feeding every byte into a SHA-256 hasher, so
+/// the checksum payload is never buffered (issue #164). Infallible: hashing
+/// allocates nothing.
+struct DigestWriter<'a>(&'a mut Sha256);
+
+impl std::io::Write for DigestWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serializes a borrowed orders slice as a JSON-style sequence of plain
+/// orders, with no intermediate vector (issue #164; replaces the
+/// `Vec<&OrderType<()>>` collected for issue #72). `Serialize for &T`
+/// forwards to `T`, so the output is byte-identical to serializing a
+/// `Vec<OrderType<()>>`: checksums and round-trips are unchanged.
+pub(crate) struct BorrowedOrders<'a>(pub(crate) &'a [Arc<OrderType<()>>]);
+
+impl Serialize for BorrowedOrders<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(self.0.iter().map(Arc::as_ref))
+    }
+}
+
+/// Upper bound, in bytes, of the up-front reservation a decoded sequence may
+/// take from its (input-controlled) length hint (issue #164). Longer
+/// sequences still decode: they grow element by element through the same
+/// fallible path. Mirrors `serde`'s own "cautious" pre-allocation rule.
+const MAX_DECODE_PREALLOC_BYTES: usize = 1 << 20;
+
+/// An element type a decoded order sequence can hold.
+pub(crate) trait DecodedOrder: Sized {
+    /// Wraps one decoded order.
+    fn wrap(order: OrderType<()>) -> Self;
+}
+
+impl DecodedOrder for OrderType<()> {
+    #[inline]
+    fn wrap(order: OrderType<()>) -> Self {
+        order
+    }
+}
+
+impl DecodedOrder for Arc<OrderType<()>> {
+    #[inline]
+    fn wrap(order: OrderType<()>) -> Self {
+        Arc::new(order)
+    }
+}
+
+/// Decodes a sequence of plain orders into a `Vec<U>` whose every growth goes
+/// through `try_reserve` (issue #164). A refusal is reported through the
+/// deserializer's error type as the fixed-size
+/// [`PriceLevelError::CapacityExceeded`] (resource
+/// [`CapacityResource::OrderSnapshot`]).
+pub(crate) struct OrdersSeed<U>(std::marker::PhantomData<fn() -> U>);
+
+impl<U> OrdersSeed<U> {
+    pub(crate) fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<'de, U: DecodedOrder> DeserializeSeed<'de> for OrdersSeed<U> {
+    type Value = Vec<U>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de, U: DecodedOrder> Visitor<'de> for OrdersSeed<U> {
+    type Value = Vec<U>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a sequence of orders")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut out: Vec<U> = Vec::new();
+        let cap = MAX_DECODE_PREALLOC_BYTES
+            .checked_div(std::mem::size_of::<U>())
+            .unwrap_or(0);
+        let hint = seq.size_hint().unwrap_or(0).min(cap);
+        try_reserve_vec(&mut out, hint, CapacityResource::OrderSnapshot)
+            .map_err(de::Error::custom)?;
+        while let Some(order) = seq.next_element::<OrderType<()>>()? {
+            try_push_vec(&mut out, U::wrap(order), CapacityResource::OrderSnapshot)
+                .map_err(de::Error::custom)?;
+        }
+        Ok(out)
+    }
+}
+
+/// `deserialize_with` helper for `PriceLevelData::orders`: the fallible
+/// [`OrdersSeed`] decode (issue #164).
+pub(crate) fn deserialize_plain_orders<'de, D>(
+    deserializer: D,
+) -> Result<Vec<OrderType<()>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    OrdersSeed::<OrderType<()>>::new().deserialize(deserializer)
+}
+
+/// `deserialize_with` helper for the package checksum: a borrowed or
+/// transient string is copied through `try_reserve_exact` (issue #164); an
+/// owned string handed over by the deserializer is taken as is.
+fn deserialize_checksum<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ChecksumVisitor;
+
+    impl Visitor<'_> for ChecksumVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a hex checksum string")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<String, E>
+        where
+            E: de::Error,
+        {
+            try_copy_str(value, CapacityResource::SerializationBuffer).map_err(E::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<String, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+    }
+
+    deserializer.deserialize_string(ChecksumVisitor)
 }
 
 impl Serialize for PriceLevelSnapshot {
@@ -515,14 +792,12 @@ impl Serialize for PriceLevelSnapshot {
         state.serialize_field("order_count", &self.order_count)?;
 
         // Serialize the borrowed orders rather than deep-copying every
-        // `OrderType<()>` by value (issue #72). `Serialize for &T` forwards to
-        // `T`'s impl, so a sequence of `&OrderType<()>` produces byte-identical
-        // output to the previous `Vec<OrderType<()>>` — the checksum and
-        // round-trip are unchanged — while only copying `Arc` pointers, not the
-        // whole order payload.
-        let borrowed_orders: Vec<&OrderType<()>> = self.orders.iter().map(Arc::as_ref).collect();
-
-        state.serialize_field("orders", &borrowed_orders)?;
+        // `OrderType<()>` by value (issue #72), and without collecting even
+        // the pointers into a vector (issue #164): `BorrowedOrders` streams
+        // the slice. `Serialize for &T` forwards to `T`'s impl, so the output
+        // is byte-identical to the previous `Vec<OrderType<()>>`; the
+        // checksum and round-trip are unchanged.
+        state.serialize_field("orders", &BorrowedOrders(&self.orders))?;
         state.serialize_field("statistics", &self.statistics)?;
 
         state.end()
@@ -640,8 +915,11 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                             if orders.is_some() {
                                 return Err(de::Error::duplicate_field("orders"));
                             }
-                            let plain_orders: Vec<OrderType<()>> = map.next_value()?;
-                            orders = Some(plain_orders.into_iter().map(Arc::new).collect());
+                            // Decoded straight into the `Arc` vector through
+                            // fallible growth (issue #164): no intermediate
+                            // plain-order vector, no infallible `collect`.
+                            orders =
+                                Some(map.next_value_seed(OrdersSeed::<Arc<OrderType<()>>>::new())?);
                         }
                         Field::Statistics => {
                             if statistics.is_some() {
@@ -659,6 +937,9 @@ impl<'de> Deserialize<'de> for PriceLevelSnapshot {
                     hidden_quantity.ok_or_else(|| de::Error::missing_field("hidden_quantity"))?;
                 let order_count =
                     order_count.ok_or_else(|| de::Error::missing_field("order_count"))?;
+                // `unwrap_or_default` of a missing field: an empty `Vec` and
+                // empty statistics, neither of which allocates (issue #164
+                // audit).
                 let orders = orders.unwrap_or_default();
                 // `statistics` is optional on deserialize so a payload that omits
                 // it (e.g. a hand-built fixture) restores with empty, unstamped

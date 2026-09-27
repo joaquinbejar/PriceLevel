@@ -28,12 +28,11 @@ mod tests {
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::PriceLevel;
     use crate::price_level::order_queue::{
-        FrontAction, FrontOutcome, OrderQueue, UpdateDecision, set_remove_gap_hook,
+        FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, UpdateDecision, set_remove_gap_hook,
         test_take_front_scan_visits,
     };
     use crate::utils::{Price, Quantity, TimestampMs};
     use std::cell::{Cell, RefCell};
-    use std::collections::HashSet;
     use std::num::NonZeroU64;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -208,7 +207,7 @@ mod tests {
     /// park a maker sharing the taker id, fully consume every other one.
     /// Returns the number of fills.
     fn sweep_with_self_skip(queue: &OrderQueue, taker: Id, max_fills: usize) -> usize {
-        let mut set_aside = HashSet::new();
+        let mut set_aside = ParkedSeqs::new();
         let mut fills = 0usize;
         while fills < max_fills {
             let outcome = queue.match_front(&mut set_aside, |_seq, order| {
@@ -222,6 +221,7 @@ mod tests {
                 FrontOutcome::Empty => break,
                 FrontOutcome::Matched { result: true } => fills += 1,
                 FrontOutcome::Matched { result: false } => {}
+                FrontOutcome::ParkRefused { .. } => panic!("unexpected park refusal"),
             }
         }
         fills
@@ -312,7 +312,7 @@ mod tests {
     /// park, `None` when the scan found nothing.
     fn self_skip_step(
         queue: &OrderQueue,
-        set_aside: &RefCell<HashSet<u64>>,
+        set_aside: &RefCell<ParkedSeqs>,
         taker: Id,
     ) -> Option<bool> {
         let mut set_aside = set_aside.borrow_mut();
@@ -325,6 +325,7 @@ mod tests {
         }) {
             FrontOutcome::Empty => None,
             FrontOutcome::Matched { result } => Some(result),
+            FrontOutcome::ParkRefused { .. } => panic!("unexpected park refusal"),
         }
     }
 
@@ -354,7 +355,7 @@ mod tests {
         const K: u64 = 64;
         let taker = Id::from_u64(10_000);
         let queue = Rc::new(OrderQueue::new());
-        let set_aside = Rc::new(RefCell::new(HashSet::new()));
+        let set_aside = Rc::new(RefCell::new(ParkedSeqs::new()));
         let depth = Rc::new(Cell::new(0u64));
         let fills = Rc::new(Cell::new(0u64));
         let visits = Rc::new(Cell::new((0u64, 0u64)));

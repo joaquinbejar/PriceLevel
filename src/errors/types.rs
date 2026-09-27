@@ -27,6 +27,25 @@ pub enum CapacityResource {
     /// further sequence values without wrapping, so no identifier is minted.
     /// `additional` is the number of identifiers that were requested.
     IdSequence,
+    /// A materialized vector of resting orders (issue #164): the queue views
+    /// (`snapshot_orders`, `snapshot_by_insertion_seq`,
+    /// `snapshot_by_seq_into`, `OrderQueue::snapshot_vec` / `to_vec`), their
+    /// internal `(sequence, order)` sort buffer, the fill-or-kill dry-run
+    /// working copy, `PriceLevelData` and a snapshot's orders vector
+    /// (including one decoded from JSON). `additional` is the number of
+    /// orders that could not be reserved.
+    OrderSnapshot,
+    /// The per-sweep parked-sequence set of `PriceLevel::match_order` (issue
+    /// #164): the insertion sequences of makers the sweep has set aside.
+    SweepScratch,
+    /// The duplicate-id set `PriceLevel::from_snapshot` builds while
+    /// validating a snapshot before restoring it (issue #164).
+    RestoreScratch,
+    /// A serialization output buffer (issue #164): the snapshot-package JSON
+    /// text, its hex checksum, or a fallibly copied checksum / message string
+    /// of a snapshot package. `additional` is the number of bytes that could
+    /// not be reserved.
+    SerializationBuffer,
 }
 
 impl CapacityResource {
@@ -40,6 +59,10 @@ impl CapacityResource {
             Self::ValidationScratch => "validation scratch",
             Self::Text => "text",
             Self::IdSequence => "id sequence",
+            Self::OrderSnapshot => "order snapshot",
+            Self::SweepScratch => "sweep scratch",
+            Self::RestoreScratch => "restore scratch",
+            Self::SerializationBuffer => "serialization buffer",
         }
     }
 }

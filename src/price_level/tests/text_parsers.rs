@@ -42,6 +42,7 @@ mod tests {
         assert_eq!(parsed.to_string(), level.to_string());
         let ids: Vec<Id> = parsed
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();

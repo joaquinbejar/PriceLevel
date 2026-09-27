@@ -100,7 +100,7 @@ mod tests {
     }
 
     fn state(level: &PriceLevel) -> LevelState {
-        let orders = level.snapshot_by_insertion_seq();
+        let orders = level.snapshot_by_insertion_seq().expect("materialize");
         LevelState {
             ids: orders.iter().map(|o| o.id()).collect(),
             visible: orders
@@ -194,6 +194,7 @@ mod tests {
             assert!(
                 level
                     .snapshot_by_insertion_seq()
+                    .expect("materialize")
                     .iter()
                     .all(|o| o.id() != *id)
             );
