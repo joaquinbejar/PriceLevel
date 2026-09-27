@@ -299,7 +299,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PriceLevelSnapshot::try_clone` and `PriceLevelSnapshotPackage::try_clone`
   (#164): fallible owned copies (the derived `Clone` is kept and documented
   as aborting on allocator failure).
-
+- **Production Panic Policy CI gate (#173).** No public API change.
+  `[lints.clippy]` (`Cargo.toml`) denies `unwrap_used`, `expect_used`,
+  `panic`, `unreachable`, `todo`, `unimplemented`, `indexing_slicing`,
+  `string_slice`, `arithmetic_side_effects`, `cast_possible_truncation`,
+  `cast_sign_loss`, `cast_possible_wrap`, `manual_assert`,
+  `panic_in_result_fn`, `get_unwrap` and `exit` crate-wide; `clippy.toml`'s
+  `allow-*-in-tests` keys exempt real test code without exempting a
+  production function's `#[cfg(test)]` branch. `scripts/check_panic_policy.py`
+  (`make lint-panic`, wired into `make lint` and `make pre-push`) closes the
+  gaps clippy cannot cover on its own: the `assert!` / `debug_assert!` macro
+  family (no clippy restriction lint bans them) and `saturating_*` /
+  `wrapping_*` on production state, both re-checked specifically inside a
+  standalone `#[cfg(test)]` helper that clippy's own test heuristic would
+  otherwise wrongly exempt. Fixtures proving the gate under
+  `scripts/panic_policy_fixtures/` (not part of the published crate). See
+  `doc/panic-boundaries.md` for what this automated coverage does and does
+  not prove.
 - `UuidGenerator::EXHAUSTED`, `UuidGenerator::is_exhausted`,
   `UuidGenerator::remaining`, `UuidGenerator::namespace` and
   `CapacityResource::IdSequence` (#168).

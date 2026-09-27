@@ -207,6 +207,49 @@ does not promise recovery from it. The derived `Clone` of
 `PriceLevelSnapshot` / `PriceLevelSnapshotPackage` is kept for convenience
 and aborts the same way; use their `try_clone`.
 
+## Automated enforcement scope and its limits (issue #173)
+
+The Production Panic Policy gate (`[lints.clippy]` in `Cargo.toml`,
+`clippy.toml`, and `scripts/check_panic_policy.py` via `make lint-panic`,
+wired into `make lint` / `make pre-push` and CI's `lint.yml`) is syntax-level
+enforcement of the "no explicit panic form in crate-owned production code"
+half of the policy. It is not, and does not claim to be, a proof that any
+code path here — let alone the caller-supplied code this document is about —
+never panics:
+
+- It denies `.unwrap()` / `.expect()` / `.unwrap_err()` / `.expect_err()` /
+  `panic!` / `unreachable!` / `todo!` / `unimplemented!` / indexing /
+  string-slicing / narrowing-or-sign-changing casts / raw arithmetic
+  (clippy), and `assert!` / `assert_eq!` / `assert_ne!` / `debug_assert!` /
+  `debug_assert_eq!` / `debug_assert_ne!` / `saturating_*` / `wrapping_*`
+  (the script — clippy has no lint for the assert family at all). Both tools
+  exempt real test code and re-check a standalone `#[cfg(test)]` production
+  helper (this crate's `test_seam` modules, hook installers/firers) that
+  clippy's own `#[cfg(test)]` heuristic would otherwise wrongly wave
+  through.
+- It does **not** see through a documented panic condition on a dependency
+  call, an atomic-ordering assumption, an iterator/time arithmetic edge
+  case, or a caller-supplied `Clone` / `Drop` / formatter / callback — every
+  boundary in the inventory above. Those stay a manual review question:
+  "Review collection operations, atomic orderings, time/iterator
+  arithmetic, serialization and dependency calls for their documented panic
+  conditions... every reachable operation... must be reviewed"
+  (`rules/global_rules.md`'s Production Panic Policy) is retained as a
+  checklist item, not replaced by a green CI run.
+- It does not run over `benches/`, `examples/`, or the `tests` integration
+  targets — those carry their own crate-root `#![allow(...)]` (see each
+  file's header comment) because they are not production code, not because
+  they are exempt from review as demos / harnesses in their own right.
+- A narrow, reviewed exception is still an exception, not a fix: the
+  `f64`-to-integer boundary casts in `src/utils/value.rs` carry a
+  function-scoped `#[allow(clippy::cast_possible_truncation,
+  clippy::cast_sign_loss)]` with a comment naming the preceding range check
+  that makes the cast exact; `src/utils/uuid.rs`'s `DECIMAL_RADIX` carries
+  the script's own `panic-policy-allow-saturating` marker for the same
+  reason (a provably-exact, compile-time-only value). Every other finding
+  the gate would otherwise raise on `main` at the time of #173 was fixed,
+  not allowed.
+
 ## Tests
 
 `src/price_level/tests/fallible_growth.rs` injects reservation refusals
@@ -218,3 +261,7 @@ and checks the typed error with queue, counters, caller buffers and the
 `src/orders/tests/order_type.rs` use deliberately panicking subscribers,
 formatting destinations, payload `Clone` impls and `map_extra_fields`
 closures, with test-only `catch_unwind`, to pin the behaviour above.
+`scripts/check_panic_policy.py --self-test` (`scripts/panic_policy_fixtures/`)
+pins the gate's own scanner behaviour: which forms fail, which test shapes
+pass, and that comments / string literals mentioning a forbidden form in
+prose are never mistaken for code.

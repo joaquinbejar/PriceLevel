@@ -413,9 +413,12 @@ remove, atomic counter updates, and `iter_orders` traversal.
 
 All must pass — failing any means not ready:
 
-- `make pre-push` (runs `fix`, `fmt`, `lint-fix`, `test`, `readme`, `doc`)
-  OR the explicit four:
+- `make pre-push` (runs `fix`, `lint-fix`, `fmt`, `lint-panic`, `test`,
+  `readme`, `doc` — `lint-fix` before `fmt` so a `clippy --fix` rewrite is
+  reformatted, not left dirty)
+  OR the explicit five:
   - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `make lint-panic` (`scripts/check_panic_policy.py`; see below)
   - `cargo fmt --all --check`
   - `cargo test` (the `make test` target sets `LOGLEVEL=WARN`)
   - `cargo build --release` (zero warnings)
@@ -423,6 +426,16 @@ All must pass — failing any means not ready:
   no explicit panic/assertion forms or panicking extraction/indexing; checked
   arithmetic, capacities and dependency preconditions; external boundaries
   documented; failure paths preserve state. Test-only code may panic.
+  `[lints.clippy]` (`Cargo.toml`) plus `clippy.toml`'s `allow-*-in-tests` keys
+  enforce most of this automatically; `make lint-panic` additionally denies
+  the `assert!` / `debug_assert!` macro family (no clippy restriction lint
+  covers them) and `saturating_*` / `wrapping_*` on production state
+  (including inside a standalone `#[cfg(test)]` helper that is not a `mod
+  tests { ... }` block — clippy's own test heuristic would otherwise exempt
+  it too). Neither tool proves the crate is panic-free; the manual review
+  above still applies, and `doc/panic-boundaries.md` covers what automated
+  coverage cannot see (callback obligations, dependency preconditions,
+  allocator OOM).
 - `#[must_use]` on all pure functions and query accessors
 - `#[inline]` on small hot-path helpers, `#[cold]` on error paths
 - No new production `unsafe`
