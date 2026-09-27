@@ -81,6 +81,15 @@ public methods:
   so single-side coherence holds under arbitrary concurrent admissions and
   removals (issue #126).
 
+## Caller-supplied code
+
+Generic payload impls, `map_extra_fields`, formatter destinations,
+serializers, `iter_orders` loop bodies and the `tracing` subscriber are
+external code. They must not panic, and the library does not recover if they
+do. `doc/panic-boundaries.md` records, for each call, where it runs, whether a
+guard is held and whether state has been partially mutated (#172). The
+"Caller-Supplied Code" section of `src/lib.rs` is the user-facing summary.
+
 ## Performance evidence
 
 No throughput or latency figures are currently published. The historical

@@ -117,6 +117,34 @@ The supported execution model:
   level, so under concurrent same-side resizes it is not a linearizable
   point-in-time view (tracked in #162).
 
+### Caller-Supplied Code
+
+Some operations run code the crate does not own: trait impls on a generic
+[`OrderType<T>`] payload, the [`OrderType::map_extra_fields`] closure, a
+caller's formatter destination, serializer or deserializer, the body of an
+[`PriceLevel::iter_orders`] loop, and the process-installed `tracing`
+subscriber. Trait bounds cannot express "does not panic", so that is a
+caller obligation: supplied code **must not panic** and must not re-enter
+the level that is calling it, except where documented.
+
+- **Generic payloads are pure.** `OrderType<T>` utilities hold no lock and
+  mutate no library state. The engine stores only `OrderType<()>`, so no
+  payload code runs under its locks.
+- **No caller code under a shard write lock.** Formatting and serializing a
+  level or queue materialize first and hold no lock, and no `tracing` event
+  is emitted under a `DashMap` shard write lock or between a match step's
+  queue commit and its counter bookkeeping.
+- **Remaining boundaries.** `iter_orders` holds a shard read lock while the
+  loop body runs. A subscriber panic during a sweep loses the `MatchResult`
+  for trades already committed, and during a `Fok` sweep it poisons the
+  level.
+- **No recovery promise.** The library does not catch caller panics,
+  installs no panic hook and never aborts deliberately. An allocator OOM
+  abort is not a typed error.
+
+The per-call inventory (guard held, partial mutation, unwind effect) is in
+[`doc/panic-boundaries.md`](https://github.com/joaquinbejar/PriceLevel/blob/main/doc/panic-boundaries.md).
+
 ### Performance Evidence
 
 This crate currently publishes **no** throughput or latency figures. The

@@ -4,6 +4,10 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Reference price type for pegged orders
+///
+/// The derived `Serialize` / `Deserialize` impls hand this unit variant to the
+/// caller's serializer / deserializer; that code must not panic. No lock or
+/// library state is involved (issue #172).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PegReferenceType {

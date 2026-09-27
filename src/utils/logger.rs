@@ -85,6 +85,17 @@ static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// **Behavior:**
 /// - Concurrent calls to this function result in the logger being initialized only once.
 ///
+/// # Subscriber boundary (issue #172)
+///
+/// This is a convenience for binaries and tests; the library itself never
+/// installs a subscriber. Every `tracing` event the crate emits is dispatched
+/// synchronously, on the calling thread, into whichever subscriber the process
+/// installed (this one or the caller's own). That subscriber is external code
+/// and **must not panic** or call back into the level that emitted the event.
+/// The library does not catch a subscriber panic; see
+/// `PriceLevel::match_order` and `doc/panic-boundaries.md` for where events
+/// are emitted relative to locks and mutations.
+///
 /// # Errors
 /// Returns an error if initializing the global subscriber fails.
 #[allow(dead_code)]
