@@ -111,9 +111,11 @@ The supported execution model:
   updates and snapshots on that level block for an `O(depth)` section. The
   other time-in-force paths skip that guard, but skipping it is **not** the
   absence of locking: they still take the per-maker shard lock.
-- **Readers are always allowed.** Counter reads never block; a
-  [`PriceLevel::snapshot`] is the mutually consistent view and waits only behind
-  an in-flight fill-or-kill or a held shard lock.
+- **Readers are always allowed.** Counter reads never block. A
+  [`PriceLevel::snapshot`] waits only behind an in-flight fill-or-kill or a
+  held shard lock; it walks the shards without a transaction over the whole
+  level, so under concurrent same-side resizes it is not a linearizable
+  point-in-time view (tracked in #162).
 
 ### Performance Evidence
 

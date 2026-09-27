@@ -30,8 +30,10 @@ no feature flags.
    tranche is re-sequenced at the tail), emits a `Trade`, and updates the
    counters and statistics. The result is a `MatchResult`.
 3. `PriceLevel::update_order` cancels, resizes or replaces an order in place.
-4. `PriceLevel::snapshot` materializes a mutually consistent view that
-   `PriceLevelSnapshotPackage` wraps with a SHA-256 checksum.
+4. `PriceLevel::snapshot` materializes the orders and recomputes the
+   aggregates from them; `PriceLevelSnapshotPackage` wraps it with a SHA-256
+   checksum. It is not a linearizable point-in-time view under concurrent
+   same-side resizes (see #162).
 
 ## Concurrency model
 
