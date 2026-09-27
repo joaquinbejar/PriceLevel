@@ -10,7 +10,7 @@ use crate::price_level::order_queue::{
 use crate::price_level::snapshot::{BorrowedOrders, SnapshotAggregates, deserialize_plain_orders};
 use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
-use crate::utils::alloc::try_reserve_exact_vec;
+use crate::utils::alloc::{try_push_back_deque, try_reserve_exact_vec};
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
     try_reserve_str,
@@ -83,12 +83,67 @@ pub(crate) fn sweep_capacity_hint(incoming_quantity: u64, order_count: usize) ->
 /// disagrees with the queue.
 #[cold]
 #[inline(never)]
-fn topology_underflow(price: u128) -> PriceLevelError {
+pub(crate) fn topology_underflow(price: u128) -> PriceLevelError {
     PriceLevelError::InvalidOperation {
         message: format!(
             "price level {price} topology count underflow: a removal found a zero resting-order count"
         ),
     }
+}
+
+/// Minimum number of makers the fill-or-kill dry run visits lazily before
+/// it switches to one bulk collection of the rest (issue #143).
+const LAZY_WALK_MIN: u64 = 8;
+
+/// Share of the resting orders the fill-or-kill dry run visits lazily, as a
+/// divisor: `count / 64` (issue #143).
+const LAZY_WALK_DIVISOR: u64 = 64;
+
+/// Lazy-walk budget of the fill-or-kill dry run for a level resting `count`
+/// orders (issue #143): `max(8, count / 64)`.
+///
+/// Measured per maker on a 10,000-order level (release, Apple M5 Max): the
+/// lazy step (index entry + `DashMap` lookup + `Arc` clone) costs about
+/// 27 ns, against about 14 ns for its share of one collect-and-sort. A fill
+/// within the budget never touches the makers behind it, while a walk that
+/// must go further (for example a fill-or-kill proving a kill) pays the
+/// budget's lazy steps on top of the bulk pass: about `27 / (64 * 14)`, some
+/// 3%, of that pass on a deep level, and at most 8 steps on a shallow one.
+/// The budget only moves work between the two phases; the visited sequence,
+/// and so the prediction, is the same.
+#[inline]
+fn lazy_walk_budget(count: u64) -> u64 {
+    #[cfg(test)]
+    if let Some(budget) = LAZY_WALK_BUDGET_OVERRIDE.with(std::cell::Cell::get) {
+        return budget;
+    }
+    count
+        .checked_div(LAZY_WALK_DIVISOR)
+        .map_or(LAZY_WALK_MIN, |share| share.max(LAZY_WALK_MIN))
+}
+
+#[cfg(test)]
+thread_local! {
+    static LAZY_WALK_BUDGET_OVERRIDE: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Restores the previous lazy-walk budget override on drop.
+#[cfg(test)]
+pub(crate) struct LazyWalkBudgetGuard(Option<u64>);
+
+#[cfg(test)]
+impl Drop for LazyWalkBudgetGuard {
+    fn drop(&mut self) {
+        LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.set(self.0));
+    }
+}
+
+/// Test seam (issue #143): forces the dry run's lazy-walk budget on this
+/// thread so small books exercise the bulk continuation.
+#[cfg(test)]
+pub(crate) fn override_lazy_walk_budget(budget: u64) -> LazyWalkBudgetGuard {
+    LazyWalkBudgetGuard(LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.replace(Some(budget))))
 }
 
 /// Counts one more parked maker for the fill-or-kill park-set preflight
@@ -560,7 +615,9 @@ fn update_counter_overflow() -> PriceLevelError {
 /// acquisition is normally uncontended (it only coordinates with a fill-or-kill
 /// match), but it can BLOCK behind a concurrent fill-or-kill: a `Fok` match
 /// takes the guard's **exclusive** side across its feasibility check and sweep —
-/// an `O(depth)` critical section — so it stays all-or-nothing against
+/// a critical section proportional to the makers the fill visits while they
+/// fit the dry run's lazy budget, and `O(depth log depth)` past it (issue
+/// #143) — so it stays all-or-nothing against
 /// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
 /// the full argument (issue #112).
 ///
@@ -643,7 +700,9 @@ pub struct PriceLevel {
     /// take the **read** (shared) side. The common paths therefore pay only an
     /// uncontended shared acquisition; a FOK (a cold, specific TIF) excludes
     /// mutators for the duration of its feasibility check and sweep — an
-    /// `O(depth)` exclusive section, not a constant-time one. The non-FOK sweep
+    /// exclusive section proportional to the makers the fill visits while
+    /// they fit the dry run's lazy budget, and `O(depth log depth)` past it
+    /// (issue #143), not a constant-time one. The non-FOK sweep
     /// takes NO fill-or-kill guard (it still takes each maker's `DashMap` shard
     /// lock) — it relies on the
     /// single-matcher-per-level model and the existing per-entry cancel
@@ -685,22 +744,48 @@ pub struct PriceLevel {
 /// trades it would emit, how many makers it would re-sequence at the tail
 /// (replenishments, each needing a fresh FIFO sequence; issue #165), plus the
 /// typed failure that would stop the sweep.
-#[derive(Debug, Clone)]
-struct DryRun {
-    filled: u64,
-    trades: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DryRun {
+    pub(crate) filled: u64,
+    pub(crate) trades: usize,
     /// Replenishments that keep the maker resident (`ReplaceAtTail`), each of
     /// which reserves one fresh FIFO sequence in the real sweep (issue #165).
-    replenishes: u64,
+    pub(crate) replenishes: u64,
     /// Makers the real sweep would park (self-trade skip or no-progress
     /// guard), each of which inserts one sequence into the sweep's
     /// parked-sequence set (issue #164). Fill-or-kill reserves that set
     /// before the first mutation.
-    parks: usize,
+    pub(crate) parks: usize,
     /// The [`OrderType::match_against`] error the real sweep would hit at the
     /// maker where the dry run stopped (issue #169). `filled` / `trades` are
     /// then the committed prefix the real sweep would report alongside it.
-    error: Option<PriceLevelError>,
+    pub(crate) error: Option<PriceLevelError>,
+}
+
+/// What the dry run may assume about concurrent re-sequencing (issue #143).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DryRunIsolation {
+    /// The caller holds the fill-or-kill guard's exclusive side under the
+    /// one-matcher contract: no admission, update or sweep can run, so the
+    /// bounded lazy walk over the index is exact.
+    FokExclusive,
+    /// No guard (the public [`PriceLevel::matchable_quantity`]): a GTC
+    /// replenish or a demoting resize can re-sequence a maker during the
+    /// walk, so the walk collects from the id-keyed map instead.
+    Unguarded,
+}
+
+#[cfg(test)]
+thread_local! {
+    static DRY_RUN_TAIL_REVISITED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test coverage probe (issue #143): whether the dry run has revisited a
+/// replenished tranche from its tail buffer on this thread since the last
+/// call. A flag, not a counter, so the probe does no arithmetic.
+#[cfg(test)]
+pub(crate) fn test_take_tail_revisited() -> bool {
+    DRY_RUN_TAIL_REVISITED.with(|cell| cell.replace(false))
 }
 
 /// Terminal epoch value (issue #165): an epoch never moves past it, and a
@@ -1277,6 +1362,17 @@ impl PriceLevel {
     /// Test-only seeding seam (issue #165): place both epochs at the given
     /// values so the exhaustion protocol can be exercised without `2^64`
     /// mutations.
+    /// Test-only access to the bounded fill-or-kill dry run (issue #143), so
+    /// its prediction can be compared with the retained reference model.
+    #[cfg(test)]
+    pub(crate) fn test_dry_run(
+        &self,
+        incoming_quantity: u64,
+        taker_id: Id,
+    ) -> Result<DryRun, PriceLevelError> {
+        self.dry_run(incoming_quantity, taker_id, DryRunIsolation::FokExclusive)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_seed_epochs(&self, topology: u64, mutation: u64) {
         self.topology_epoch.store(topology, Ordering::Relaxed);
@@ -1923,8 +2019,9 @@ impl PriceLevel {
     /// for a taker, in quantity units, **without mutating the queue**.
     ///
     /// This is a deterministic dry run of the FIFO sweep: it replays
-    /// [`OrderType::match_against`] over a snapshot of the resting queue in the
-    /// same price-time order the real sweep uses, including iceberg / reserve
+    /// [`OrderType::match_against`] over the resting queue in the same
+    /// price-time (insertion-sequence) order the real sweep uses, including
+    /// iceberg / reserve
     /// replenishment (a refreshed tranche is re-queued at the tail) and the
     /// removal of a non-replenishing reserve once its visible part is drained.
     /// It also models the sweep's **replenish-headroom abort** (issue
@@ -1942,8 +2039,22 @@ impl PriceLevel {
     /// skips it for self-trade prevention, so the prediction and the sweep can
     /// never diverge.
     ///
-    /// It allocates a working snapshot and is only used on the cold
-    /// fill-or-kill path, not on the hot `Gtc` sweep.
+    /// This public call takes no guard, so a concurrent admission, update or
+    /// sweep can land while it runs and the value is then an advisory
+    /// estimate. It collects the resting orders from the id-keyed order
+    /// storage (one entry per maker), sorts them by insertion sequence and
+    /// replays the sweep over them, so a maker re-sequenced during the call
+    /// (a GTC replenishment or a demoting resize) is counted at most once:
+    /// the estimate can be stale but never double counts. That costs
+    /// `O(depth log depth)` per call.
+    ///
+    /// The fill-or-kill preflight inside [`Self::match_order`] runs the same
+    /// replay under the level's exclusive guard, where nothing can
+    /// re-sequence, and there it walks the insertion-sequence index lazily
+    /// and stops as soon as the taker is covered (issue #143): a fill within
+    /// `max(8, resting orders / 64)` makers neither visits nor copies the
+    /// makers behind it. A longer walk finishes over one collection and sort
+    /// of the remaining makers, `O(depth log depth)` like this call.
     ///
     /// Public so an order book composing this level can reuse the single
     /// upstream source of truth for per-level fill-or-kill (all-or-nothing)
@@ -1953,8 +2064,10 @@ impl PriceLevel {
     /// # Errors
     ///
     /// [`PriceLevelError::CapacityExceeded`] (resource
-    /// [`CapacityResource::OrderSnapshot`]) if the working snapshot cannot be
-    /// reserved (issue #164). No prediction is produced then: a silent `0`
+    /// [`CapacityResource::OrderSnapshot`]) if the order collection
+    /// (`additional` = resting orders) or the buffer of replenished tranches
+    /// (`additional` = 1, only when a replenished tranche must be revisited)
+    /// cannot grow (issue #164). No prediction is produced then: a silent `0`
     /// would under-report depth the sweep can in fact take. The level is only
     /// read. A maker step the real sweep would stop at (issue #169 / #163) is
     /// not an error here: the value is the prefix the sweep would fill.
@@ -1963,7 +2076,9 @@ impl PriceLevel {
         incoming_quantity: u64,
         taker_id: Id,
     ) -> Result<u64, PriceLevelError> {
-        Ok(self.dry_run(incoming_quantity, taker_id)?.filled)
+        Ok(self
+            .dry_run(incoming_quantity, taker_id, DryRunIsolation::Unguarded)?
+            .filled)
     }
 
     /// The deterministic dry run behind [`Self::matchable_quantity`]: returns
@@ -1973,9 +2088,15 @@ impl PriceLevel {
     ///
     /// # Errors
     ///
-    /// [`PriceLevelError::CapacityExceeded`] if the working snapshot cannot be
-    /// materialized (issue #164); the level is only read.
-    fn dry_run(&self, incoming_quantity: u64, taker_id: Id) -> Result<DryRun, PriceLevelError> {
+    /// [`PriceLevelError::CapacityExceeded`] if the bulk continuation or the
+    /// replenished-tranche buffer cannot grow (issue #164); the level is only
+    /// read.
+    fn dry_run(
+        &self,
+        incoming_quantity: u64,
+        taker_id: Id,
+        isolation: DryRunIsolation,
+    ) -> Result<DryRun, PriceLevelError> {
         let mut dry = DryRun {
             filled: 0,
             trades: 0,
@@ -1987,24 +2108,38 @@ impl PriceLevel {
             return Ok(dry);
         }
 
-        // Snapshot the resting orders in ascending insertion sequence: the
-        // exact order the real sweep pops them (`match_front` walks the
-        // insertion-sequence index; a replenished tranche is re-sequenced at
-        // the tail, modelled by `push_back` below; a partial fill keeps its
-        // sequence, modelled by `push_front`). Visiting in the sweep's own
-        // order makes the prediction exact per STEP, not only in total, so the
-        // trade count below equals what the sweep emits (issue #170).
+        // Walk the resting orders in ascending insertion sequence: the exact
+        // order the real sweep pops them (`match_front` walks the
+        // insertion-sequence index with the same liveness rule as the
+        // `SeqWalk` below). Visiting in the sweep's own order makes the
+        // prediction exact per STEP, not only in total, so the trade count
+        // below equals what the sweep emits (issue #170).
         //
-        // Growth (issue #164): the materialization is fallible, and
-        // `VecDeque::from(Vec)` reuses the vector's buffer (O(1), no
-        // reallocation). Each loop iteration pops one maker before it pushes
-        // at most one residual back, so `pending.len()` never exceeds the
-        // initial length and the `push_front` / `push_back` below never grow
-        // the buffer: the capacity is proven, not assumed. The residual
-        // `Arc::new` is a fixed-size allocation with no stable fallible API
-        // (see `doc/panic-boundaries.md`).
-        let mut pending: std::collections::VecDeque<Arc<OrderType<()>>> =
-            self.snapshot_by_insertion_seq()?.into();
+        // Bounded work (issue #143): nothing is materialized or sorted up
+        // front. The loop pulls one maker at a time and stops as soon as the
+        // taker is satisfied (or the sweep would stop), so a taker filled
+        // within the walk's lazy budget (`lazy_walk_budget`) visits only the
+        // prefix the real sweep consumes and never touches the makers behind
+        // it. Every count below (fill, trades, replenishes, parks, count
+        // projection, stop error) is computed over exactly that prefix. A
+        // walk that outlives the budget continues over one sorted bulk
+        // collection of the remaining makers (see `SeqWalk`), which visits
+        // the same sequence.
+        //
+        // The sweep's two re-queue shapes are modelled without touching the
+        // walk: a pure partial fill keeps its sequence, so its residual is
+        // visited next (`front`); a replenished tranche is re-sequenced at
+        // the tail, BEHIND every maker resting now, so it is visited only
+        // after the walk is exhausted (`tail`, FIFO among themselves). A
+        // residual is only recorded while the taker still has quantity to
+        // fill: otherwise the loop ends and it would never be visited.
+        //
+        // Growth (issue #164): the bulk continuation and `tail` grow
+        // fallibly; a refusal of either is the only error this function
+        // returns. Residuals are held by value, so no `Arc` is allocated for
+        // them.
+        let mut front: Option<OrderType<()>> = None;
+        let mut tail: std::collections::VecDeque<OrderType<()>> = std::collections::VecDeque::new();
         let mut parks: usize = 0;
         let mut remaining = incoming_quantity;
         let mut filled: u64 = 0;
@@ -2032,8 +2167,37 @@ impl PriceLevel {
         // of failing mid-sweep. Exact under the fill-or-kill exclusive guard.
         let mut projected_count = topology::count(self.topology.load(Ordering::Acquire));
 
+        // The lazy budget scales with the resting count read just above. The
+        // lazy phase walks the index, where a concurrent re-sequencing can
+        // briefly expose one maker under two keys, so it is only sound while
+        // nothing can re-sequence (issue #143 review): under the fill-or-kill
+        // guard. An unguarded walk starts in the bulk phase, which collects
+        // from the id-keyed map (one entry per maker) and cannot double count.
+        let lazy_budget = match isolation {
+            DryRunIsolation::FokExclusive => lazy_walk_budget(projected_count),
+            DryRunIsolation::Unguarded => 0,
+        };
+        let mut resting = self.orders.seq_walk(lazy_budget);
+
         while remaining > 0 {
-            let Some(order) = pending.pop_front() else {
+            // Next maker in sweep order: the kept-priority residual, then the
+            // resting queue, then the re-sequenced tranches. Deferred
+            // initialization lets `order` borrow whichever holder was filled
+            // without moving the (large) order into a common enum each step.
+            let resting_order: Arc<OrderType<()>>;
+            let residual: OrderType<()>;
+            let order: &OrderType<()> = if let Some(kept) = front.take() {
+                residual = kept;
+                &residual
+            } else if let Some(next) = resting.try_next()? {
+                resting_order = next;
+                &resting_order
+            } else if let Some(requeued) = tail.pop_front() {
+                #[cfg(test)]
+                DRY_RUN_TAIL_REVISITED.with(|cell| cell.set(true));
+                residual = requeued;
+                &residual
+            } else {
                 break;
             };
             // Self-trade prevention parity: the real sweep skips a maker sharing
@@ -2158,15 +2322,16 @@ impl PriceLevel {
             dry.replenishes = replenishes;
             remaining = new_remaining;
 
-            if let Some(updated) = updated_order {
+            if let Some(updated) = updated_order
+                && remaining > 0
+            {
                 if hidden_reduced > 0 {
-                    // Replenished tranche loses time priority -> back of queue,
-                    // exactly as the real sweep re-queues it.
-                    pending.push_back(Arc::new(updated));
+                    // Replenished tranche loses time priority -> behind every
+                    // maker resting now, exactly as the real sweep re-queues it.
+                    try_push_back_deque(&mut tail, updated, CapacityResource::OrderSnapshot)?;
                 } else {
-                    // Pure partial fill keeps front position; the taker is now
-                    // exhausted (`remaining == 0`) so the loop ends next check.
-                    pending.push_front(Arc::new(updated));
+                    // Pure partial fill keeps front position.
+                    front = Some(updated);
                 }
             }
         }
@@ -2581,10 +2746,14 @@ impl PriceLevel {
             if self.is_poisoned() {
                 return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             }
-            let dry = match self.dry_run(incoming_quantity, taker_order_id) {
+            let dry = match self.dry_run(
+                incoming_quantity,
+                taker_order_id,
+                DryRunIsolation::FokExclusive,
+            ) {
                 Ok(dry) => dry,
                 Err(err) => {
-                    // The dry run's working snapshot could not be reserved
+                    // The dry run's working buffer could not be reserved
                     // (issue #164): no prediction, so kill before any
                     // mutation with the typed error. Guard released before
                     // logging, as for the sibling kills (issue #172).
@@ -2594,7 +2763,7 @@ impl PriceLevel {
                         incoming_quantity,
                         price = self.price,
                         error = %err,
-                        "fill-or-kill taker killed: dry-run working snapshot could not be reserved; level untouched"
+                        "fill-or-kill taker killed: dry-run working buffer could not be reserved; level untouched"
                     );
                     let mut result =
                         MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));

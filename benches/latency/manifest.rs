@@ -36,6 +36,8 @@ pub struct RunManifest {
     pub warmup: usize,
     /// Whether the 10,000 / 100,000 depth sweeps ran this time.
     pub large_depths: bool,
+    /// Whether starvation anomalies fail the run (issue #206).
+    pub strict_fifo: bool,
     /// Raw `LOGLEVEL` value, if set.
     pub loglevel: String,
     /// Measured single-call overhead of `Instant::now()` itself — the
@@ -144,6 +146,7 @@ impl RunManifest {
             samples: config.samples,
             warmup: config.warmup,
             large_depths: config.large_depths,
+            strict_fifo: config.strict_fifo,
             loglevel: config
                 .loglevel
                 .clone()
@@ -167,6 +170,7 @@ impl std::fmt::Display for RunManifest {
         writeln!(f, "samples/scenario   : {}", self.samples)?;
         writeln!(f, "warmup/scenario    : {}", self.warmup)?;
         writeln!(f, "large depth sweeps : {}", self.large_depths)?;
+        writeln!(f, "strict FIFO        : {}", self.strict_fifo)?;
         writeln!(f, "LOGLEVEL           : {}", self.loglevel)?;
         writeln!(
             f,

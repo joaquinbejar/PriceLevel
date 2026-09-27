@@ -1,6 +1,7 @@
 // benches/price_level/mod.rs
 pub mod add_orders;
 pub mod checked_arithmetic;
+pub mod fok_depth;
 pub mod iter_orders;
 pub mod lifecycle;
 pub mod match_orders;
@@ -29,6 +30,7 @@ pub fn register_benchmarks(c: &mut criterion::Criterion) {
     special_orders::register_benchmarks(c);
     lifecycle::register_benchmarks(c);
     trade_ids::register_benchmarks(c);
+    fok_depth::register_benchmarks(c);
     match_result_analytics::register_benchmarks(c);
     result_capacity::register_benchmarks(c);
     residual_reuse::register_benchmarks(c);

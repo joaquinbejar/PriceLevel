@@ -78,7 +78,7 @@
 //! | Method | Locks taken |
 //! |--------|-------------|
 //! | [`PriceLevel::match_order`], `Gtc` / `Ioc` / `Gtd` / `Day` taker | The `DashMap` shard **write** lock of each maker entry it fills, one at a time (the internal `OrderQueue::match_front` step). No level-wide guard |
-//! | [`PriceLevel::match_order`], `Fok` taker | The level-wide fill-or-kill guard's **exclusive** side across its `O(depth)` feasibility dry-run and sweep, plus the per-maker shard write locks above |
+//! | [`PriceLevel::match_order`], `Fok` taker | The level-wide fill-or-kill guard's **exclusive** side across its feasibility dry-run and sweep (proportional to the makers the fill visits while they fit the dry run's lazy budget of `max(8, depth / 64)`, and `O(depth log depth)` past it; #143), plus the per-maker shard write locks above |
 //! | [`PriceLevel::match_order`], post-only taker | No sweep and no maker write lock; its depth scan iterates order storage under `DashMap` shard **read** locks |
 //! | [`PriceLevel::add_order`] | Fill-or-kill guard's **shared** side, plus the shard write lock of the new id |
 //! | [`PriceLevel::update_order`] (every [`OrderUpdate`] variant) | Fill-or-kill guard's **shared** side, plus the shard write lock of the target id |
@@ -100,7 +100,10 @@
 //!   orders that hash to the same shard also wait on that lock.
 //! - **Fill-or-kill excludes every mutator on the level.** A `Fok` match holds the
 //!   level guard exclusively for its whole dry-run and sweep, so admissions,
-//!   updates and snapshots on that level block for an `O(depth)` section. The
+//!   updates and snapshots on that level block for a section proportional to the
+//!   makers the fill visits while they fit the dry run's lazy budget
+//!   (`max(8, depth / 64)` makers), and `O(depth log depth)` past it, when the
+//!   dry run collects and sorts the remaining makers (issue #143). The
 //!   other time-in-force paths skip that guard, but skipping it is **not** the
 //!   absence of locking: they still take the per-maker shard lock.
 //! - **Readers are always allowed.** Counter reads never block. A

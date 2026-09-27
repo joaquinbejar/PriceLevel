@@ -164,6 +164,7 @@ fn build_manifest_json(
             "samples": config.samples,
             "warmup": config.warmup,
             "large_depths": config.large_depths,
+            "strict_fifo": config.strict_fifo,
             "contention_threads": config.contention_threads,
             "contention_ops": config.contention_ops,
             "stats_producers": config.stats_producers,

@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn fill_or_kill_dry_run_refusal_is_logged_at_error() {
-        let result = with_error_event("dry-run working snapshot could not be reserved", || {
+        let result = with_error_event("dry-run working buffer could not be reserved", || {
             let level = sample_level();
             let _fail = test_seam::fail_after(CapacityResource::OrderSnapshot, 0);
             take(&level, 10, TimeInForce::Fok)

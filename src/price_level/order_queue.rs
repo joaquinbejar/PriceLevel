@@ -200,6 +200,105 @@ pub(crate) enum UpdateDecision {
 /// Committed `(stored_seq, order)` pairs collected for a materialization.
 type SeqPairs = Vec<(u64, Arc<OrderType<()>>)>;
 
+/// A walk over the resting orders in ascending **insertion sequence** — the
+/// order [`OrderQueue::match_front`] consumes them — for the fill-or-kill
+/// dry run (issue #143). Created by [`OrderQueue::seq_walk`].
+///
+/// The walk has two phases, so that a caller that stops early does work
+/// proportional to what it consumed, while one that walks everything pays
+/// no more than a single materialize-and-sort:
+///
+/// * **Lazy prefix.** The first `lazy_budget` live orders come straight
+///   from the `index`, with `match_front`'s liveness rule: a key is yielded
+///   only when its id still rests in `orders` under that same sequence, so a
+///   stale key (cancelled, or re-sequenced by a demotion / replenishment) is
+///   skipped. Nothing is materialized, sorted or cloned beyond the `Arc` of
+///   each yielded order. Each step holds one `DashMap` shard **read** lock
+///   only while it clones that `Arc`, and no lock between steps.
+/// * **Bulk continuation.** A walk that outlives the budget collects the
+///   remaining committed pairs (sequence greater than the last one yielded)
+///   from `orders` in one pass and sorts them, as
+///   [`OrderQueue::snapshot_by_seq`] does. A per-entry index lookup costs
+///   more than its share of one bulk pass, so this keeps a long walk (for
+///   example a fill-or-kill that must visit every maker to prove a kill)
+///   from paying the lookup per maker.
+///
+/// Under quiescence (the fill-or-kill exclusive guard with the one-matcher
+/// contract) both phases see the same queue, and the walk yields exactly
+/// [`OrderQueue::snapshot_by_seq`]'s sequence. Under concurrent mutation the
+/// lazy phase is unsound: a re-sequencing inserts the maker's new index key
+/// before removing the old one, so the walk can yield it twice. A caller
+/// without that guard must pass a zero budget, which starts in the bulk
+/// phase (one map entry per maker, as `snapshot_by_seq`).
+pub(crate) struct SeqWalk<'a> {
+    queue: &'a OrderQueue,
+    index: crossbeam_skiplist::map::Iter<'a, u64, Id>,
+    /// Live orders the lazy phase may still yield.
+    lazy_left: u64,
+    /// Sequence of the last order the lazy phase yielded.
+    last_seq: Option<u64>,
+    /// The bulk continuation, once started.
+    bulk: Option<std::vec::IntoIter<(u64, Arc<OrderType<()>>)>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SEQ_WALK_BULK_SWITCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test coverage probe (issue #143): whether a `SeqWalk` switched to the
+/// bulk continuation on this thread since the last call. A flag, not a
+/// counter, so the probe does no arithmetic.
+#[cfg(test)]
+pub(crate) fn test_take_bulk_switched() -> bool {
+    SEQ_WALK_BULK_SWITCHED.with(|cell| cell.replace(false))
+}
+
+impl SeqWalk<'_> {
+    /// The next resting order in insertion sequence, or `None` when the
+    /// queue is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the bulk continuation cannot
+    /// be reserved. The queue is only read.
+    #[inline]
+    pub(crate) fn try_next(&mut self) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
+        if let Some(bulk) = self.bulk.as_mut() {
+            return Ok(bulk.next().map(|(_, order)| order));
+        }
+        let Some(lazy_left) = self.lazy_left.checked_sub(1) else {
+            #[cfg(test)]
+            SEQ_WALK_BULK_SWITCHED.with(|cell| cell.set(true));
+            let mut bulk = self.queue.collect_pairs_after(self.last_seq)?.into_iter();
+            let first = bulk.next().map(|(_, order)| order);
+            self.bulk = Some(bulk);
+            return Ok(first);
+        };
+        for entry in self.index.by_ref() {
+            let seq = *entry.key();
+            let Some(slot) = self.queue.orders.get(entry.value()) else {
+                continue;
+            };
+            let (stored_seq, order) = slot.value();
+            if *stored_seq != seq {
+                continue;
+            }
+            let order = Arc::clone(order);
+            drop(slot);
+            self.lazy_left = lazy_left;
+            self.last_seq = Some(seq);
+            // Fired with no shard lock held, so a test can re-sequence any
+            // maker here (issue #143 review).
+            #[cfg(test)]
+            snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::LazyYield(order.id()));
+            return Ok(Some(order));
+        }
+        Ok(None)
+    }
+}
+
 // Test-only switch that disables the inline slot of `ParkedSeqs` (issue
 // #164), so a test can drive the spill set's fallible reservation with a
 // single park. Production builds compile none of this.
@@ -1211,6 +1310,58 @@ impl OrderQueue {
         self.orders.iter().map(|entry| entry.value().1.clone())
     }
 
+    /// Starts a [`SeqWalk`] over the resting orders in ascending insertion
+    /// sequence (issue #143): lazily for the first `lazy_budget` live orders,
+    /// then in one sorted bulk collection of the rest. See [`SeqWalk`].
+    pub(crate) fn seq_walk(&self, lazy_budget: u64) -> SeqWalk<'_> {
+        SeqWalk {
+            queue: self,
+            index: self.index.iter(),
+            lazy_left: lazy_budget,
+            last_seq: None,
+            bulk: None,
+        }
+    }
+
+    /// Collects the committed `(stored_seq, order)` pairs whose sequence is
+    /// strictly greater than `after` (every pair when `after` is `None`),
+    /// sorted by sequence: the continuation of a [`SeqWalk`] whose lazy
+    /// prefix ended at `after`. Same committed-pair guarantees as
+    /// [`OrderQueue::snapshot_by_seq`]; a visited order is filtered before
+    /// its `Arc` is cloned.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the buffer cannot grow.
+    fn collect_pairs_after(&self, after: Option<u64>) -> Result<SeqPairs, PriceLevelError> {
+        // Pre-sized to the current length, as `collect_pairs`: the few
+        // already-visited orders are an overshoot, not a regrowth.
+        let mut pairs: SeqPairs = Vec::new();
+        try_reserve_vec(
+            &mut pairs,
+            self.orders.len(),
+            CapacityResource::OrderSnapshot,
+        )?;
+        for entry in self.orders.iter() {
+            let (seq, order) = entry.value();
+            if after.is_some_and(|last| *seq <= last) {
+                continue;
+            }
+            #[cfg(test)]
+            snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
+            try_push_vec(
+                &mut pairs,
+                (*seq, Arc::clone(order)),
+                CapacityResource::OrderSnapshot,
+            )?;
+        }
+        // Unique live sequences: the unstable in-place sort is deterministic
+        // (see `snapshot_by_seq_into`).
+        pairs.sort_unstable_by_key(|(seq, _)| *seq);
+        Ok(pairs)
+    }
+
     /// Materialize a stable snapshot vector sorted by `(timestamp, sequence)`.
     ///
     /// The insertion sequence is used as a deterministic tiebreak so orders
@@ -1632,6 +1783,9 @@ pub(crate) mod snapshot_hook {
         AttemptStart,
         /// The walk has just captured the order with this id.
         Collected(Id),
+        /// A `SeqWalk` lazy phase has just yielded the order with this id
+        /// (no shard lock held; issue #143).
+        LazyYield(Id),
     }
 
     type Hook = Box<dyn FnMut(SnapshotHookEvent)>;

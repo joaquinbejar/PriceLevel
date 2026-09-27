@@ -349,6 +349,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization, while `set_global_default` builds the dispatcher; calling
   `setup_logger` from them deadlocks and is documented as prohibited.
 
+### Performance
+
+- **Fill-or-kill feasibility is bounded by the depth it consumes (#143).**
+  Under its exclusive guard the FOK dry run no longer materializes and
+  sorts the whole level: it walks the queue in sweep order and stops once
+  the taker is covered, finishing over one sorted collection of the
+  remaining makers (`O(depth log depth)`, as before) only when the walk
+  outlives `max(8, resting orders / 64)` makers. A qty-1 FOK filled by the
+  front maker at depth 10,000 drops from about 157 us to 0.3 us at p50, and
+  mutators waiting on the level stall far less behind it (writer add p99.9
+  144,505 us to 15 us; the remaining unfairness is #206). The FOK verdict
+  and the preflight order are unchanged.
+  - **Regression: a FOK that must visit every maker** (a rejected FOK) is
+    slower. Criterion: +3 to +4% at depth 10,000, +5 to +6% at depth 100.
+    Latency harness at depth 10,000 (median of three interleaved rounds on
+    an unpinned host at load averages 5.9 to 9.1, so the tails are
+    load-sensitive): p50 173 to 205 us, p99 217 to 581 us, p99.9 585 to
+    1,788 us. See `BENCH.md`, "Fill-or-kill feasibility depth".
+  - **`PriceLevel::matchable_quantity` (unguarded)** keeps its totals and
+    its full collect-and-sort cost: it does not take the guard, so it
+    collects from the id-keyed order storage and never double counts a
+    maker re-sequenced during the call (its estimate can still be stale).
+    Its error surface changed slightly: `CapacityExceeded`
+    (`OrderSnapshot`) comes from the order collection (`additional` = the
+    resting count) or, new, from growing the buffer of replenished tranches
+    (`additional` = 1), which is only attempted when a replenished tranche
+    must be revisited.
+  - **FOK kill reasons under memory pressure:** the guarded dry run
+    reserves nothing for a fill within its lazy budget, so where the former
+    snapshot reservation killed such a FOK with `CapacityExceeded`
+    (`OrderSnapshot`), it now proceeds and can instead fail at a later
+    preflight reservation (result storage, trade ids, park set) or not at
+    all. Past the budget, the bulk collection and the tranche buffer are
+    the `OrderSnapshot` failure sources.
+
 ### Documentation
 
 - **Snapshot encoding buffers measured and pinned (#149).** The borrowed

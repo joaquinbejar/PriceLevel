@@ -21,7 +21,7 @@
 //! no production-visible knob.
 
 use crate::errors::{CapacityResource, PriceLevelError};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::hash::{BuildHasher, Hash};
 
 /// Builds the typed, allocation-free capacity error.
@@ -84,6 +84,30 @@ pub(crate) fn try_push_vec<T>(
         try_reserve_vec(vec, 1, resource)?;
     }
     vec.push(item);
+    Ok(())
+}
+
+/// Appends `item` at the back of a deque, growing fallibly only when it is
+/// full (issue #143: the bounded fill-or-kill dry run's residual buffer).
+///
+/// # Errors
+///
+/// As [`try_reserve_vec`] with `additional == 1`; `deque` is unchanged and
+/// `item` is dropped.
+#[inline]
+pub(crate) fn try_push_back_deque<T>(
+    deque: &mut VecDeque<T>,
+    item: T,
+    resource: CapacityResource,
+) -> Result<(), PriceLevelError> {
+    if deque.len() == deque.capacity() {
+        #[cfg(test)]
+        test_seam::check(resource, 1)?;
+        deque
+            .try_reserve(1)
+            .map_err(|_| capacity_error(resource, 1))?;
+    }
+    deque.push_back(item);
     Ok(())
 }
 

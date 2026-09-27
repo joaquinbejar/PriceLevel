@@ -31,7 +31,7 @@ pub enum CapacityResource {
     /// (`snapshot_orders`, `snapshot_by_insertion_seq`,
     /// `snapshot_by_seq_into`, `OrderQueue::snapshot_vec` / `to_vec`), their
     /// internal `(sequence, order)` sort buffer, the fill-or-kill dry-run
-    /// working copy, `PriceLevelData` and a snapshot's orders vector
+    /// bulk continuation and buffer of replenished tranches, `PriceLevelData` and a snapshot's orders vector
     /// (including one decoded from JSON). `additional` is the number of
     /// orders that could not be reserved.
     OrderSnapshot,
