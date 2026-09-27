@@ -251,8 +251,10 @@ impl OrderQueue {
     #[inline]
     #[must_use]
     pub(crate) fn seq_headroom(&self) -> u64 {
-        // `next_seq <= u64::MAX` always, so the difference is in range.
-        u64::MAX - self.next_seq.load(Ordering::Relaxed)
+        // `next_seq <= u64::MAX` always, so `abs_diff` is exactly
+        // `u64::MAX - next_seq`; it is total, so no unchecked subtraction is
+        // needed to express it (issue #163 arithmetic policy).
+        u64::MAX.abs_diff(self.next_seq.load(Ordering::Relaxed))
     }
 
     /// Test-only seeding seam (issue #165): place the sequence counter at
