@@ -10,6 +10,7 @@ mod parked_prefix;
 mod result_failures;
 mod snapshot;
 mod snapshot_coherence;
+mod snapshot_equivalence;
 mod statistics;
 mod text_parser_corpus;
 mod text_parsers;
