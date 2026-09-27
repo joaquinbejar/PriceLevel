@@ -4,6 +4,7 @@
 
 mod contention;
 mod depth;
+mod fok_depth;
 mod isolated;
 mod matching;
 pub mod restore_sizes;
@@ -43,6 +44,9 @@ pub fn run_all(config: &Config) -> Vec<ScenarioReport> {
     }
     if config.runs("depth") {
         reports.extend(depth::run(config));
+    }
+    if config.runs("fok_depth") {
+        reports.extend(fok_depth::run(config));
     }
     if config.runs("contention") {
         reports.extend(contention::run(config));
