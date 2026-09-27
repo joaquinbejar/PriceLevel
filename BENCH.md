@@ -1238,11 +1238,16 @@ statistics are asserted not degraded.
 - `fok_replenish`: iceberg makers (1 visible + 1,000,000 hidden); a qty-2
   FOK drains the front tranche (re-sequenced at the tail) and one unit of
   the next maker.
-- `writer_*_during_*`: one thread loops the qty-1 first-maker call (FOK, or
-  GTC as the control) at depth 10,000 while this thread times 5,000
-  `add_order` + `update_order(Cancel)` pairs on its own tail orders.
-  Starvation anomalies are counted, not asserted; see "Writer starvation
-  behind a looping FOK matcher" below.
+- `writer_*_during_*`: one thread loops the qty-1 first-maker call (FOK,
+  or GTC as the control) while this thread times 5,000 `add_order` +
+  `update_order(Cancel)` pairs on its own tail orders. Since #206 the cases
+  run at depths 100 and 10,000, and a `fok_rejected` matcher mode loops a
+  FOK one unit larger than the level plus a writer order: a chosen long
+  dry-run workload, not an upper bound for every FOK (a successful FOK that
+  consumes a deep level runs the dry run and the sweep, and replenishing
+  makers add steps). It consumes nothing, so its writer anomalies are
+  asserted to be zero. Starvation anomalies are counted, not
+  asserted; see "Writer starvation behind a looping FOK matcher" below.
 
 ### Environment
 
@@ -1366,4 +1371,132 @@ The bounded dry run shrinks the exclusive section from about 150 µs to about
 0.3 µs. It therefore cuts the starvation window drastically: writer add
 p99.9 falls from 144,505 µs to 15 µs in the table above. It does not fix the
 lack of fairness itself; a FOK that must visit every maker still holds the
-guard for about 200 µs at depth 10,000. That is tracked in #206.
+guard for about 200 µs at depth 10,000. The hand-off below addresses that.
+
+### Bounded hand-off to waiting mutators (issue #206)
+
+The measured workload is a looping rejected FOK: the dry run walks every
+maker for about 170 µs at depth 10,000 and then kills the taker, so the
+matcher releases the guard only to retake it at once. It was chosen as a
+long, repeatable dry-run section that leaves the level unchanged; it is not
+the worst case for every FOK workload. A successful FOK that consumes a
+deep level runs the dry run and then the sweep, and replenishing makers add
+steps, so its section, and a blocked writer's wait, can be longer than the
+tails below. Before this change a writer blocked behind the rejected loop
+could wait for thousands of consecutive sections.
+
+The guard (`src/price_level/fok_guard.rs`) now pairs the `RwLock` with a
+waiting-mutator counter. A mutator tries the shared side first; only when
+that would block does it increment the counter, block in `read()` and
+decrement once it holds the shared side. A FOK that sees a non-zero
+counter before it requests the exclusive side waits, holding no lock, for
+up to 64 `spin_loop` hints and then 256 `yield_now` calls, until the counter
+is zero, and then calls `write()` regardless. The lock is free during that
+wait, so each announced mutator only needs to be scheduled.
+
+This is a bounded number of hand-off attempts, and what follows are
+measured latency improvements, not guarantees. The hand-off does not
+establish starvation freedom for either side: after the budget the FOK
+calls `write()` even if a mutator is still announced, and Rust leaves
+`RwLock` acquisition priority unspecified, so a reader-preferring lock could
+keep the FOK waiting and a barging one can still delay a mutator. Total
+lock-acquisition delay remains scheduler-dependent and unbounded. The
+budget counts rounds, not time: on an oversubscribed host each `yield_now`
+can cost a scheduler slice, so one hand-off can take hundreds of
+milliseconds. Typical case only (one matcher per level as supported and as
+measured here, a writer-preferring or queue-fair lock, a mutator scheduled
+within the budget): a blocked mutator waits for at most two sections plus
+its wake-up, the section in progress and one more if the matcher rechecks
+the counter between the mutator's failed `try_read` and its announcement.
+With `k` concurrent FOK matchers on a level (unsupported), a queued matcher
+holds readers off on writer-preferring locks such as the Linux futex
+`RwLock`, and the typical wait grows to about `k` sections.
+
+Environment: Apple M5 Max (18 logical cores), macOS arm64, Rust 1.98.1,
+`bench` profile, system allocator, unpinned shared host, load averages 2.7
+to 4.9. Base is `origin/main` 3c95df5 built with the extended harness.
+`PL_LATENCY_ONLY=fok_depth PL_LATENCY_SAMPLES=5000 PL_LATENCY_WARMUP=1000
+PL_LATENCY_CONTENTION_OPS=5000`. New is the median of three rounds. Base is
+one round: its rejected case at depth 10,000 ran for about 30 minutes
+(10.4 million matcher calls while the writer waited), so it was not
+repeated; an earlier base run on the same host measured writer add p99
+1,224,225 µs and max 9,328,124 µs for that case, the same order. Times are
+microseconds.
+
+| Scenario | Base p50 | Base p99 | Base p99.9 | Base max | New p50 | New p99 | New p99.9 | New max |
+|---|---|---|---|---|---|---|---|---|
+| writer_add_during_fok@100 | 0.17 | 4.04 | 6.92 | 17.5 | 0.12 | 1.62 | 5.79 | 8.12 |
+| writer_cancel_during_fok@100 | 0.08 | 4.04 | 8.12 | 11.3 | 0.08 | 1.58 | 4.75 | 9.17 |
+| writer_add_during_fok_rejected@100 | 0.17 | 1,371 | 8,578 | 12,018 | 0.12 | 11.6 | 14.0 | 15.8 |
+| writer_cancel_during_fok_rejected@100 | 0.08 | 1,331 | 7,158 | 17,634 | 0.08 | 11.9 | 14.4 | 19.0 |
+| writer_add_during_gtc@100 | 0.46 | 0.83 | 2.33 | 2.88 | 0.46 | 0.79 | 2.21 | 3.54 |
+| writer_cancel_during_gtc@100 | 0.42 | 1.00 | 2.54 | 2.96 | 0.42 | 1.04 | 2.54 | 3.29 |
+| writer_add_during_fok@10000 | 0.17 | 1.46 | 5.08 | 10.0 | 0.17 | 1.54 | 4.62 | 6.96 |
+| writer_cancel_during_fok@10000 | 0.12 | 1.83 | 7.00 | 12.7 | 0.12 | 1.54 | 4.96 | 6.58 |
+| writer_add_during_fok_rejected@10000 | 0.21 | 4,532,026 | 8,938,396 | 12,713,064 | 0.12 | 187 | 213 | 240 |
+| writer_cancel_during_fok_rejected@10000 | 0.12 | 4,644,363 | 10,902,868 | 14,513,848 | 0.12 | 195 | 215 | 269 |
+| writer_add_during_gtc@10000 | 0.46 | 0.83 | 2.21 | 3.67 | 0.46 | 0.83 | 1.92 | 5.71 |
+| writer_cancel_during_gtc@10000 | 0.42 | 1.08 | 2.83 | 6.46 | 0.42 | 1.12 | 2.21 | 3.75 |
+
+No run, base or new, reported a writer order consumed, a cancel that found
+nothing or an out-of-order fill.
+
+Uncontended cost, Criterion (`PriceLevel - FOK depth`, `Add Orders`,
+`Update Orders`), base and new interleaved, two rounds, point estimates:
+
+| Case | Base | New |
+|---|---|---|
+| fok_first_maker/1 | 252 / 252 ns | 250 / 249 ns |
+| fok_rejected/1 | 65.4 / 65.7 ns | 66.8 / 66.2 ns |
+| fok_first_maker/100 | 256 / 256 ns | 255 / 258 ns |
+| fok_rejected/100 | 2.66 / 2.66 µs | 2.66 / 2.67 µs |
+| fok_replenish/100 | 600 / 601 ns | 587 / 583 ns |
+| fok_first_maker/10000 | 278 / 280 ns | 276 / 277 ns |
+| fok_rejected/10000 | 168.7 / 169.1 µs | 168.0 / 166.8 µs |
+| fok_replenish/10000 | 638 / 641 ns | 631 / 628 ns |
+| add_standard_order (level + 100 adds) | 8.84 / 8.80 µs | 9.26 / 9.28 µs |
+| order_count_scaling/10 | 1.24 / 1.24 µs | 1.29 / 1.28 µs |
+| order_count_scaling/100 | 8.74 / 8.83 µs | 9.09 / 9.24 µs |
+| order_count_scaling/1000 | 97.0 / 97.9 µs | 97.6 / 97.8 µs |
+| cancel_order | 12.18 / 12.22 µs | 12.34 / 12.28 µs |
+| update_quantity | 14.49 / 14.47 µs | 14.46 / 15.01 µs |
+| cancel_order_count_scaling/1000 | 117.9 / 117.6 µs | 117.1 / 116.6 µs |
+
+### Reading
+
+- A writer behind a looping rejected FOK at depth 10,000 now waits p99
+  187 to 195 µs, about one exclusive section, and its worst single wait in
+  three rounds was 338 µs, within the typical two-section wait, instead of
+  p99 4.5 s and max 14.5 s. These are this workload's tails on this host,
+  not a bound for other FOK workloads or other schedulers. At depth 100 the p99 drops from 1.4 ms to 12 µs. The
+  writer's wait is still measured in sections, so it scales with the FOK's
+  walk: in the measured workload the hand-off reduced the number of
+  sections a writer waited through, not their length; it does not bound
+  either (total acquisition delay remains scheduler-dependent).
+- The matcher gives way only while a mutator is blocked. In the contended
+  rejected case it ran about 5,000 to 65,000 calls per second during the
+  writer's short window, against 5,800 to 285,000 on base, where it never
+  yielded and the writer's window lasted minutes.
+- Uncontended FOK is unchanged within noise at every depth: the extra work
+  is one counter load before `write()`.
+- **Regression, cause unresolved:** uncontended admission is 3 to 5%
+  slower in `add_standard_order` and `order_count_scaling` at 10 / 100 adds
+  (for example 8.8 to 9.3 µs for a level plus 100 adds), while
+  `order_count_scaling/1000` and every `Update Orders` case are unchanged
+  within noise. Mutators now call `try_read` and branch to an out-of-line
+  slow path instead of calling `read()`. Two isolated A/B builds on the same
+  host: one that restored a plain `read()` on the mutator path measured
+  like base, and one that only moved the poison branch out of line did not
+  recover the difference. So the `try_read` fast path is implicated, but
+  why it costs this much only in the small-level benches is not known;
+  code layout is a hypothesis, not a finding.
+- The first-maker FOK and GTC cases are unchanged: their sections are so
+  short that a woken writer usually wins the lock on its own.
+- Remaining caveats: a mutator that cannot run for the whole budget (for
+  example, it is preempted while the host is oversubscribed) lets that
+  section proceed and waits for another one, and on such a host the
+  round-counted budget itself can stretch to hundreds of milliseconds.
+  Neither side is protected from starvation by the hand-off. The typical
+  bounds assume one matcher per level. Callers that need tight admission
+  or cancel latency should not loop large FOK takers on one deep level from
+  a hot thread; prefer IOC where all-or-nothing is not required.

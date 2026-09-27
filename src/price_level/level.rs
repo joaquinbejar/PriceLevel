@@ -20,8 +20,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+
+use super::fok_guard::FokGuard;
 
 /// Upper bound on the order walks one [`PriceLevel::snapshot`] call performs
 /// before it gives up with [`PriceLevelError::InvalidOperation`] (issue #162).
@@ -353,7 +355,8 @@ fn fire_sweep_start_hook() {
 }
 
 // Deterministic seam between the terminal self-match lookup and the
-// fill-or-kill exclusive-guard acquisition (issue #164 review): a test can
+// fill-or-kill exclusive-guard acquisition (issue #164 review), and so also
+// before the guard's hand-off wait for announced mutators (issue #206): a test can
 // admit an order sharing the taker id in exactly the window a concurrent
 // mutator could, on the matcher thread and with no lock held, so the dry run
 // then sees (and parks) it. Production builds compile none of this.
@@ -388,6 +391,52 @@ fn fire_pre_fok_lock_hook() {
     let hook = PRE_FOK_LOCK_HOOK.with(|slot| slot.borrow_mut().take());
     if let Some(mut hook) = hook {
         hook();
+    }
+}
+
+// Deterministic seam fired right after a fill-or-kill taker acquires the
+// exclusive guard, before its dry run (issue #206): a test observes the level
+// while no mutator can run, e.g. to record the true FIFO front the sweep must
+// consume, or to hold the guard while a mutator blocks. Unlike the one-shot
+// hooks above it stays installed across calls until its guard drops.
+// Production builds compile none of this.
+#[cfg(test)]
+thread_local! {
+    static FOK_LOCKED_HOOK: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Clears the fill-or-kill-locked hook when dropped (test seam, issue #206).
+#[cfg(test)]
+pub(crate) struct FokLockedHookGuard;
+
+#[cfg(test)]
+impl Drop for FokLockedHookGuard {
+    fn drop(&mut self) {
+        FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// Install a persistent hook fired each time a fill-or-kill taker on this
+/// thread holds the exclusive guard (test seam, issue #206).
+#[cfg(test)]
+pub(crate) fn set_fok_locked_hook(hook: Box<dyn FnMut()>) -> FokLockedHookGuard {
+    FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    FokLockedHookGuard
+}
+
+/// Fire the fill-or-kill-locked hook, if installed, and keep it installed.
+#[cfg(test)]
+fn fire_fok_locked_hook() {
+    let hook = FOK_LOCKED_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(mut hook) = hook {
+        hook();
+        FOK_LOCKED_HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(hook);
+            }
+        });
     }
 }
 
@@ -619,7 +668,11 @@ fn update_counter_overflow() -> PriceLevelError {
 /// fit the dry run's lazy budget, and `O(depth log depth)` past it (issue
 /// #143) — so it stays all-or-nothing against
 /// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
-/// the full argument (issue #112).
+/// the full argument (issue #112). A blocked mutator announces itself, and a
+/// fill-or-kill match yields to announced mutators for a bounded budget before
+/// it retakes the exclusive side (issue #206). That shortens mutator waits
+/// behind a looping fill-or-kill matcher in practice but is not a fairness
+/// guarantee; see `price_level::fok_guard`.
 ///
 /// # Topology
 ///
@@ -711,7 +764,15 @@ pub struct PriceLevel {
     /// mid-operation, which may have left the level half-mutated, so the recovery
     /// also trips [`Self::level_poisoned`] and the level then fails fast rather
     /// than silently reopening (issue #130).
-    fok_guard: RwLock<()>,
+    ///
+    /// `std::sync::RwLock` promises no fairness, so the lock is wrapped in a
+    /// [`FokGuard`] that adds a bounded hand-off (issue #206): a mutator whose
+    /// shared acquisition would block announces itself, and a fill-or-kill
+    /// match that sees an announcement waits, holding no lock, until every
+    /// announced mutator holds the shared side or its budget runs out. The
+    /// announcement count is a scheduling hint only; exclusion still comes
+    /// from the lock alone.
+    fok_guard: FokGuard,
 
     /// Sticky fail-fast flag set when a poisoned [`Self::fok_guard`] is recovered
     /// (issue #130): a guard holder panicked mid-operation, so the level may be
@@ -869,7 +930,7 @@ impl PriceLevel {
             orders: queue,
             // Moved, not cloned: the snapshot is consumed.
             stats: Arc::new(validated.statistics),
-            fok_guard: RwLock::new(()),
+            fok_guard: FokGuard::new(),
             level_poisoned: AtomicBool::new(false),
             mutation_epoch: AtomicU64::new(0),
         })
@@ -967,7 +1028,7 @@ impl PriceLevel {
             topology_epoch: AtomicU64::new(0),
             orders: queue,
             stats: Arc::new(stats),
-            fok_guard: RwLock::new(()),
+            fok_guard: FokGuard::new(),
             level_poisoned: AtomicBool::new(false),
             mutation_epoch: AtomicU64::new(0),
         })
@@ -1033,7 +1094,7 @@ impl PriceLevel {
             topology_epoch: AtomicU64::new(0),
             orders: OrderQueue::new(),
             stats: Arc::new(PriceLevelStatistics::new()),
-            fok_guard: RwLock::new(()),
+            fok_guard: FokGuard::new(),
             level_poisoned: AtomicBool::new(false),
             mutation_epoch: AtomicU64::new(0),
         }
@@ -1473,7 +1534,9 @@ impl PriceLevel {
 
     /// Acquire the fill-or-kill guard's **exclusive (write)** side — held across
     /// a fill-or-kill dry-run + sweep so no mutator can change the matchable
-    /// depth mid-decision. A poisoned lock is recovered (see [`Self::fok_read`]).
+    /// depth mid-decision. First yields, for a bounded budget, to mutators
+    /// already blocked on the shared side (issue #206). A poisoned lock is
+    /// recovered (see [`Self::fok_read`]).
     #[inline]
     fn fok_write(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
         self.fok_guard.write().unwrap_or_else(|poison| {
@@ -1617,6 +1680,29 @@ impl PriceLevel {
     #[cfg(test)]
     pub(crate) fn test_rest_unadmitted(&self, order: OrderType<()>) -> Result<(), PriceLevelError> {
         self.orders.try_push(Arc::new(order))
+    }
+
+    /// The true FIFO front `(sequence, id)` of the queue (issue #206 test
+    /// seam); see `OrderQueue::test_front`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_front(&self) -> Option<(u64, Id)> {
+        self.orders.test_front()
+    }
+
+    /// Mutators currently announced to the fill-or-kill hand-off (issue #206
+    /// test seam).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_fok_waiting_mutators(&self) -> usize {
+        self.fok_guard.test_waiting_mutators()
+    }
+
+    /// Announce a phantom mutator to the fill-or-kill hand-off until the
+    /// returned value drops (issue #206 test seam).
+    #[cfg(test)]
+    pub(crate) fn test_fok_announce(&self) -> impl Drop + '_ {
+        self.fok_guard.test_announce()
     }
 
     #[cfg(test)]
@@ -2746,6 +2832,8 @@ impl PriceLevel {
             if self.is_poisoned() {
                 return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             }
+            #[cfg(test)]
+            fire_fok_locked_hook();
             let dry = match self.dry_run(
                 incoming_quantity,
                 taker_order_id,
@@ -4692,7 +4780,7 @@ impl Ord for PriceLevel {
 impl std::fmt::Debug for PriceLevel {
     /// Snapshot-then-write (issue #172): the atomics are loaded and the queue is
     /// formatted through [`OrderQueue`]'s own materializing `Debug`, and the
-    /// `fok_guard` is deliberately omitted — `RwLock`'s `Debug` would hold a
+    /// `fok_guard` is deliberately omitted — the `RwLock`'s `Debug` would hold a
     /// read guard while writing into the caller's formatter, which could
     /// deadlock a destination that re-enters this level's fill-or-kill path.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

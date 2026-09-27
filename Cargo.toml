@@ -111,7 +111,9 @@ bincode = { version = "2.0", default-features = false, features = ["serde", "std
 # loom is a dev-only model checker, gated behind `--cfg loom`. It is NOT a
 # runtime dependency. It models the cancel-vs-partial-fill linearization (issue
 # #81; `tests/loom/cancel_match.rs`) and the single-writer statistics seqlock
-# (issue #153; `tests/loom/stats_seqlock.rs`). loom cannot instrument dashmap /
+# (issue #153; `tests/loom/stats_seqlock.rs`), and checks the fill-or-kill
+# guard's writer hand-off (issue #206; `tests/loom/fok_handoff.rs`) by
+# compiling the production `src/price_level/fok_guard.rs` against loom. loom cannot instrument dashmap /
 # crossbeam-skiplist (they are not loom-aware), so the loom test models the
 # per-entry-lock PROTOCOL with loom's own primitives rather than the real queue.
 [target.'cfg(loom)'.dev-dependencies]
@@ -124,6 +126,10 @@ path = "tests/loom/cancel_match.rs"
 [[test]]
 name = "loom_stats_seqlock"
 path = "tests/loom/stats_seqlock.rs"
+
+[[test]]
+name = "loom_fok_handoff"
+path = "tests/loom/fok_handoff.rs"
 
 [[test]]
 name = "tests"

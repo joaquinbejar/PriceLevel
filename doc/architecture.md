@@ -54,12 +54,12 @@ public methods:
 | Quantity, count, topology and most statistics counters (`std` atomics) | Lock-free |
 | `value_executed` accumulator (`portable_atomic::AtomicU128`) | Lock-free with a native 128-bit CAS (aarch64; x86_64 with `cmpxchg16b`); a global lock for this one counter elsewhere |
 | Order storage: `dashmap::DashMap<Id, (u64, Arc<OrderType<()>>)>` | Sharded reader-writer locks |
-| `fok_guard: std::sync::RwLock<()>`, one per level | Blocking reader-writer lock |
+| `fok_guard: FokGuard` (a `std::sync::RwLock<()>` plus a waiting-mutator counter), one per level | Blocking reader-writer lock with a bounded hand-off to waiting mutators (#206) |
 
 | Public method | Locks |
 |---------------|-------|
 | `match_order`, `Gtc` / `Ioc` / `Gtd` / `Day` | Shard write lock of each maker entry it fills, one at a time (`OrderQueue::match_front`); no level-wide guard |
-| `match_order`, `Fok` | `fok_guard` exclusive across the `O(depth)` dry-run and sweep, plus the per-maker shard write locks |
+| `match_order`, `Fok` | `fok_guard` exclusive across the dry-run and sweep (bounded by the makers the fill visits within the lazy budget, `O(depth log depth)` past it; #143), after a bounded hand-off to announced mutators (#206), plus the per-maker shard write locks |
 | `match_order`, post-only taker | No sweep; the depth scan iterates storage under shard read locks |
 | `add_order` | `fok_guard` shared, plus the new id's shard write lock |
 | `update_order` (all variants) | `fok_guard` shared, plus the target id's shard write lock |
@@ -78,8 +78,37 @@ public methods:
   Operations on other orders in the same shard wait on that lock too.
 - **Fill-or-kill exclusion.** A `Fok` match holds `fok_guard` exclusively for
   its dry-run and sweep, so admissions, updates and snapshots on that level
-  block for an `O(depth)` section (issue #112). The other time-in-force paths
-  skip this guard but still take the per-maker shard lock.
+  block for that section (issue #112; bounded by #143). The other
+  time-in-force paths skip this guard but still take the per-maker shard lock.
+- **Fill-or-kill hand-off (issue #206).** `std::sync::RwLock` promises no
+  fairness, and a matcher looping `Fok` calls on one level retook the
+  exclusive side before the mutators it had just woken could run. A mutator
+  whose shared acquisition would block now announces itself on a per-level
+  counter (`src/price_level/fok_guard.rs`); a `Fok` match that sees an
+  announcement waits, holding no lock, until every announced mutator holds
+  the shared side or a fixed budget (64 spin hints, then 256 `yield_now`
+  calls) runs out, and then calls `write()` regardless. This is a bounded
+  number of hand-off attempts with measured latency improvements, not a
+  fairness guarantee: it does not establish starvation freedom for either
+  side, because `RwLock` acquisition priority is unspecified in Rust, and
+  total lock-acquisition delay remains scheduler-dependent and unbounded.
+  The budget counts rounds, not time, so under oversubscription a hand-off
+  can take hundreds of milliseconds. Typical case only (one matcher per
+  level as supported, a writer-preferring or queue-fair lock, a mutator
+  scheduled within the budget): a blocked mutator waits for at most two
+  sections plus its wake-up, the one in progress and one more if the
+  matcher rechecks between the mutator's failed `try_read` and its
+  announcement; with `k` concurrent matchers (unsupported) about `k`. The
+  counter is a scheduling hint only: exclusion and all-or-nothing still come
+  from the lock alone. `tests/loom/fok_handoff.rs` model checks the
+  production `fok_guard.rs` against loom for exclusion, termination of the
+  hand-off loop and a conditional property (a drained hand-off admits the
+  announced mutator first); it does not prove starvation freedom (see that
+  file for the model's limits). A section is still the unit of wait: a
+  `Fok` that must walk the level (a kill, or a fill deep into the queue)
+  holds it for `O(depth log depth)`, so a caller that needs tight mutator
+  latency on a deep level should not loop such takers on it from a hot
+  thread. Measurements: `BENCH.md`, "Bounded hand-off to waiting mutators".
 - **Side topology.** The resting side and count are pinned in one atomic word,
   so single-side coherence holds under arbitrary concurrent admissions and
   removals (issue #126).

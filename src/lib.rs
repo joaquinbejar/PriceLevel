@@ -71,7 +71,7 @@
 //! | Quantity, count, topology and most statistics counters (`std` atomics) | Lock-free |
 //! | `value_executed` statistics accumulator (`portable_atomic::AtomicU128`) | Lock-free where the CPU has a native 128-bit CAS (aarch64; x86_64 with `cmpxchg16b`); elsewhere `portable-atomic` falls back to a global lock for this one counter |
 //! | Order storage (`dashmap::DashMap`, order id to order) | Sharded reader-writer locks, one per shard |
-//! | Fill-or-kill guard (`std::sync::RwLock<()>`, one per level) | Blocking reader-writer lock |
+//! | Fill-or-kill guard (`std::sync::RwLock<()>` plus a waiting-mutator counter, one per level) | Blocking reader-writer lock; a `Fok` match first yields to blocked mutators for a bounded budget (#206) |
 //!
 //! What each public method acquires:
 //!
@@ -106,6 +106,35 @@
 //!   dry run collects and sorts the remaining makers (issue #143). The
 //!   other time-in-force paths skip that guard, but skipping it is **not** the
 //!   absence of locking: they still take the per-maker shard lock.
+//! - **Fill-or-kill hands off to blocked mutators, a bounded number of times
+//!   (#206).** The guard is a `std::sync::RwLock`, which promises no fairness:
+//!   a matcher calling `Fok` back-to-back on one level used to retake the
+//!   exclusive side before the mutators it had just woken could run, so an
+//!   admission or cancel could wait for thousands of consecutive sections
+//!   (seconds behind a looping rejected `Fok` at depth 10,000). A mutator whose
+//!   shared acquisition would block now announces itself, and a `Fok` match
+//!   that sees an announcement waits, holding no lock, until every announced
+//!   mutator holds the shared side or a fixed budget of 64 spin hints and 256
+//!   `yield_now` calls runs out; it then calls `write()` regardless. This is a
+//!   courtesy with **measured** latency improvements (`BENCH.md`, "Writer
+//!   starvation behind a looping FOK matcher"), not a fairness guarantee: it
+//!   does not establish starvation freedom for mutators or for the matcher,
+//!   since `RwLock` acquisition priority is unspecified in Rust, and total
+//!   lock-acquisition delay remains scheduler-dependent and unbounded. The
+//!   budget counts rounds, not time, so under oversubscription one hand-off
+//!   can take hundreds of milliseconds. In the typical case (one matcher per
+//!   level as supported, a writer-preferring or queue-fair lock, and a mutator
+//!   scheduled within the budget) a blocked mutator waits for at most two
+//!   sections plus its own wake-up; with `k` concurrent `Fok` matchers
+//!   (unsupported) about `k`. The announcement is a scheduling hint only:
+//!   exclusion, all-or-nothing and the failure contract still come from the
+//!   lock alone, and uncontended calls add only a non-blocking first attempt
+//!   and one counter read. A section is still the unit of wait, so a `Fok`
+//!   that must walk a deep level (a kill, or a fill far into the queue) keeps
+//!   blocked mutators waiting for its `O(depth log depth)` duration: callers
+//!   that need tight admission or cancel latency should not loop such takers
+//!   on one deep level from a hot thread, and should prefer `Ioc` where
+//!   all-or-nothing is not required.
 //! - **Readers are always allowed.** Counter reads never block. A
 //!   [`PriceLevel::snapshot`] waits only behind an in-flight fill-or-kill or a
 //!   held shard lock; it walks the shards without a transaction over the whole
