@@ -1183,7 +1183,11 @@ No public signature changes; the observable behavior below is new.
 - **Resting-order count release.** A cancel / price-moving update
   ([`PriceLevel::update_order`]) and every full consume in
   [`PriceLevel::match_order`] validate the level's resting-order count
-  BEFORE the queue removal. A count that disagrees with the queue (zero
+  BEFORE the queue removal, inside the same per-entry critical section
+  that performs the removal, so a concurrent admission or cancellation of
+  the same id can never produce a spurious error: the removal either sees
+  the order (with its count) or reports it absent (`Ok(None)` for
+  `update_order`). A count that disagrees with the queue (zero
   while the order rests) now returns
   [`PriceLevelError::InvalidOperation`] with the queue, priority,
   counters and statistics untouched. Previously release builds removed the

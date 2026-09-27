@@ -121,11 +121,38 @@ and tests.
 | `snapshot` recollection `debug!` (rejected walk: mixed sides or aggregate overflow) and attempts-exhausted `warn!` (#162) | `fok_guard` **shared (read) side**, held for the whole bounded recollection | none: a rejected walk is discarded and the level is never mutated by `snapshot`. An unwind releases the read guard without poisoning it; synchronous reentry into a `Fok` `match_order` on the same level blocks behind that read guard (covered by the global no-reentry obligation) |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
+| sweep resting-order count refusal `debug!` (`TopologyUnderflow`, #163) | as the set-aside row | this step is a no-op: the count check ran inside the step's `match_front` entry critical section and refused the full consume before `Remove` committed; the error is built after the entry lock is released. **Earlier steps are committed**, as above |
+| sweep post-removal release failure (#163; logged with the sweep stop `error!`) | as the set-aside row | the maker is removed and the step's counters moved; the topology count could not be released (it already disagreed with the queue), so the level is poisoned before the event. **The step and earlier steps are committed** |
+| removal count refusal `warn!` (`update_order` cancel / price move, #163) | `fok_guard` **shared (read) side** (held by `update_order`); no `DashMap` lock | none: the count check ran inside `OrderQueue::remove_if`'s entry critical section, refused, and released the entry lock before the error is built and logged |
+| removal post-release failure `error!` (`update_order` cancel / price move, #163) | `fok_guard` shared side; no `DashMap` lock | the order is removed and the quantity counters moved; the level is already poisoned (the event reports it) |
+| update counter-rollback failure `error!` (`update_order` resize, #163) | `fok_guard` shared side; no `DashMap` lock (logged after `update_entry_with` returned) | the resize was rejected with the queue untouched; one level counter could not be restored and the level is already poisoned |
 | `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a `setup_logger` call from this event's `on_event` returns it instead of blocking |
 |  `setup_logger` → `set_global_default` → `Dispatch` construction: callsite-interest rebuild invoking live subscribers' `register_callsite` / `max_level_hint` | **`LOGGER_INIT_RESULT` `OnceLock` initialization in progress** | none yet (the global default is not set until these return). a callback that calls `setup_logger` blocks on the same initialization and deadlocks; **re-entry from registration callbacks is prohibited**. A panic unwinds out of `get_or_init`, leaving it uninitialized |
 
-No event is emitted inside the `OrderQueue::match_front` / `update_entry` /
-`try_push_with` closures, so none runs under a `DashMap` shard write lock.
+No event is emitted inside the `OrderQueue::match_front` /
+`update_entry_with` / `remove_if` / `try_push_with` closures, so none runs
+under a `DashMap` shard write lock.
+
+#### Removal event boundaries (issue #163)
+
+A cancel or price-moving `update_order` removes through
+`OrderQueue::remove_if`, which runs three phases:
+
+1. **Under the entry lock:** select the occupied entry, evaluate the
+   crate-owned count check (`PriceLevel::topology_releasable`: one atomic load,
+   no allocation, no event), then remove the map entry or refuse. An absent id
+   returns before any check or error construction.
+2. **After the entry lock:** remove the index key, move the quantity
+   counters, release the topology count (`release_after_removal`).
+3. **Last:** build any error and emit any event.
+
+A full consume in the sweep follows the same boundary: the count check runs in
+the `match_front` decision closure, in the entry critical section that commits
+`FrontAction::Remove`; the release, error and event follow after the lock.
+Because the check and the removal share one critical section, a concurrent
+admission of the same id either publishes before the selection (and is
+removed with its count) or after it (and the removal reports not-found):
+the check cannot be misled into a spurious count error.
 
 Consequence of a subscriber panic inside a sweep: the queue and counters
 remain mutually consistent at step granularity, but the unwinding

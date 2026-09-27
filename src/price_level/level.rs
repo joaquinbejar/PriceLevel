@@ -4,7 +4,9 @@ use crate::UuidGenerator;
 use crate::errors::{ExhaustedCounter, PriceLevelError};
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
-use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
+use crate::price_level::order_queue::{
+    FrontAction, FrontOutcome, OrderQueue, RemoveOutcome, UpdateDecision,
+};
 use crate::price_level::snapshot::SnapshotAggregates;
 use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
@@ -926,10 +928,10 @@ impl PriceLevel {
     /// Unpinned level (and establishes) — never an inconsistent in-between.
     ///
     /// The decrement is checked (issue #163). Callers validate with
-    /// [`Self::topology_check_releasable`] BEFORE their destructive queue
-    /// removal and commit this release through [`Self::release_after_removal`]
-    /// after it, so a zero count is rejected with nothing mutated in the
-    /// ordinary case.
+    /// [`Self::topology_releasable`] inside the removal's per-entry critical
+    /// section and commit this release through [`Self::release_after_removal`]
+    /// after the removal, so a zero count is rejected with nothing mutated in
+    /// the ordinary case.
     ///
     /// # Errors
     ///
@@ -957,35 +959,37 @@ impl PriceLevel {
         }
     }
 
-    /// Validate, BEFORE a destructive queue removal, that the release which
-    /// follows it can commit (issue #163): the resting-order count must be at
-    /// least one.
+    /// Whether the release that follows a removal can commit (issue #163):
+    /// the resting-order count is at least one.
     ///
-    /// Every resting order was counted by [`Self::topology_admit`] before it
-    /// was published and is released only after its own removal, so the count
-    /// is at least the number of resident orders and concurrent removers of
-    /// OTHER orders cannot take it below one while this order rests. A zero
-    /// count here therefore means the count already disagrees with the queue;
-    /// the caller rejects the removal with nothing mutated.
+    /// Callers evaluate this INSIDE the removal's per-entry critical section
+    /// (the [`OrderQueue::remove_if`] check for cancels / price moves, the
+    /// [`OrderQueue::match_front`] decision closure for a full consume), with
+    /// the order to be removed resident and locked. Every resting order was
+    /// counted by [`Self::topology_admit`] under its own entry lock before it
+    /// was published, and is released only after its own removal, which needs
+    /// that same lock. So while the caller holds it, this order's count is
+    /// included and nobody else can release it: `false` means the count
+    /// already disagrees with the queue, never a transient race with an
+    /// admission or cancellation. The caller then rejects the removal with
+    /// nothing mutated and builds the error after releasing the lock.
     ///
-    /// # Errors
-    ///
-    /// [`PriceLevelError::InvalidOperation`] if the count is zero.
+    /// Allocation-free and event-free, so it may run under a shard lock.
     #[inline]
-    fn topology_check_releasable(&self) -> Result<(), PriceLevelError> {
+    #[must_use]
+    fn topology_releasable(&self) -> bool {
         // `Acquire`: pairs with the `AcqRel` admission / release CAS, so the
-        // check observes every count change that happened-before this removal.
-        if topology::count(self.topology.load(Ordering::Acquire)) == 0 {
-            Err(topology_underflow(self.price))
-        } else {
-            Ok(())
-        }
+        // check observes every count change that happened-before this removal
+        // (in particular this resident order's own admission, published under
+        // the entry lock the caller now holds).
+        topology::count(self.topology.load(Ordering::Acquire)) != 0
     }
 
     /// Commit the topology release for an order this call already removed
     /// from the queue (issue #163), bumping the topology epoch on an un-pin.
     ///
-    /// The removal was preceded by [`Self::topology_check_releasable`], so a
+    /// The removal was validated by [`Self::topology_releasable`] under its
+    /// entry lock, so a
     /// failure here is reachable only if the count disagreed with the queue
     /// before this call (see that method). The removal cannot be undone
     /// without re-exposing a stale queue position, so the level is poisoned
@@ -2534,15 +2538,20 @@ impl PriceLevel {
                 maker_id: Id,
             },
             /// [`OrderType::match_against`] returned a typed arithmetic error
-            /// for the FIFO-front maker (issue #169), or its full consume
-            /// failed the pre-removal topology-count validation (issue #163).
-            /// The queue action is
+            /// for the FIFO-front maker (issue #169). The queue action is
             /// `SetAside` (a no-op that mutates nothing), so the maker rests
             /// unchanged; the sweep stops with the committed prefix and the
             /// error (#164 contract).
             Failed {
                 maker_id: Id,
                 error: PriceLevelError,
+            },
+            /// The FIFO-front maker would be fully consumed, but the
+            /// under-lock resting-order count check refused its removal
+            /// (issue #163). Same `SetAside` no-op and stop as `Failed`; the
+            /// error is constructed after the entry lock is released.
+            TopologyUnderflow {
+                maker_id: Id,
             },
             /// The step would emit a trade but no trade id could be reserved
             /// (the generator is exhausted, issue #168). Detected BEFORE any
@@ -2702,13 +2711,18 @@ impl PriceLevel {
                 // Step 4: a full consume removes the maker and then releases one
                 // resting-order count. A zero count means the count already
                 // disagrees with the queue, so reject the step while it is still
-                // a pure decision. A fill-or-kill never reaches this: its dry run
+                // a pure decision. The check runs here, in the same per-entry
+                // critical section that then commits `FrontAction::Remove`, with
+                // this maker resident and locked, so it cannot be misled by a
+                // concurrent admission / cancellation (see
+                // `topology_releasable`); the error is built after the lock is
+                // released. A fill-or-kill never reaches this: its dry run
                 // projects the same count and kills the taker before the first
                 // mutation.
-                if fully_consumed && let Err(error) = self.topology_check_releasable() {
+                if fully_consumed && !self.topology_releasable() {
                     return (
                         FrontAction::SetAside,
-                        StepResult::Failed { maker_id, error },
+                        StepResult::TopologyUnderflow { maker_id },
                     );
                 }
 
@@ -2875,6 +2889,21 @@ impl PriceLevel {
                                 "match sweep: front maker step failed before mutation; sweep stopped"
                             );
                             sweep_error = Some((error, None));
+                            break;
+                        }
+                        StepResult::TopologyUnderflow { maker_id } => {
+                            // The front maker's full consume failed the
+                            // under-lock resting-order count check (issue #163):
+                            // no trade, no counter moved, maker left in place.
+                            // The error is built here, outside the entry lock,
+                            // and reported with the committed prefix (#164).
+                            tracing::debug!(
+                                price = self.price,
+                                remaining,
+                                order_id = %maker_id,
+                                "match sweep: front maker removal refused by the resting-order count; sweep stopped"
+                            );
+                            sweep_error = Some((topology_underflow(self.price), None));
                             break;
                         }
                         StepResult::SequenceExhausted { maker_id, error } => {
@@ -3410,14 +3439,29 @@ impl PriceLevel {
     /// Remove a resting order for a cancel / price-moving update and release
     /// its level accounting (issue #163).
     ///
-    /// Protocol: the topology release is validated BEFORE the destructive
-    /// removal ([`Self::topology_check_releasable`]), so a count that already
-    /// disagrees with the queue rejects the update with the queue, priority,
-    /// counters and topology untouched. After the removal the quantity
-    /// counters move and the release commits through
-    /// [`Self::release_after_removal`]. The removal itself stays the single
-    /// per-entry `DashMap` removal of issue #119, so a concurrent match or
-    /// cancel of the same id still resolves to exactly one winner.
+    /// Protocol (event boundaries):
+    ///
+    /// 1. **Select + validate + remove, one critical section.**
+    ///    [`OrderQueue::remove_if`] selects the occupied entry and, while
+    ///    holding that entry's shard write lock, checks that the resting-order
+    ///    count is at least one ([`Self::topology_releasable`]) and removes the
+    ///    entry. The check and the removal observe the same state: this order
+    ///    is resident, so its own admission count is included (admission
+    ///    counts before it publishes) and nobody else can release it (every
+    ///    remover of this id needs this lock). A concurrent admission of the
+    ///    same id on an empty level therefore either publishes before the
+    ///    selection (the cancel finds it, with its count) or after it (the
+    ///    cancel reports `Ok(None)`) — never a spurious count error. An
+    ///    absent id returns `Ok(None)` without evaluating the count or
+    ///    constructing an error.
+    /// 2. **Counters and release, after the lock.** The quantity counters move
+    ///    and the release commits through [`Self::release_after_removal`].
+    /// 3. **Events, last.** Any `warn!` / `error!` is emitted after the entry
+    ///    lock is released; nothing is logged inside `remove_if`.
+    ///
+    /// The removal stays the single per-entry `DashMap` removal of issue
+    /// #119, so a concurrent match or cancel of the same id still resolves to
+    /// exactly one winner.
     ///
     /// Returns `Ok(None)` when the id is not resting here (nothing changes).
     ///
@@ -3425,28 +3469,29 @@ impl PriceLevel {
     ///
     /// [`PriceLevelError::InvalidOperation`] when the count is zero while the
     /// order rests (nothing mutated), or — reachable only if the count
-    /// disagreed with the queue before the call and a concurrent removal
-    /// consumed the last count after the validation — when the post-removal
-    /// release fails; the removal is then committed, the level is poisoned
-    /// (fail fast, reconstruct from a snapshot) and the error is returned
-    /// rather than a success.
+    /// disagreed with the queue before the call and a concurrent removal of a
+    /// DIFFERENT order consumed the last count after the check — when the
+    /// post-removal release fails; the removal is then committed, the level
+    /// is poisoned (fail fast, reconstruct from a snapshot) and the error is
+    /// returned rather than a success.
     fn remove_resting(&self, order_id: Id) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
-        if let Err(err) = self.topology_check_releasable() {
-            // An absent id is an ordinary "not found": nothing to release.
-            if self.orders.find(order_id).is_none() {
-                return Ok(None);
+        let order = match self
+            .orders
+            .remove_if(order_id, |_resident| self.topology_releasable())
+        {
+            RemoveOutcome::Absent => return Ok(None),
+            RemoveOutcome::Refused => {
+                // Built and logged after the entry lock was released.
+                let err = topology_underflow(self.price);
+                tracing::warn!(
+                    price = self.price,
+                    order_id = %order_id,
+                    error = %err,
+                    "removal rejected before mutation: resting-order count disagrees with the queue"
+                );
+                return Err(err);
             }
-            tracing::warn!(
-                price = self.price,
-                order_id = %order_id,
-                error = %err,
-                "removal rejected before mutation: resting-order count disagrees with the queue"
-            );
-            return Err(err);
-        }
-
-        let Some(order) = self.orders.remove(order_id) else {
-            return Ok(None);
+            RemoveOutcome::Removed(order) => order,
         };
 
         // Update atomic counters from the order actually removed from the

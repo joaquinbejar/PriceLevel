@@ -656,4 +656,169 @@ mod tests {
         }
         assert!(restored.add_order(buy).is_err());
     }
+
+    #[test]
+    fn test_remove_if_outcomes_absent_refused_removed() {
+        use crate::price_level::order_queue::RemoveOutcome;
+
+        let queue = OrderQueue::new();
+        queue.push(Arc::new(standard(1, 10)));
+        queue.push(Arc::new(standard(2, 20)));
+
+        // Absent: the check never runs.
+        let outcome = queue.remove_if(Id::from_u64(9), |_| {
+            panic!("check must not run for an absent id")
+        });
+        assert!(matches!(outcome, RemoveOutcome::Absent));
+
+        // Refused: the check sees the resident order; nothing changes.
+        let mut seen = None;
+        let outcome = queue.remove_if(Id::from_u64(1), |resident| {
+            seen = Some(resident.id());
+            false
+        });
+        assert!(matches!(outcome, RemoveOutcome::Refused));
+        assert_eq!(seen, Some(Id::from_u64(1)));
+        let ids: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        assert_eq!(ids, vec![Id::from_u64(1), Id::from_u64(2)]);
+        assert!(queue.debug_map_index_consistent());
+
+        // Removed: map and index both cleaned; FIFO of the rest intact.
+        match queue.remove_if(Id::from_u64(1), |_| true) {
+            RemoveOutcome::Removed(order) => assert_eq!(*order, standard(1, 10)),
+            other => panic!("expected Removed, got {other:?}"),
+        }
+        let ids: Vec<Id> = queue.to_vec().iter().map(|o| o.id()).collect();
+        assert_eq!(ids, vec![Id::from_u64(2)]);
+        assert!(queue.debug_map_index_consistent());
+        assert!(matches!(
+            queue.remove_if(Id::from_u64(1), |_| true),
+            RemoveOutcome::Absent
+        ));
+    }
+
+    #[test]
+    fn test_cancel_absent_on_empty_level_is_not_found() {
+        // The ordinary empty-level miss: no count error, no poisoning.
+        let level = PriceLevel::new(PRICE);
+        let outcome = level.update_order(OrderUpdate::Cancel {
+            order_id: Id::from_u64(1),
+        });
+        assert_eq!(outcome, Ok(None));
+        assert!(!level.test_is_poisoned());
+    }
+
+    // ---------------------------------------------------------------------
+    // Review regression (PR #196): the removal count check must not race a
+    // concurrent admission of the same id. Public API only.
+    // ---------------------------------------------------------------------
+
+    /// Rounds for the admission-vs-removal race. The reviewer's release probe
+    /// reproduced 648 spurious errors in 50,000 rounds with the split
+    /// (count-then-find) check; the under-lock check must produce none.
+    const RACE_ROUNDS: u64 = 20_000;
+
+    /// One Barrier-started round per id on an initially empty level: thread A
+    /// admits id `round`, thread B removes the same id (cancel, or a
+    /// price-moving update on odd rounds). Whatever the interleaving, the
+    /// removal must return `Ok(Some)` (it saw the order) or `Ok(None)` (it
+    /// ran first), never an invariant error, and the level's count and
+    /// counters must describe its queue after every round.
+    #[test]
+    fn test_concurrent_admission_and_removal_same_id_never_reports_count_error() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let level = Arc::new(PriceLevel::new(PRICE));
+        let start = Arc::new(Barrier::new(2));
+        let done = Arc::new(Barrier::new(2));
+        let checked = Arc::new(Barrier::new(2));
+
+        let admitter = {
+            let level = Arc::clone(&level);
+            let (start, done, checked) =
+                (Arc::clone(&start), Arc::clone(&done), Arc::clone(&checked));
+            thread::spawn(move || {
+                let mut removed_after_admit = 0u64;
+                for round in 1..=RACE_ROUNDS {
+                    start.wait();
+                    let admitted = level.add_order(standard(round, 7));
+                    done.wait();
+                    // Both sides of the round have returned: verify and reset.
+                    assert!(admitted.is_ok(), "round {round}: admission {admitted:?}");
+                    let resting = fifo_ids(&level);
+                    match resting.as_slice() {
+                        [] => {
+                            removed_after_admit += 1;
+                            assert_eq!(level.order_count(), 0, "round {round}");
+                            assert_eq!(level.visible_quantity(), 0, "round {round}");
+                        }
+                        [id] => {
+                            assert_eq!(*id, Id::from_u64(round));
+                            assert_eq!(level.order_count(), 1, "round {round}");
+                            assert_eq!(level.visible_quantity(), 7, "round {round}");
+                            let cleanup = level.update_order(OrderUpdate::Cancel {
+                                order_id: Id::from_u64(round),
+                            });
+                            assert!(matches!(cleanup, Ok(Some(_))), "round {round}");
+                        }
+                        other => panic!("round {round}: unexpected queue {other:?}"),
+                    }
+                    assert_eq!(level.order_count(), 0, "round {round}: reset");
+                    assert_eq!(level.hidden_quantity(), 0);
+                    checked.wait();
+                }
+                removed_after_admit
+            })
+        };
+
+        let remover = {
+            let level = Arc::clone(&level);
+            let (start, done, checked) =
+                (Arc::clone(&start), Arc::clone(&done), Arc::clone(&checked));
+            thread::spawn(move || {
+                let mut errors = 0u64;
+                let mut found = 0u64;
+                for round in 1..=RACE_ROUNDS {
+                    start.wait();
+                    let order_id = Id::from_u64(round);
+                    let outcome = if round % 2 == 0 {
+                        level.update_order(OrderUpdate::Cancel { order_id })
+                    } else {
+                        level.update_order(OrderUpdate::UpdatePrice {
+                            order_id,
+                            new_price: Price::new(PRICE + 1),
+                        })
+                    };
+                    match outcome {
+                        Ok(Some(order)) => {
+                            assert_eq!(order.id(), order_id);
+                            found += 1;
+                        }
+                        Ok(None) => {}
+                        Err(_) => errors += 1,
+                    }
+                    done.wait();
+                    checked.wait();
+                }
+                (errors, found)
+            })
+        };
+
+        let removed_after_admit = admitter.join().expect("admitter");
+        let (errors, found) = remover.join().expect("remover");
+        assert_eq!(
+            errors, 0,
+            "a removal racing an admission of the same id must never report a count error"
+        );
+        assert_eq!(
+            found, removed_after_admit,
+            "every found removal emptied the level"
+        );
+        assert!(!level.test_is_poisoned());
+        assert_eq!(level.order_count(), 0);
+        assert_eq!(level.visible_quantity(), 0);
+        assert_eq!(level.stats().orders_added(), RACE_ROUNDS as usize);
+        assert_eq!(level.stats().orders_removed(), RACE_ROUNDS as usize);
+    }
 }

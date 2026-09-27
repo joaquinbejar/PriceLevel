@@ -196,6 +196,18 @@ pub(crate) enum UpdateDecision {
     ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
 }
 
+/// The outcome of [`OrderQueue::remove_if`] (issue #163).
+#[derive(Debug)]
+pub(crate) enum RemoveOutcome {
+    /// The id is not resident; nothing was checked or changed.
+    Absent,
+    /// The id is resident but the check refused the removal; the entry, its
+    /// sequence and the index are unchanged.
+    Refused,
+    /// The entry was removed from the map and the index.
+    Removed(Arc<OrderType<()>>),
+}
+
 /// The outcome of a single [`OrderQueue::match_front`] step, reported back to
 /// the sweep so it can drive the loop and apply counter deltas.
 #[derive(Debug)]
@@ -887,6 +899,48 @@ impl OrderQueue {
         fire_remove_gap_hook(order_id);
         self.index.remove(&seq);
         Some(order)
+    }
+
+    /// Remove `order_id` only if `check` accepts it, with the check and the
+    /// removal inside ONE per-entry critical section (issue #163).
+    ///
+    /// The occupied entry is selected and its shard write lock held while
+    /// `check` runs against the resident order and, on acceptance, while the
+    /// entry is removed. So `check` observes a state in which this order is
+    /// resident and cannot be removed or replaced by anyone else until the
+    /// decision commits — there is no gap between "the order is here" and
+    /// "remove it" for a concurrent admission, cancellation or match step to
+    /// fall into. The removal is still the single per-entry removal of issue
+    /// #119: a concurrent cancel and match of the same id resolve to exactly
+    /// one winner, and the other observes `Absent`.
+    ///
+    /// `check` runs under the shard write lock: it must be short, must not
+    /// touch this queue, must not emit events and should not allocate. It
+    /// returns a plain `bool` so the caller builds any error after the lock
+    /// is released.
+    ///
+    /// The index entry is removed after the map entry (as in
+    /// [`OrderQueue::remove`]); a front scan that meets the transient stale
+    /// index key self-heals on its `Vacant` branch.
+    pub(crate) fn remove_if<C>(&self, order_id: Id, check: C) -> RemoveOutcome
+    where
+        C: FnOnce(&OrderType<()>) -> bool,
+    {
+        let (seq, order) = match self.orders.entry(order_id) {
+            Entry::Vacant(_) => return RemoveOutcome::Absent,
+            Entry::Occupied(occupied) => {
+                if !check(occupied.get().1.as_ref()) {
+                    return RemoveOutcome::Refused;
+                }
+                // `remove_entry` consumes the guard: the entry lock is
+                // released when this arm ends, so the index is cleaned
+                // outside the shard critical section.
+                let (_, slot) = occupied.remove_entry();
+                slot
+            }
+        };
+        self.index.remove(&seq);
+        RemoveOutcome::Removed(order)
     }
 
     /// Test-only invariant check: the id-keyed map and the ordered index are
