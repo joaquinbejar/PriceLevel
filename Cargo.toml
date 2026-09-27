@@ -93,6 +93,17 @@ name = "benches"
 path = "benches/mod.rs"
 harness = false
 
+# Isolated operation / tail-latency harness (issue #142). Deliberately a
+# SEPARATE bench target from "benches" above: `harness = false` here too, but
+# this binary owns its own `#[global_allocator]` (see `benches/latency/alloc.rs`)
+# and its own per-operation timing loop, neither of which belong in — or
+# should slow down — the Criterion suite. Run with `make bench-latency` /
+# `cargo bench --bench latency`.
+[[bench]]
+name = "latency"
+path = "benches/latency/main.rs"
+harness = false
+
 [lib]
 name = "pricelevel"
 path = "src/lib.rs"
