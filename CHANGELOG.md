@@ -227,6 +227,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contention_test` and `simple` now run a single matcher thread per shared
   level, keep maker and taker ids disjoint, and report successful operations
   separately from rejected and missing-order calls.
+- **Statistics writer contract stated (#153).** `PriceLevelStatistics`
+  supports exactly one concurrent writer of its execution aggregates:
+  `record_execution` is driven by the single logical matcher and `reset` /
+  `reset_at` require quiescence. Under that contract `Clone` (and so
+  `PriceLevel::snapshot`), serde and `Display` return a complete execution
+  state from any number of reader threads, including across an overflow
+  rollback. Overlapping `record_execution` calls are unsupported: the
+  `stats_seq` guard is a reader protocol, not a writer lock, and a reader can
+  then accept a partial tuple (final totals stay correct). Comments that
+  claimed the guard keeps `reset` from interleaving a rollback are corrected;
+  quiescence is what rules that out. The rustdoc, the "Concurrency Model"
+  crate docs and `doc/architecture.md` agree. No API or behavior change and
+  no extra atomics on the fill path. A loom model
+  (`RUSTFLAGS="--cfg loom" cargo test --test loom_stats_seqlock --release`)
+  checks one writer with rollback against concurrent readers and pins the
+  unsupported two-writer schedule; a single-writer / multi-reader stress test
+  covers the production atomics. Existing tests with several concurrent
+  recorders are marked as final-state arithmetic checks only.
 
 ## [0.9.2] - 2026-09-18
 

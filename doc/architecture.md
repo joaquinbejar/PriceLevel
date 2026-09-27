@@ -83,6 +83,21 @@ public methods:
 - **Side topology.** The resting side and count are pinned in one atomic word,
   so single-side coherence holds under arbitrary concurrent admissions and
   removals (issue #126).
+- **Statistics: single writer (issue #153).** `PriceLevelStatistics` supports
+  exactly one concurrent writer of the execution aggregates:
+  `record_execution` is driven by the one logical matcher and `reset` /
+  `reset_at` require quiescence. The `stats_seq` seqlock (issue #129) makes
+  `Clone` (and so `snapshot`), serde and `Display` return a complete execution
+  state from any number of reader threads under that contract, including
+  across an overflow rollback. It is a reader protocol, not a writer lock:
+  entry is an unconditional increment, so two overlapping recorders (or a
+  reset during a record) are unsupported, can let a reader accept a partial
+  tuple, and a reset racing a rollback can wrap a counter. The final totals
+  of overlapping recorders are still arithmetically correct. The decision is
+  to document this contract rather than pay for an exclusive writer entry on
+  every fill. `record_order_added` / `record_order_removed` are single
+  atomic increments outside the write section and may come from any thread.
+  The supported schedule is model-checked in `tests/loom/stats_seqlock.rs`.
 
 ## Caller-supplied code
 

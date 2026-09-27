@@ -468,6 +468,11 @@ mod tests {
 
     #[test]
     fn test_thread_safety() {
+        // Multiple concurrent recorders are OUTSIDE the statistics writer
+        // contract (issue #153: one `record_execution` at a time). This test
+        // checks only the FINAL-STATE arithmetic after every writer joined (each
+        // counter update is an atomic checked RMW); it does not, and must not,
+        // assert snapshot coherence under multiple writers.
         let stats = PriceLevelStatistics::new();
         let stats_arc = Arc::new(stats);
 
@@ -685,7 +690,12 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_record_execution_cross_aggregate_consistency() {
+    fn test_concurrent_record_execution_cross_aggregate_final_state() {
+        // Multiple concurrent recorders are OUTSIDE the statistics writer
+        // contract (issue #153: one `record_execution` at a time). This test
+        // checks only the FINAL-STATE arithmetic after every writer joined (each
+        // counter update is an atomic checked RMW); it does not, and must not,
+        // assert snapshot coherence under multiple writers.
         use std::sync::Barrier;
 
         // Seed quantity_executed AND value_executed with exactly K*Q of headroom
@@ -843,6 +853,11 @@ mod tests {
 
     #[test]
     fn test_last_execution_time_max_wins_under_barrier() {
+        // Multiple concurrent recorders are OUTSIDE the statistics writer
+        // contract (issue #153: one `record_execution` at a time). This test
+        // checks only the FINAL-STATE arithmetic after every writer joined (each
+        // counter update is an atomic checked RMW); it does not, and must not,
+        // assert snapshot coherence under multiple writers.
         // Issue #129: two records with distinct timestamps racing — the max wins
         // regardless of order (`fetch_max` is atomic, independent of the seqlock).
         use std::sync::{Arc as StdArc, Barrier};
@@ -881,7 +896,8 @@ mod tests {
     #[test]
     fn test_clone_is_consistent_under_concurrent_record() {
         // Issue #129 (F5): a `Clone` (which backs the checksummed snapshot) must
-        // capture a COHERENT set under a concurrent single writer. Each record
+        // capture a COHERENT set under a concurrent single writer (the supported
+        // contract, issue #153). Each record
         // adds qty=1 / value=100 / orders+1 inside the seqlock, so a consistent
         // copy always has `value == 100 * quantity` AND `orders == quantity`. A
         // pre-#129 torn clone could mix `orders=k` with `quantity=k-1`.
@@ -1113,6 +1129,11 @@ mod tests {
 
     #[test]
     fn test_concurrent_record_execution_crosses_u64_max_exactly() {
+        // Multiple concurrent recorders are OUTSIDE the statistics writer
+        // contract (issue #153: one `record_execution` at a time). This test
+        // checks only the FINAL-STATE arithmetic after every writer joined (each
+        // counter update is an atomic checked RMW); it does not, and must not,
+        // assert snapshot coherence under multiple writers.
         // Concurrent writers push `value_executed` across `u64::MAX`: every
         // contribution lands exactly once (no lost CAS update, no truncation at
         // the 64-bit boundary) and nothing degrades.
@@ -1151,5 +1172,124 @@ mod tests {
         assert_eq!(stats.orders_executed() as u64, records);
         assert_eq!(stats.quantity_executed(), records * SCALE);
         assert!(!stats.stats_degraded());
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #153 — single-writer contract: one writer, many readers
+    // ------------------------------------------------------------------
+
+    /// Coherence invariant for the single-writer stress test below. Every
+    /// successful record adds `orders + 1`, `quantity + 1`, `value + 10` and no
+    /// waiting time; every failing record overflows `sum_waiting_time` (seeded
+    /// `WAIT_SEED`) after the other three advanced and must roll them back. The
+    /// first failure happens after exactly `FIRST_FAIL` successes, so the
+    /// degraded flag and the success count are coherent too.
+    fn assert_coherent(orders: usize, qty: u64, value: u128, wait: u64, degraded: bool) {
+        const WAIT_SEED: u64 = u64::MAX - 5;
+        const FIRST_FAIL: u64 = 3;
+        let orders = orders as u64;
+        assert_eq!(qty, orders, "orders vs quantity torn");
+        assert_eq!(value, u128::from(qty) * 10, "value vs quantity torn");
+        assert_eq!(wait, WAIT_SEED, "rolled-back waiting time observed");
+        if degraded {
+            assert!(orders >= FIRST_FAIL, "degraded before the first failure");
+        } else {
+            assert!(orders <= FIRST_FAIL, "first failure applied without flag");
+        }
+    }
+
+    #[test]
+    fn test_single_writer_readers_never_observe_partial_tuple() {
+        // Issue #153, supported contract on the REAL type: ONE writer calling
+        // `record_execution` (a deterministic mix of successes and
+        // overflow-rollbacks) while READERS threads take multi-field copies
+        // through `Clone`, `Display` -> `FromStr` and serde_json. Every copy
+        // must be a state the statistics held between write sections. The loom
+        // model `tests/loom/stats_seqlock.rs` checks the same protocol
+        // exhaustively; this test exercises the production atomics
+        // (including the `u128` value accumulator) that loom cannot
+        // instrument. No sleeps: a Barrier starts every thread together and
+        // readers run until the writer publishes `done`.
+        use std::sync::Barrier;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        const RECORDS: u64 = 20_000;
+        const READERS: usize = 3;
+        // Record `i` fails iff `i % 7 == 3`: the first failure is record 3,
+        // after exactly 3 successes (`FIRST_FAIL` in `assert_coherent`).
+        let fails = |i: u64| i % 7 == 3;
+
+        let stats = Arc::new(seed_stats(0, 0, 0, u64::MAX - 5));
+        let done = Arc::new(AtomicBool::new(false));
+        let barrier = Arc::new(Barrier::new(READERS + 1));
+
+        let writer = {
+            let stats = Arc::clone(&stats);
+            let done = Arc::clone(&done);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..RECORDS {
+                    if fails(i) {
+                        // Waiting time 999 overflows the seeded
+                        // `sum_waiting_time`: orders / quantity / value roll back.
+                        assert!(stats.record_execution(1, 10, 1, 1_000).is_err());
+                    } else {
+                        stats.record_execution(1, 10, 0, 1_000).expect("record");
+                    }
+                }
+                done.store(true, Ordering::Release);
+            })
+        };
+
+        let readers: Vec<_> = (0..READERS)
+            .map(|reader| {
+                let stats = Arc::clone(&stats);
+                let done = Arc::clone(&done);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut copies = 0_u64;
+                    loop {
+                        let finished = done.load(Ordering::Acquire);
+                        let copy = match reader {
+                            0 => (*stats).clone(),
+                            1 => PriceLevelStatistics::from_str(&stats.to_string())
+                                .expect("Display output parses"),
+                            _ => serde_json::from_str(
+                                &serde_json::to_string(&*stats).expect("serialize"),
+                            )
+                            .expect("deserialize"),
+                        };
+                        assert_coherent(
+                            copy.orders_executed(),
+                            copy.quantity_executed(),
+                            copy.value_executed(),
+                            copy.sum_waiting_time(),
+                            copy.stats_degraded(),
+                        );
+                        copies += 1;
+                        // One more copy after `done` so the final state is also
+                        // read through the multi-field path.
+                        if finished {
+                            break;
+                        }
+                    }
+                    copies
+                })
+            })
+            .collect();
+
+        writer.join().expect("writer panicked");
+        for reader in readers {
+            assert!(reader.join().expect("reader panicked") > 0);
+        }
+
+        let successes = (0..RECORDS).filter(|&i| !fails(i)).count() as u64;
+        assert_eq!(stats.orders_executed() as u64, successes);
+        assert_eq!(stats.quantity_executed(), successes);
+        assert_eq!(stats.value_executed(), u128::from(successes) * 10);
+        assert_eq!(stats.sum_waiting_time(), u64::MAX - 5);
+        assert!(stats.stats_degraded());
     }
 }
