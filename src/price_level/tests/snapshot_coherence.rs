@@ -212,7 +212,7 @@ mod tests {
                     });
                     transfers.set(1);
                 }
-                SnapshotHookEvent::Collected(_) => {}
+                SnapshotHookEvent::Collected(_) | SnapshotHookEvent::LazyYield(_) => {}
             }
         });
         let snapshot = level
@@ -267,7 +267,7 @@ mod tests {
                     });
                     transfers.set(transfers.get() + 1);
                 }
-                SnapshotHookEvent::Collected(_) => {}
+                SnapshotHookEvent::Collected(_) | SnapshotHookEvent::LazyYield(_) => {}
             }
         });
         let result = level.snapshot();
@@ -334,7 +334,7 @@ mod tests {
                     run_concurrently(&level, move |l| transfer_hidden(l, a, b));
                     transfers.set(1);
                 }
-                SnapshotHookEvent::Collected(_) => {}
+                SnapshotHookEvent::Collected(_) | SnapshotHookEvent::LazyYield(_) => {}
             }
         });
         let snapshot = level
@@ -376,7 +376,7 @@ mod tests {
                     run_concurrently(&level, move |l| transfer_hidden(l, a, b));
                     transfers.set(transfers.get() + 1);
                 }
-                SnapshotHookEvent::Collected(_) => {}
+                SnapshotHookEvent::Collected(_) | SnapshotHookEvent::LazyYield(_) => {}
             }
         });
         let result = level.snapshot();

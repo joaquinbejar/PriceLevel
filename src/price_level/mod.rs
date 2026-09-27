@@ -16,7 +16,8 @@
 //! matcher per level. Admissions and updates take their target's shard write lock and the
 //! shared side of a per-level guard, which can block behind a fill-or-kill
 //! match holding the exclusive side across its feasibility check and sweep (issue #112),
-//! a section bounded by the makers the fill visits (issue #143).
+//! a section proportional to the makers the fill visits within the dry run's lazy
+//! budget and `O(depth log depth)` past it (issue #143).
 //! See the crate-level "Concurrency Model" section for the full table.
 //!
 //! # Key Types

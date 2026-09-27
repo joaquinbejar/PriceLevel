@@ -18,12 +18,15 @@ mod tests {
     use crate::execution::{MatchOutcome, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
     use crate::price_level::level::{
-        DryRun, PriceLevel, count_park, override_lazy_walk_budget, topology_underflow,
+        DryRun, PriceLevel, count_park, override_lazy_walk_budget, test_take_tail_revisits,
+        topology_underflow,
     };
     use crate::price_level::order_queue::snapshot_hook::{self, SnapshotHookEvent};
+    use crate::price_level::order_queue::test_take_bulk_switches;
     use crate::utils::alloc::test_seam;
     use crate::utils::{Price, Quantity, TimestampMs};
     use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
     use std::cell::Cell;
     use std::num::NonZeroU64;
     use std::rc::Rc;
@@ -361,68 +364,172 @@ mod tests {
         )
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 1_024, ..ProptestConfig::default() })]
+    /// Queue-derived view used to prove a killed fill-or-kill left the level
+    /// untouched: ids in insertion order with their visible / hidden
+    /// quantities, plus the level counters.
+    #[derive(Debug, PartialEq)]
+    struct LevelView {
+        orders: Vec<(Id, u64, u64)>,
+        visible: u64,
+        hidden: u64,
+        count: usize,
+    }
 
-        /// The bounded dry run equals the reference on every field, for the
-        /// public `matchable_quantity` too, and the real fill-or-kill verdict
-        /// follows the shared prediction.
-        #[test]
-        fn prop_bounded_dry_run_equals_reference(
-            ops in prop::collection::vec(op(), 0..40),
+    fn view(level: &PriceLevel) -> LevelView {
+        LevelView {
+            orders: level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .iter()
+                .map(|o| {
+                    (
+                        o.id(),
+                        o.visible_quantity().as_u64(),
+                        o.hidden_quantity().as_u64(),
+                    )
+                })
+                .collect(),
+            visible: level.visible_quantity(),
+            hidden: level.hidden_quantity(),
+            count: level.order_count(),
+        }
+    }
+
+    /// Paths the property must reach, summed over all cases.
+    #[derive(Debug, Default)]
+    struct Coverage {
+        filled: u64,
+        killed: u64,
+        rejected: u64,
+        stop_errors: u64,
+        parks: u64,
+        replenishes: u64,
+        tail_revisits: u64,
+        bulk_switches: u64,
+    }
+
+    fn strategy() -> impl Strategy<Value = (Vec<Op>, u64, Option<usize>, Option<u64>)> {
+        (
+            prop::collection::vec(op(), 0..40),
             // Bounded: every trade consumes at least one unit, so the dry run
             // and the real sweep take at most `incoming` trade steps. Huge
-            // resting quantities (above) still reach the headroom abort.
-            incoming in 0_u64..60,
-            self_pick in prop::option::of(any::<usize>()),
-            // `None` keeps the production budget (every book here fits in
-            // its lazy phase); a small forced budget moves the walk into the
-            // bulk continuation at every possible point.
-            budget in prop::option::of(0_u64..6),
-        ) {
-            let _budget = budget.map(override_lazy_walk_budget);
-            let (level, ids) = build(&ops);
-            let taker = match self_pick {
-                Some(pick) if !ids.is_empty() => Id::from_u64(ids[pick % ids.len()]),
-                _ => Id::from_u64(FRESH_TAKER),
-            };
+            // resting quantities still reach the headroom abort.
+            0_u64..60,
+            prop::option::of(any::<usize>()),
+            // `None` keeps the production budget, `max(8, count / 64)` = 8
+            // for these books, which up to 40 operations often exceed; a
+            // small forced budget moves the switch to the bulk continuation
+            // to every position.
+            prop::option::of(0_u64..6),
+        )
+    }
 
-            let bounded = level.test_dry_run(incoming, taker);
-            let reference = reference_dry_run(&level, incoming, taker);
-            prop_assert_eq!(&bounded, &reference);
-            prop_assert_eq!(
-                level.matchable_quantity(incoming, taker),
-                reference.as_ref().map(|dry| dry.filled).map_err(Clone::clone)
-            );
+    /// One case: the bounded dry run equals the reference on every field,
+    /// the public `matchable_quantity` returns its fill, and the real
+    /// fill-or-kill on the same book follows the prediction.
+    fn check_case(
+        (ops, incoming, self_pick, budget): (Vec<Op>, u64, Option<usize>, Option<u64>),
+        coverage: &mut Coverage,
+    ) -> Result<(), TestCaseError> {
+        let _budget = budget.map(override_lazy_walk_budget);
+        let (level, ids) = build(&ops);
+        let taker = match self_pick {
+            Some(pick) if !ids.is_empty() => Id::from_u64(ids[pick % ids.len()]),
+            _ => Id::from_u64(FRESH_TAKER),
+        };
 
-            // The real fill-or-kill on the same book. A self-match taker is
-            // rejected before the dry run; otherwise the verdict is decided by
-            // the prediction (every other preflight has headroom here).
-            let before = level.visible_quantity();
-            let poisoned = level.test_is_poisoned();
-            let result = fok(&level, incoming, taker);
-            let Ok(dry) = reference else {
-                return Err(TestCaseError::fail("reference refused to allocate"));
-            };
-            let resting_self = ids.iter().any(|id| Id::from_u64(*id) == taker)
-                && level.snapshot_by_insertion_seq().is_ok_and(|orders| {
-                    orders.iter().any(|o| o.id() == taker)
-                });
-            if incoming == 0 || poisoned {
-                // A poisoned level refuses every match (issue #130).
-                prop_assert!(result.trades().is_empty());
-            } else if resting_self || result.was_rejected() {
-                prop_assert!(result.was_rejected());
-                prop_assert!(result.trades().is_empty());
-            } else if dry.error.is_none() && dry.filled == incoming {
-                prop_assert_eq!(result.outcome(), MatchOutcome::Filled);
-                prop_assert_eq!(result.trades().len(), dry.trades);
-            } else {
-                prop_assert!(result.was_killed());
-                prop_assert!(result.trades().is_empty());
-                prop_assert_eq!(level.visible_quantity(), before);
-            }
+        test_take_tail_revisits();
+        test_take_bulk_switches();
+        let bounded = level.test_dry_run(incoming, taker);
+        coverage.tail_revisits += test_take_tail_revisits();
+        coverage.bulk_switches += test_take_bulk_switches();
+        let reference = reference_dry_run(&level, incoming, taker);
+        prop_assert_eq!(&bounded, &reference);
+        prop_assert_eq!(
+            level.matchable_quantity(incoming, taker),
+            reference
+                .as_ref()
+                .map(|dry| dry.filled)
+                .map_err(Clone::clone)
+        );
+        let Ok(dry) = reference else {
+            return Err(TestCaseError::fail("reference refused to allocate"));
+        };
+        coverage.parks += dry.parks as u64;
+        coverage.replenishes += dry.replenishes;
+        coverage.stop_errors += u64::from(dry.error.is_some());
+
+        let resting_self = level
+            .snapshot_by_insertion_seq()
+            .is_ok_and(|orders| orders.iter().any(|o| o.id() == taker));
+        // Parks are not observable on the real sweep, but single-threaded
+        // they only come from a resting self-match maker, which
+        // `match_order` rejects before the sweep: a taker that does not rest
+        // here must predict none.
+        if !resting_self {
+            prop_assert_eq!(dry.parks, 0);
         }
+
+        let before = view(&level);
+        let seq_before = level.test_queue().test_next_seq();
+        let poisoned = level.test_is_poisoned();
+        let result = fok(&level, incoming, taker);
+        let seq_used = level.test_queue().test_next_seq() - seq_before;
+
+        if incoming == 0 || poisoned {
+            // A poisoned level refuses every match (issue #130).
+            prop_assert!(result.trades().is_empty());
+            prop_assert_eq!(view(&level), before);
+        } else if resting_self {
+            prop_assert!(result.was_rejected());
+            prop_assert!(result.trades().is_empty());
+            prop_assert_eq!(view(&level), before);
+            coverage.rejected += 1;
+        } else if dry.error.is_none() && dry.filled == incoming {
+            prop_assert_eq!(result.outcome(), MatchOutcome::Filled);
+            prop_assert_eq!(result.trades().len(), dry.trades);
+            prop_assert_eq!(result.executed_quantity(), Ok(Quantity::new(dry.filled)));
+            // Every replenishment that keeps its maker resident reserves one
+            // fresh FIFO sequence; nothing else does on this thread.
+            prop_assert_eq!(seq_used, dry.replenishes);
+            coverage.filled += 1;
+        } else {
+            prop_assert!(result.was_killed());
+            prop_assert!(result.trades().is_empty());
+            prop_assert_eq!(result.error().is_some(), dry.error.is_some());
+            // Untouched: order count, visible and hidden counters, and every
+            // resting order's quantities in queue order.
+            prop_assert_eq!(view(&level), before);
+            prop_assert_eq!(seq_used, 0);
+            coverage.killed += 1;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prop_bounded_dry_run_equals_reference() {
+        let mut runner = TestRunner::new(ProptestConfig {
+            cases: 1_024,
+            ..ProptestConfig::default()
+        });
+
+        let coverage_cell = std::cell::RefCell::new(Coverage::default());
+        let outcome = runner.run(&strategy(), |case| {
+            check_case(case, &mut coverage_cell.borrow_mut())
+        });
+        if let Err(err) = outcome {
+            panic!("{err}");
+        }
+        let coverage = coverage_cell.into_inner();
+        // The property is only as strong as the paths it reaches.
+        assert!(coverage.filled > 0, "{coverage:?}");
+        assert!(coverage.killed > 0, "{coverage:?}");
+        assert!(coverage.rejected > 0, "{coverage:?}");
+        assert!(coverage.stop_errors > 0, "{coverage:?}");
+        assert!(coverage.parks > 0, "{coverage:?}");
+        assert!(coverage.replenishes > 0, "{coverage:?}");
+        assert!(coverage.tail_revisits > 0, "{coverage:?}");
+        assert!(coverage.bulk_switches > 0, "{coverage:?}");
     }
 
     // ------------------------------------------------------------------
@@ -608,5 +715,150 @@ mod tests {
         let _fail = test_seam::fail_after(CapacityResource::OrderSnapshot, 0);
         assert_eq!(level.test_dry_run(156, taker).map(|d| d.filled), Ok(156));
         assert!(level.test_dry_run(157, taker).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Unguarded walk: no double count under re-sequencing (review item 1)
+    // ------------------------------------------------------------------
+
+    /// Runs `mutation` on a helper thread and waits for it: a snapshot hook
+    /// may fire while the walking thread holds a shard read lock.
+    fn run_concurrently(
+        level: &Arc<PriceLevel>,
+        mutation: impl FnOnce(&PriceLevel) + Send + 'static,
+    ) {
+        let level = Arc::clone(level);
+        std::thread::spawn(move || mutation(&level))
+            .join()
+            .expect("concurrent mutation thread panicked");
+    }
+
+    /// Demoting resize: a visible increase re-sequences the maker at the
+    /// tail, inserting its new index key before removing the old one.
+    fn demote(level: &PriceLevel, id: u64, quantity: u64) {
+        level
+            .update_order(OrderUpdate::UpdateQuantity {
+                order_id: Id::from_u64(id),
+                new_quantity: Quantity::new(quantity),
+            })
+            .expect("resize")
+            .expect("resting");
+    }
+
+    /// Two 5-unit makers in two distinct order-storage shards (so a hook
+    /// running under one shard's read lock can resize the other), as
+    /// `(first in map walk order, second)`.
+    fn two_shard_level() -> (Arc<PriceLevel>, u64, u64) {
+        for first in 1..4_096_u64 {
+            let level = PriceLevel::new(PRICE);
+            level
+                .add_order(order(first, &Kind::Standard, 5, 0, 1))
+                .expect("add");
+            for second in first + 1..first + 64 {
+                level
+                    .add_order(order(second, &Kind::Standard, 5, 0, 2))
+                    .expect("add");
+                let runs = level.test_shard_runs();
+                if runs.len() == 2 {
+                    let head = runs[0][0];
+                    let (a, b) = if head == Id::from_u64(first) {
+                        (first, second)
+                    } else {
+                        (second, first)
+                    };
+                    return (Arc::new(level), a, b);
+                }
+                level
+                    .update_order(OrderUpdate::Cancel {
+                        order_id: Id::from_u64(second),
+                    })
+                    .expect("cancel")
+                    .expect("resting");
+            }
+        }
+        panic!("could not place two makers in distinct shards");
+    }
+
+    #[test]
+    fn the_lazy_walk_would_double_count_a_maker_resequenced_mid_walk() {
+        // Why the lazy phase needs the fill-or-kill guard: makers A (5) and
+        // B (5); after the walk yields A, A is resized to 7, which moves it
+        // to a new tail key. The index walk then meets A again at that key.
+        let level = Arc::new(PriceLevel::new(PRICE));
+        level
+            .add_order(order(1, &Kind::Standard, 5, 0, 1))
+            .expect("add");
+        level
+            .add_order(order(2, &Kind::Standard, 5, 0, 2))
+            .expect("add");
+        let fired = Rc::new(Cell::new(false));
+        let _hook = snapshot_hook::install({
+            let (fired, level) = (Rc::clone(&fired), Arc::clone(&level));
+            move |event| {
+                if event == SnapshotHookEvent::LazyYield(Id::from_u64(1)) && !fired.get() {
+                    fired.set(true);
+                    run_concurrently(&level, |l| demote(l, 1, 7));
+                }
+            }
+        });
+        let mut walk = level.test_queue().seq_walk(64);
+        let mut total = 0;
+        while let Some(order) = walk.try_next().expect("walk") {
+            total += order.visible_quantity().as_u64();
+        }
+        assert!(fired.get());
+        assert_eq!(total, 17, "A counted at 5 and again at 7");
+    }
+
+    #[test]
+    fn unguarded_matchable_quantity_never_double_counts_a_resequenced_maker() {
+        // The same demotion lands while the public, unguarded
+        // `matchable_quantity` walks the level: after the first maker is
+        // collected the other is resized 5 -> 7 (re-sequenced at the tail).
+        // Each maker is collected once, so the estimate is at most the larger
+        // committed total (10 before, 12 after), never 17.
+        for resize_first_collected in [false, true] {
+            let (level, a, b) = two_shard_level();
+            let target = if resize_first_collected { a } else { b };
+            let fired = Rc::new(Cell::new(false));
+            let yielded = Rc::new(Cell::new(0_u32));
+            let _hook = snapshot_hook::install({
+                let (fired, yielded, level) =
+                    (Rc::clone(&fired), Rc::clone(&yielded), Arc::clone(&level));
+                move |event| match event {
+                    SnapshotHookEvent::Collected(id) if id == Id::from_u64(a) && !fired.get() => {
+                        fired.set(true);
+                        // `a`'s shard is read-locked here; `target` may be `a`
+                        // itself, so resize from a helper thread only once the
+                        // lock can be taken: `b` directly, `a` after release.
+                        if target == b {
+                            run_concurrently(&level, move |l| demote(l, b, 7));
+                        }
+                    }
+                    SnapshotHookEvent::Collected(id)
+                        if id == Id::from_u64(b) && target == a && fired.get() =>
+                    {
+                        run_concurrently(&level, move |l| demote(l, a, 7));
+                    }
+                    SnapshotHookEvent::LazyYield(_) => yielded.set(yielded.get() + 1),
+                    _ => {}
+                }
+            });
+            let estimate = level
+                .matchable_quantity(100, Id::from_u64(FRESH_TAKER))
+                .expect("estimate");
+            assert!(fired.get());
+            assert_eq!(yielded.get(), 0, "the unguarded walk skips the lazy phase");
+            // Each maker is collected once, so the estimate never exceeds the
+            // larger committed total. It may undercount (stale): the replay
+            // projects the visible counter read before the walk, and a maker
+            // collected at its resized quantity can exceed that projection,
+            // which stops the replay conservatively.
+            assert!(
+                estimate <= 12,
+                "estimate {estimate} exceeds every committed total: double count"
+            );
+            assert_eq!(level.visible_quantity(), 12);
+        }
     }
 }

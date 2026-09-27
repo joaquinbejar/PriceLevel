@@ -225,8 +225,11 @@ type SeqPairs = Vec<(u64, Arc<OrderType<()>>)>;
 ///
 /// Under quiescence (the fill-or-kill exclusive guard with the one-matcher
 /// contract) both phases see the same queue, and the walk yields exactly
-/// [`OrderQueue::snapshot_by_seq`]'s sequence. Under concurrent mutation it
-/// is not a point-in-time view.
+/// [`OrderQueue::snapshot_by_seq`]'s sequence. Under concurrent mutation the
+/// lazy phase is unsound: a re-sequencing inserts the maker's new index key
+/// before removing the old one, so the walk can yield it twice. A caller
+/// without that guard must pass a zero budget, which starts in the bulk
+/// phase (one map entry per maker, as `snapshot_by_seq`).
 pub(crate) struct SeqWalk<'a> {
     queue: &'a OrderQueue,
     index: crossbeam_skiplist::map::Iter<'a, u64, Id>,
@@ -236,6 +239,18 @@ pub(crate) struct SeqWalk<'a> {
     last_seq: Option<u64>,
     /// The bulk continuation, once started.
     bulk: Option<std::vec::IntoIter<(u64, Arc<OrderType<()>>)>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SEQ_WALK_BULK_SWITCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test coverage probe (issue #143): `SeqWalk`s that switched to the bulk
+/// continuation on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn test_take_bulk_switches() -> u64 {
+    SEQ_WALK_BULK_SWITCHES.with(|cell| cell.replace(0))
 }
 
 impl SeqWalk<'_> {
@@ -253,6 +268,8 @@ impl SeqWalk<'_> {
             return Ok(bulk.next().map(|(_, order)| order));
         }
         let Some(lazy_left) = self.lazy_left.checked_sub(1) else {
+            #[cfg(test)]
+            SEQ_WALK_BULK_SWITCHES.with(|cell| cell.set(cell.get() + 1));
             let mut bulk = self.queue.collect_pairs_after(self.last_seq)?.into_iter();
             let first = bulk.next().map(|(_, order)| order);
             self.bulk = Some(bulk);
@@ -267,9 +284,15 @@ impl SeqWalk<'_> {
             if *stored_seq != seq {
                 continue;
             }
+            let order = Arc::clone(order);
+            drop(slot);
             self.lazy_left = lazy_left;
             self.last_seq = Some(seq);
-            return Ok(Some(Arc::clone(order)));
+            // Fired with no shard lock held, so a test can re-sequence any
+            // maker here (issue #143 review).
+            #[cfg(test)]
+            snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::LazyYield(order.id()));
+            return Ok(Some(order));
         }
         Ok(None)
     }
@@ -1759,6 +1782,9 @@ pub(crate) mod snapshot_hook {
         AttemptStart,
         /// The walk has just captured the order with this id.
         Collected(Id),
+        /// A `SeqWalk` lazy phase has just yielded the order with this id
+        /// (no shard lock held; issue #143).
+        LazyYield(Id),
     }
 
     type Hook = Box<dyn FnMut(SnapshotHookEvent)>;

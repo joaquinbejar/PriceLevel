@@ -615,8 +615,9 @@ fn update_counter_overflow() -> PriceLevelError {
 /// acquisition is normally uncontended (it only coordinates with a fill-or-kill
 /// match), but it can BLOCK behind a concurrent fill-or-kill: a `Fok` match
 /// takes the guard's **exclusive** side across its feasibility check and sweep —
-/// a critical section bounded by the makers the fill visits (at most
-/// `O(depth)`, issue #143) — so it stays all-or-nothing against
+/// a critical section proportional to the makers the fill visits while they
+/// fit the dry run's lazy budget, and `O(depth log depth)` past it (issue
+/// #143) — so it stays all-or-nothing against
 /// concurrent mutation. See the `fok_guard` field and [`Self::match_order`] for
 /// the full argument (issue #112).
 ///
@@ -699,8 +700,9 @@ pub struct PriceLevel {
     /// take the **read** (shared) side. The common paths therefore pay only an
     /// uncontended shared acquisition; a FOK (a cold, specific TIF) excludes
     /// mutators for the duration of its feasibility check and sweep — an
-    /// exclusive section proportional to the makers the fill visits (at most
-    /// `O(depth)`, issue #143), not a constant-time one. The non-FOK sweep
+    /// exclusive section proportional to the makers the fill visits while
+    /// they fit the dry run's lazy budget, and `O(depth log depth)` past it
+    /// (issue #143), not a constant-time one. The non-FOK sweep
     /// takes NO fill-or-kill guard (it still takes each maker's `DashMap` shard
     /// lock) — it relies on the
     /// single-matcher-per-level model and the existing per-entry cancel
@@ -758,6 +760,31 @@ pub(crate) struct DryRun {
     /// maker where the dry run stopped (issue #169). `filled` / `trades` are
     /// then the committed prefix the real sweep would report alongside it.
     pub(crate) error: Option<PriceLevelError>,
+}
+
+/// What the dry run may assume about concurrent re-sequencing (issue #143).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DryRunIsolation {
+    /// The caller holds the fill-or-kill guard's exclusive side under the
+    /// one-matcher contract: no admission, update or sweep can run, so the
+    /// bounded lazy walk over the index is exact.
+    FokExclusive,
+    /// No guard (the public [`PriceLevel::matchable_quantity`]): a GTC
+    /// replenish or a demoting resize can re-sequence a maker during the
+    /// walk, so the walk collects from the id-keyed map instead.
+    Unguarded,
+}
+
+#[cfg(test)]
+thread_local! {
+    static DRY_RUN_TAIL_REVISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test coverage probe (issue #143): replenished tranches the dry run has
+/// revisited from its tail buffer on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn test_take_tail_revisits() -> u64 {
+    DRY_RUN_TAIL_REVISITS.with(|cell| cell.replace(0))
 }
 
 /// Terminal epoch value (issue #165): an epoch never moves past it, and a
@@ -1342,7 +1369,7 @@ impl PriceLevel {
         incoming_quantity: u64,
         taker_id: Id,
     ) -> Result<DryRun, PriceLevelError> {
-        self.dry_run(incoming_quantity, taker_id)
+        self.dry_run(incoming_quantity, taker_id, DryRunIsolation::FokExclusive)
     }
 
     #[cfg(test)]
@@ -2011,18 +2038,22 @@ impl PriceLevel {
     /// skips it for self-trade prevention, so the prediction and the sweep can
     /// never diverge.
     ///
-    /// The work is bounded by the prefix the sweep would consume (issue
-    /// #143): the queue is walked lazily and the walk stops as soon as
-    /// `incoming_quantity` is covered (or the sweep would stop), so a small
-    /// taker against a deep level neither visits nor copies the unrelated
-    /// makers behind that prefix. Such a fill allocates only when a
-    /// replenished tranche must be revisited behind the current queue. A walk
-    /// longer than its lazy budget (`max(8, resting orders / 64)` makers)
-    /// finishes over one sorted collection of the remaining makers instead,
-    /// which costs about what the former full materialization did.
-    /// Without the fill-or-kill guard (this public call does not take it) a
-    /// concurrent mutation can land during the walk, so the value is then an
-    /// advisory estimate, as before.
+    /// This public call takes no guard, so a concurrent admission, update or
+    /// sweep can land while it runs and the value is then an advisory
+    /// estimate. It collects the resting orders from the id-keyed order
+    /// storage (one entry per maker), sorts them by insertion sequence and
+    /// replays the sweep over them, so a maker re-sequenced during the call
+    /// (a GTC replenishment or a demoting resize) is counted at most once:
+    /// the estimate can be stale but never double counts. That costs
+    /// `O(depth log depth)` per call.
+    ///
+    /// The fill-or-kill preflight inside [`Self::match_order`] runs the same
+    /// replay under the level's exclusive guard, where nothing can
+    /// re-sequence, and there it walks the insertion-sequence index lazily
+    /// and stops as soon as the taker is covered (issue #143): a fill within
+    /// `max(8, resting orders / 64)` makers neither visits nor copies the
+    /// makers behind it. A longer walk finishes over one collection and sort
+    /// of the remaining makers, `O(depth log depth)` like this call.
     ///
     /// Public so an order book composing this level can reuse the single
     /// upstream source of truth for per-level fill-or-kill (all-or-nothing)
@@ -2032,9 +2063,10 @@ impl PriceLevel {
     /// # Errors
     ///
     /// [`PriceLevelError::CapacityExceeded`] (resource
-    /// [`CapacityResource::OrderSnapshot`]) if the bulk continuation or the
-    /// buffer of replenished tranches cannot grow (issue #164). No
-    /// prediction is produced then: a silent `0`
+    /// [`CapacityResource::OrderSnapshot`]) if the order collection
+    /// (`additional` = resting orders) or the buffer of replenished tranches
+    /// (`additional` = 1, only when a replenished tranche must be revisited)
+    /// cannot grow (issue #164). No prediction is produced then: a silent `0`
     /// would under-report depth the sweep can in fact take. The level is only
     /// read. A maker step the real sweep would stop at (issue #169 / #163) is
     /// not an error here: the value is the prefix the sweep would fill.
@@ -2043,7 +2075,9 @@ impl PriceLevel {
         incoming_quantity: u64,
         taker_id: Id,
     ) -> Result<u64, PriceLevelError> {
-        Ok(self.dry_run(incoming_quantity, taker_id)?.filled)
+        Ok(self
+            .dry_run(incoming_quantity, taker_id, DryRunIsolation::Unguarded)?
+            .filled)
     }
 
     /// The deterministic dry run behind [`Self::matchable_quantity`]: returns
@@ -2056,7 +2090,12 @@ impl PriceLevel {
     /// [`PriceLevelError::CapacityExceeded`] if the bulk continuation or the
     /// replenished-tranche buffer cannot grow (issue #164); the level is only
     /// read.
-    fn dry_run(&self, incoming_quantity: u64, taker_id: Id) -> Result<DryRun, PriceLevelError> {
+    fn dry_run(
+        &self,
+        incoming_quantity: u64,
+        taker_id: Id,
+        isolation: DryRunIsolation,
+    ) -> Result<DryRun, PriceLevelError> {
         let mut dry = DryRun {
             filled: 0,
             trades: 0,
@@ -2127,8 +2166,17 @@ impl PriceLevel {
         // of failing mid-sweep. Exact under the fill-or-kill exclusive guard.
         let mut projected_count = topology::count(self.topology.load(Ordering::Acquire));
 
-        // The lazy budget scales with the resting count read just above.
-        let mut resting = self.orders.seq_walk(lazy_walk_budget(projected_count));
+        // The lazy budget scales with the resting count read just above. The
+        // lazy phase walks the index, where a concurrent re-sequencing can
+        // briefly expose one maker under two keys, so it is only sound while
+        // nothing can re-sequence (issue #143 review): under the fill-or-kill
+        // guard. An unguarded walk starts in the bulk phase, which collects
+        // from the id-keyed map (one entry per maker) and cannot double count.
+        let lazy_budget = match isolation {
+            DryRunIsolation::FokExclusive => lazy_walk_budget(projected_count),
+            DryRunIsolation::Unguarded => 0,
+        };
+        let mut resting = self.orders.seq_walk(lazy_budget);
 
         while remaining > 0 {
             // Next maker in sweep order: the kept-priority residual, then the
@@ -2144,6 +2192,8 @@ impl PriceLevel {
                 resting_order = next;
                 &resting_order
             } else if let Some(requeued) = tail.pop_front() {
+                #[cfg(test)]
+                DRY_RUN_TAIL_REVISITS.with(|cell| cell.set(cell.get() + 1));
                 residual = requeued;
                 &residual
             } else {
@@ -2695,7 +2745,11 @@ impl PriceLevel {
             if self.is_poisoned() {
                 return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
             }
-            let dry = match self.dry_run(incoming_quantity, taker_order_id) {
+            let dry = match self.dry_run(
+                incoming_quantity,
+                taker_order_id,
+                DryRunIsolation::FokExclusive,
+            ) {
                 Ok(dry) => dry,
                 Err(err) => {
                     // The dry run's working buffer could not be reserved

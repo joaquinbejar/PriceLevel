@@ -1206,6 +1206,13 @@ slower; the budget caps that overhead to the prefix.
 Replenished tranches that the sweep re-sequences at the tail are buffered
 by value, and only when the taker still has quantity left.
 
+The lazy phase is only used under the fill-or-kill guard. A re-sequencing
+(a GTC replenishment, a demoting resize) inserts the maker's new index key
+before removing the old one, so an unguarded index walk can meet the same
+maker twice. The public `matchable_quantity` takes no guard, so it always
+starts in the bulk phase (one entry per maker from the id-keyed map, as
+the former snapshot did) and keeps its former `O(depth log depth)` cost.
+
 The prediction is unchanged: a property test (`src/price_level/tests/bounded_fok.rs`)
 compares every field of the new dry run (fill, trades, replenishes, parks,
 stop error) with the former implementation, kept only in that test. It uses
