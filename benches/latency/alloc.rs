@@ -180,3 +180,11 @@ pub fn disable() {
 pub fn peak_live_bytes() -> i64 {
     PEAK_LIVE_BYTES.load(Ordering::Relaxed)
 }
+
+/// Rebases the live-byte measurement to zero without touching the call and
+/// byte counters (issue #150): the next [`peak_live_bytes`] is the high-water
+/// mark of bytes allocated after this call, net of bytes freed after it.
+pub fn rebase_live() {
+    LIVE_BYTES.store(0, Ordering::Relaxed);
+    PEAK_LIVE_BYTES.store(0, Ordering::Relaxed);
+}

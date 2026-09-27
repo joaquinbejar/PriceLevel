@@ -725,8 +725,9 @@ impl PriceLevel {
     /// a fresh, zeroed set — so a restored level resumes with its recorded
     /// history.
     ///
-    /// The orders are validated in a single checked pass (issue #150) and then
-    /// enqueued in vector order, which is the restored price-time priority
+    /// The orders are validated in two walks (issue #150): an allocation-free
+    /// checked aggregate fold, then one fused pass over ids and topology.
+    /// They are then enqueued in vector order, which is the restored price-time priority
     /// (issue #109). The snapshot's stored aggregate fields are not trusted:
     /// the restored counters are recomputed from the orders.
     ///
@@ -789,7 +790,7 @@ impl PriceLevel {
         })
     }
 
-    /// The pre-#150 restore, kept verbatim and test-only so the single-pass
+    /// The pre-#150 restore, kept verbatim and test-only so the two-walk
     /// validation of [`Self::from_snapshot`] can be compared against it
     /// (identical results, identical error precedence).
     #[cfg(test)]

@@ -279,18 +279,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Snapshot restore validates in one ranked pass (#150).**
-  `PriceLevel::from_snapshot` (and the package / JSON forms) checks
-  aggregates, duplicate ids and price / side topology in a single walk
-  instead of three, and moves the persisted statistics instead of cloning
-  them. Results and error precedence are unchanged and now documented on
+- **Snapshot restore validates in two walks instead of three (#150).**
+  `PriceLevel::from_snapshot` (and the package / JSON forms) runs the
+  allocation-free aggregate check, then one fused pass over duplicate ids
+  and price / side topology, and moves the persisted statistics instead of
+  cloning them (their private seqlock sequence is restarted, as the clone
+  did). Results and error precedence are unchanged and now documented on
   `from_snapshot`: aggregate overflow, then a refused duplicate-id scratch
   set, then the first repeated id, then the first topology violation,
   regardless of where each sits in the orders vector. Measured effect (see
-  `BENCH.md`): 8 to 12% faster rejection of a snapshot whose last order has
-  the wrong price at 10,000 / 100,000 orders; valid and JSON restores within
-  noise; allocations and peak memory unchanged. The latency harness gains a
-  `restore_sizes` scenario.
+  `BENCH.md`): 5 to 7% faster rejection of a snapshot whose last order has
+  the wrong price at 10,000 / 100,000 orders; valid, duplicate and JSON
+  restores within noise; allocations and peak memory unchanged, including
+  aggregate rejections. The latency harness gains a `restore_sizes`
+  scenario.
 
 ### Added
 

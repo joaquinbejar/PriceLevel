@@ -317,11 +317,11 @@ impl SnapshotAggregates {
     }
 }
 
-/// Running checked fold of per-order visible / hidden quantities: the single
-/// definition of the aggregate rules, shared by
-/// [`SnapshotAggregates::from_orders`] and the restore validation pass
-/// ([`PriceLevelSnapshot::into_validated_restore`], issue #150), so both
-/// reject the same order with the same error.
+/// Running checked fold of per-order visible / hidden quantities behind
+/// [`SnapshotAggregates::from_orders`], which the refresh, the live snapshot
+/// and the restore validation
+/// ([`PriceLevelSnapshot::into_validated_restore`], issue #150) all use, so
+/// they reject the same order with the same error.
 #[derive(Debug, Default)]
 struct AggregateFold {
     /// Sum of the visible quantities folded so far.
@@ -395,7 +395,8 @@ pub(crate) struct ValidatedRestore {
     pub(crate) side: Option<Side>,
     /// The orders, in snapshot (queue-consumption) order, unchanged.
     pub(crate) orders: Vec<Arc<OrderType<()>>>,
-    /// The persisted statistics, moved out of the snapshot.
+    /// The persisted statistics, moved out of the snapshot, with their
+    /// private seqlock sequence restarted at 0.
     pub(crate) statistics: PriceLevelStatistics,
 }
 
@@ -429,18 +430,24 @@ fn duplicate_id_error(id: Id) -> PriceLevelError {
 }
 
 impl PriceLevelSnapshot {
-    /// Validates the orders for restoration in ONE checked pass and returns
-    /// the validated parts (issue #150).
+    /// Validates the orders for restoration and returns the validated parts
+    /// (issue #150).
     ///
     /// Before #150 restore walked the orders three times (aggregate refresh,
-    /// duplicate ids, topology) and each walk returned its first error. This
-    /// pass checks all three rule sets per order but keeps their **error
-    /// precedence** exactly, by returning the highest-ranked failure rather
-    /// than the first one met:
+    /// duplicate ids, topology), each walk returning its first error. Now it
+    /// walks them twice:
+    ///
+    /// 1. The allocation-free checked aggregate fold
+    ///    ([`SnapshotAggregates::from_orders`]). It runs to completion before
+    ///    anything is allocated, so a snapshot rejected here costs no
+    ///    scratch memory, whatever the position of the failing order.
+    /// 2. One fused pass over ids and topology, with the duplicate-id set
+    ///    reserved once for the whole vector.
+    ///
+    /// The error precedence is the pre-#150 one, unchanged:
     ///
     /// 1. Aggregates (per-order total, then the running visible and hidden
-    ///    sums): the first failing order in vector order. Returned at once,
-    ///    since nothing outranks it.
+    ///    sums): the first failing order in vector order.
     /// 2. [`PriceLevelError::CapacityExceeded`] (resource
     ///    [`CapacityResource::RestoreScratch`]) if the duplicate-id set
     ///    cannot be reserved.
@@ -450,45 +457,38 @@ impl PriceLevelSnapshot {
     ///    or whose side differs from the first order's side (price checked
     ///    before side for the same order).
     ///
-    /// A lower-ranked failure is recorded and the pass continues, checking
-    /// only the higher-ranked rules from then on (after a rank 2 or 3 failure
-    /// only the aggregates; after a topology failure the aggregates and ids),
-    /// so a later higher-ranked failure still wins. Duplicates are always an
-    /// error: the queue's keep-first behaviour is never relied upon.
+    /// In the fused pass a duplicate is returned at once (nothing left
+    /// outranks it), while a topology violation is recorded and the pass
+    /// keeps checking ids only, so a later duplicate still wins. Duplicates
+    /// are always an error: the queue's keep-first behaviour is never relied
+    /// upon.
     ///
     /// # Errors
     ///
     /// As ranked above; the snapshot is consumed either way.
     #[inline(never)]
     pub(crate) fn into_validated_restore(self) -> Result<ValidatedRestore, PriceLevelError> {
-        let level_price = self.price.as_u128();
-        let mut fold = AggregateFold::default();
-        // Sized by an input-derived length, so reserved fallibly (issue
-        // #164). A refusal ranks below the aggregates, so it is recorded and
-        // the aggregate fold still runs to completion.
+        // Walk 1, rank 1: allocation-free.
+        let aggregates = SnapshotAggregates::from_orders(&self.orders)?;
+
+        // Rank 2. Sized by an input-derived length, so reserved fallibly
+        // (issue #164).
         let mut seen = std::collections::HashSet::new();
-        let mut identity_failure = try_reserve_set(
+        try_reserve_set(
             &mut seen,
             self.orders.len(),
             CapacityResource::RestoreScratch,
-        )
-        .err();
+        )?;
+
+        // Walk 2, ranks 3 and 4.
+        let level_price = self.price.as_u128();
         let mut topology_failure: Option<PriceLevelError> = None;
         let mut side: Option<Side> = None;
-
         for order in &self.orders {
-            // Rank 1: returned immediately.
-            fold.push(order)?;
-            // Ranks 2-3: once recorded, only rank 1 can still change the
-            // outcome.
-            if identity_failure.is_some() {
-                continue;
-            }
             if !seen.insert(order.id()) {
-                identity_failure = Some(duplicate_id_error(order.id()));
-                continue;
+                return Err(duplicate_id_error(order.id()));
             }
-            // Rank 4: only the first violation is kept.
+            // Only the first topology violation is kept.
             if topology_failure.is_some() {
                 continue;
             }
@@ -505,10 +505,6 @@ impl PriceLevelSnapshot {
                 Some(_) => {}
             }
         }
-
-        if let Some(error) = identity_failure {
-            return Err(error);
-        }
         if let Some(error) = topology_failure {
             return Err(error);
         }
@@ -516,13 +512,17 @@ impl PriceLevelSnapshot {
         // builds the queue, lowering the restore's peak memory.
         drop(seen);
 
-        let aggregates = fold.finish(self.orders.len());
+        // The statistics are moved, not cloned; restart their private seqlock
+        // sequence as the former clone did, so a restore still rebuilds a
+        // level whose sequence was near exhaustion (issue #165).
+        let mut statistics = self.statistics;
+        statistics.restart_seq_exclusive();
         Ok(ValidatedRestore {
             price: self.price,
             aggregates,
             side,
             orders: self.orders,
-            statistics: self.statistics,
+            statistics,
         })
     }
 }

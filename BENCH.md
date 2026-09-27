@@ -55,7 +55,7 @@ below.
 | `tif`        | GTC / IOC / DAY / GTD full match, FOK success, FOK rejection (killed), post-only rejection |
 | `iteration`  | one full `iter_orders` traversal |
 | `snapshot`   | `snapshot()` capture, checksum `validate()`, `from_snapshot_json` restore |
-| `restore_sizes` | `from_snapshot` / `from_snapshot_json` at 100 / 10,000 / 100,000 orders, valid and failing at the last order, plus an untimed allocation / peak-memory pass (issue #150). See "Restore validation walks" below |
+| `restore_sizes` | `from_snapshot` / `from_snapshot_json` at 100 / 10,000 / 100,000 orders, valid, failing at the last order, and failing the aggregate check at the second / last order, plus an untimed allocation / per-operation peak-memory pass (issue #150). See "Restore validation walks" below |
 | `depth`      | `add_order` and a 1-unit taker match, swept across resting depth 100 / 1,000 / (opt-in) 10,000 / 100,000; order-quantity and level-price magnitude sweeps |
 | `contention` | one matcher thread (`match_order`) under `N-1` concurrent admissions/cancels/reads, run once with a GTC matcher and once with an FOK matcher |
 | `stats_contention` | statistics cache contention (issue #154): matcher alone, with producers / readers on the same level, and with the same workers on an independent level; successful and overflow-rollback recording as separate cases; bare `PriceLevelStatistics` bounds. See "Statistics cache contention" below |
@@ -902,17 +902,34 @@ allocation counts the issue asks for.
 Before #150, `PriceLevel::from_snapshot` walked the orders three times
 before building the queue: `refresh_aggregates`, the duplicate-id set, and
 the price / side topology check, each returning its own first error. It now
-runs one ranked pass (`PriceLevelSnapshot::into_validated_restore`) that
-returns the validated parts; the documented precedence (aggregates >
-`RestoreScratch` refusal > first repeated id > first topology violation >
-queue > topology word) is kept by recording lower-ranked failures and
-continuing with the higher-ranked rules only. `src/price_level/tests/restore_validation.rs`
-compares it with the old path (kept as `cfg(test)` `from_snapshot_legacy`)
-over every pair and triple of violations at every position, 20,000 random
-snapshots, the scratch-set refusal seam, and the fixtures.
+walks them twice (`PriceLevelSnapshot::into_validated_restore`): the
+allocation-free checked aggregate fold, then one fused pass over ids and
+topology, returning the validated parts. The documented precedence
+(aggregates > `RestoreScratch` refusal > first repeated id > first topology
+violation > queue > topology word) is unchanged: in the fused pass a
+duplicate returns at once and a topology violation is recorded while ids
+keep being checked. The persisted statistics are moved instead of cloned,
+with their private seqlock sequence restarted at 0 exactly as the clone did
+(so the #165 rebuild recovery still works).
+
+A first version fused all three checks into one walk, deferring lower-ranked
+failures. It kept the precedence but reserved the duplicate-id set before the
+aggregate fold had finished, so an aggregate rejection allocated a
+depth-sized set that the old path never allocated (4.3 MB at 100,000 orders
+for an overflow at the second order). Running the aggregate fold first
+removes that cost; the fold reads two fields per order and costs about 0.3 ms
+per 100,000 orders (`from_snapshot_total_last` below).
+
+`src/price_level/tests/restore_validation.rs` compares the new path with the
+old one (kept as `cfg(test)` `from_snapshot_legacy`). It covers every pair
+and triple of violations at every position, 20,000 random snapshots, the
+scratch-set refusal seam, aggregate failures at the first, second and last
+order (which must not reach the reservation), fixtures, every order type,
+and statistics moved in with an exhausted sequence, restored without
+`try_clone`.
 
 Orders were already decoded straight into the final `Vec<Arc<OrderType<()>>>`
-(`OrdersSeed`, fallible and capped at 1 MiB of up-front reservation) since
+(`OrdersSeed`, fallible, capped at 1 MiB of up-front reservation) since
 #164; the allocation counts below confirm there is no intermediate vector on
 either revision.
 
@@ -921,67 +938,109 @@ either revision.
 `PL_LATENCY_ONLY=restore_sizes PL_LATENCY_SAMPLES=2000`: 2,000 samples at
 100 orders, 500 at 10,000, 50 at 100,000 (the p99.9 of the two larger sizes
 is the sample maximum). `from_snapshot` receives a `try_clone` of the input
-made before the clock starts. The same harness file (public API only) was
-built on `origin/main` (`2afb06a`) and on this branch, and the two binaries
-were run alternately, four rounds, swapping which ran first; the tables show
-the median of the four runs per percentile. Apple M5 Max (18 cores), rustc
-1.98.1, `bench` profile, system allocator behind the counting wrapper
-(counting disabled while timing), single-threaded, no contention. The host
-was shared: load average 6.2 to 11.0 during the runs.
+made before the clock starts; dropping a rejected input (one reference count
+per order) is inside the clock on both revisions. The same harness file
+(public API only) was built on `origin/main` (`93832f4`) and on this branch,
+and the two binaries were run alternately, four rounds, swapping which ran
+first; the tables show the median of the four runs per percentile. Apple M5
+Max (18 cores), rustc 1.98.1, `bench` profile, system allocator behind the
+counting wrapper (counting disabled while timing), single-threaded, no
+contention. The host was shared: load average 4.7 to 11.4 during the runs.
+
+Cases: `valid`; `dup_last` (the last order repeats the previous id);
+`price_last` (the last order at another price); `total_second` /
+`total_last` (an order at `u64::MAX` makes the visible sum overflow at the
+second / last order); `from_json_*` run `from_snapshot_json` end to end,
+`dup_last` on a correctly signed package.
 
 ### Latency (µs; base = `origin/main`, new = this branch)
 
 | Operation | n | base p50 / p99 / p99.9 | new p50 / p99 / p99.9 | p50 |
 |---|---|---|---|---|
-| from_snapshot, valid | 100 | 7.5 / 8.7 / 13.7 | 7.7 / 8.5 / 12.0 | +2.5% |
-| from_snapshot, duplicate id last | 100 | 1.5 / 1.7 / 1.8 | 1.5 / 1.7 / 1.8 | 0.0% |
-| from_snapshot, wrong price last | 100 | 1.6 / 1.8 / 1.9 | 1.5 / 1.8 / 1.9 | -6.6% |
-| from_snapshot_json, valid | 100 | 124.8 / 134.0 / 148.1 | 125.2 / 133.5 / 147.7 | +0.3% |
-| from_snapshot_json, duplicate id last | 100 | 119.0 / 124.3 / 134.0 | 118.0 / 127.2 / 138.4 | -0.8% |
-| from_snapshot, valid | 10,000 | 1,009.7 / 1,190.0 / 1,303.3 | 999.2 / 1,066.0 / 1,111.0 | -1.0% |
-| from_snapshot, duplicate id last | 10,000 | 129.7 / 149.1 / 166.9 | 129.9 / 147.4 / 157.9 | +0.2% |
-| from_snapshot, wrong price last | 10,000 | 140.9 / 157.0 / 196.4 | 130.2 / 148.5 / 152.6 | -7.6% |
-| from_snapshot_json, valid | 10,000 | 12,570.9 / 14,215.8 / 14,711.5 | 12,663.6 / 14,592.5 / 15,418.0 | +0.7% |
-| from_snapshot_json, duplicate id last | 10,000 | 11,700.7 / 12,178.3 / 12,780.0 | 11,787.2 / 13,410.6 / 14,517.1 | +0.7% |
-| from_snapshot, valid | 100,000 | 13,236.6 / 14,871.0 / 14,871.0 | 12,857.1 / 14,394.3 / 14,394.3 | -2.9% |
-| from_snapshot, duplicate id last | 100,000 | 1,628.1 / 1,744.1 / 1,744.1 | 1,559.2 / 1,740.6 / 1,740.6 | -4.2% |
-| from_snapshot, wrong price last | 100,000 | 1,748.8 / 1,869.1 / 1,869.1 | 1,534.8 / 1,682.8 / 1,682.8 | -12.2% |
-| from_snapshot_json, valid | 100,000 | 128,639.6 / 133,402.3 / 133,402.3 | 127,935.0 / 140,484.6 / 140,484.6 | -0.5% |
-| from_snapshot_json, duplicate id last | 100,000 | 119,078.3 / 140,640.5 / 140,640.5 | 118,061.1 / 121,373.6 / 121,373.6 | -0.9% |
+| from_snapshot, valid | 100 | 7.4 / 8.4 / 12.2 | 7.5 / 8.3 / 11.0 | +0.3% |
+| from_snapshot, dup_last | 100 | 1.4 / 1.6 / 1.8 | 1.4 / 1.6 / 1.8 | -1.4% |
+| from_snapshot, price_last | 100 | 1.5 / 1.8 / 1.9 | 1.4 / 1.7 / 1.8 | -5.6% |
+| from_snapshot, total_second | 100 | 0.1 / 0.1 / 0.1 | 0.1 / 0.1 / 0.2 | +1.2% |
+| from_snapshot, total_last | 100 | 0.1 / 0.2 / 0.2 | 0.2 / 0.2 / 0.3 | +33.6% |
+| from_snapshot_json, valid | 100 | 123.4 / 135.6 / 147.1 | 124.1 / 135.4 / 146.7 | +0.6% |
+| from_snapshot_json, dup_last | 100 | 117.1 / 124.6 / 135.2 | 117.5 / 137.7 / 165.6 | +0.4% |
+| from_snapshot, valid | 10,000 | 997.1 / 1,052.1 / 1,095.6 | 974.0 / 1,044.1 / 1,087.8 | -2.3% |
+| from_snapshot, dup_last | 10,000 | 128.2 / 146.2 / 156.1 | 135.4 / 143.9 / 163.5 | +5.7% |
+| from_snapshot, price_last | 10,000 | 140.0 / 156.1 / 170.2 | 133.0 / 145.2 / 157.7 | -5.0% |
+| from_snapshot, total_second | 10,000 | 13.0 / 13.7 / 17.1 | 12.9 / 14.6 / 25.1 | -1.1% |
+| from_snapshot, total_last | 10,000 | 19.3 / 22.1 / 26.4 | 20.2 / 21.5 / 34.4 | +4.6% |
+| from_snapshot_json, valid | 10,000 | 12,496.2 / 13,881.5 / 14,917.5 | 12,501.6 / 14,758.6 / 15,507.0 | +0.0% |
+| from_snapshot_json, dup_last | 10,000 | 11,815.7 / 13,891.6 / 14,580.7 | 11,711.7 / 13,356.1 / 13,578.0 | -0.9% |
+| from_snapshot, valid | 100,000 | 12,602.3 / 13,635.1 / 13,635.1 | 11,946.3 / 13,878.2 / 13,878.2 | -5.2% |
+| from_snapshot, dup_last | 100,000 | 1,645.2 / 1,796.1 / 1,796.1 | 1,625.9 / 1,717.8 / 1,717.8 | -1.2% |
+| from_snapshot, price_last | 100,000 | 1,736.6 / 1,837.9 / 1,837.9 | 1,617.9 / 1,739.2 / 1,739.2 | -6.8% |
+| from_snapshot, total_second | 100,000 | 148.1 / 181.8 / 181.8 | 147.0 / 156.7 / 156.7 | -0.8% |
+| from_snapshot, total_last | 100,000 | 290.2 / 330.0 / 330.0 | 267.8 / 302.2 / 302.2 | -7.7% |
+| from_snapshot_json, valid | 100,000 | 128,955.7 / 139,095.5 / 139,095.5 | 128,213.9 / 145,425.1 / 145,425.1 | -0.6% |
+| from_snapshot_json, dup_last | 100,000 | 118,871.6 / 136,812.3 / 136,812.3 | 118,060.2 / 131,119.4 / 131,119.4 | -0.7% |
 
-### Allocations (per operation; peak = high-water mark of live counted bytes)
+The 100-order `total_last` row is 0.1 vs 0.2 µs, one to three clock ticks
+(~41.7 ns each), not a measurable change.
 
-Identical on both revisions within 0.1% of bytes at every size (for
-example, 100,000 orders: `from_snapshot` valid 101,155 allocations,
-24.1 MB allocated, 13.4 MB peak; failing at the last order 2 allocations,
-4.3 MB, the duplicate-id set; `from_snapshot_json` valid 4,101,175
-allocations, 93.4 MB, 30.4 MB peak). The pass does not change what is
-allocated: the id set was already released before the queue build, and the
-statistics copy it replaces with a move holds no heap memory.
+### Allocations (per operation)
+
+Peak = each operation's own high-water mark of live counted bytes, rebased
+to zero immediately before the operation: bytes allocated beyond what
+already existed (the pre-existing input snapshot or JSON string is
+excluded; input buffers the restore frees lower the live count), including
+the restored level while alive. Shown as the median and maximum over the
+repetitions (50, 50 and 10 at the three sizes), medians of the four runs.
+
+| Operation | n | base allocs / bytes / peak median / peak max | new allocs / bytes / peak median / peak max |
+|---|---|---|---|
+| from_snapshot, valid | 100 | 174 / 42,356 / 37,902 / 39,342 | 173 / 42,229 / 37,694 / 39,036 |
+| from_snapshot, dup_last | 100 | 2 / 4,268 / 4,268 / 4,268 | 2 / 4,268 / 4,268 / 4,268 |
+| from_snapshot, price_last | 100 | 2 / 4,330 / 4,232 / 4,232 | 2 / 4,330 / 4,330 / 4,330 |
+| from_snapshot, total_second / total_last | 100 | 1 / 34 / 34 / 34 | 1 / 34 / 34 / 34 |
+| from_snapshot_json, valid | 100 | 4,184 / 111,682 / 54,820 / 55,950 | 4,184 / 111,675 / 54,760 / 56,256 |
+| from_snapshot_json, dup_last | 100 | 4,012 / 73,628 / 21,292 / 21,292 | 4,012 / 73,628 / 21,292 / 21,292 |
+| from_snapshot, valid | 10,000 | 10,770 / 2,832,733 / 1,512,736 / 1,519,008 | 10,770 / 2,832,231 / 1,511,336 / 1,517,348 |
+| from_snapshot, dup_last | 10,000 | 2 / 540,716 / 540,716 / 540,716 | 2 / 540,716 / 540,716 / 540,716 |
+| from_snapshot, price_last | 10,000 | 2 / 540,778 / 540,680 / 540,680 | 2 / 540,778 / 540,778 / 540,778 |
+| from_snapshot, total_second / total_last | 10,000 | 1 / 34 / 34 / 34 | 1 / 34 / 34 / 34 |
+| from_snapshot_json, valid | 10,000 | 410,787 / 9,814,550 / 3,242,240 / 3,246,852 | 410,787 / 9,814,613 / 3,242,240 / 3,248,068 |
+| from_snapshot_json, dup_last | 10,000 | 400,019 / 7,522,972 / 2,271,788 / 2,271,788 | 400,019 / 7,522,972 / 2,271,788 / 2,271,788 |
+| from_snapshot, valid | 100,000 | 101,155 / 24,106,952 / 13,375,824 / 13,375,824 | 101,155 / 24,106,952 / 13,375,824 / 13,375,824 |
+| from_snapshot, dup_last | 100,000 | 2 / 4,325,420 / 4,325,420 / 4,325,420 | 2 / 4,325,420 / 4,325,420 / 4,325,420 |
+| from_snapshot, price_last | 100,000 | 2 / 4,325,482 / 4,325,384 / 4,325,384 | 2 / 4,325,482 / 4,325,482 / 4,325,482 |
+| from_snapshot, total_second / total_last | 100,000 | 1 / 34 / 34 / 34 | 1 / 34 / 34 / 34 |
+| from_snapshot_json, valid | 100,000 | 4,101,175 / 93,404,216 / 30,424,400 / 30,424,400 | 4,101,175 / 93,404,216 / 30,424,400 / 30,424,400 |
+| from_snapshot_json, dup_last | 100,000 | 4,000,022 / 73,622,684 / 21,373,996 / 21,373,996 | 4,000,022 / 73,622,684 / 21,373,996 / 21,373,996 |
+
+Allocation counts and bytes match to within 0.02% in every case, early
+aggregate failures included (one allocation: the error message). The
+`price_last` peaks differ by 98 bytes (the order of freeing the id set and
+formatting the error message).
 
 ### Reading
 
 - Validation is a small share of restore. At 100,000 orders the rejected
-  snapshots (validation only, no queue) cost 1.5 to 1.7 ms, and the valid
-  restore 13 ms, most of it the queue build (one `DashMap` entry and one
-  `SkipMap` node per order). The JSON restore is dominated by decoding and
-  the checksum re-encoding (about 40 allocations per order, outside this
-  issue); the change is within noise there.
-- A failure at the end saves the walks it no longer repeats: 8 to 12% for a
-  topology violation (two walks fewer) at 10,000 and 100,000 orders, 0 to 4%
-  for a duplicate id (one walk fewer; the hash set dominates).
-- The valid `from_snapshot` p50 moved -1% to -3% at 10,000 / 100,000 and
-  +2.5% (0.2 µs) at 100, all within the run-to-run spread on this shared
-  host (the four 100,000-order base runs span 12.2 to 15.0 ms).
+  snapshots (validation only, no queue) cost 1.6 ms, the valid restore
+  12 to 13 ms (mostly the queue build: one `DashMap` entry and one `SkipMap`
+  node per order), and the JSON restore about 120 to 130 ms (decoding and
+  the checksum re-encoding, about 40 allocations per order, outside this
+  issue). The change is within noise on the JSON path.
+- A topology violation at the end is rejected 5 to 7% faster at 10,000 /
+  100,000 orders (one walk fewer). A duplicate at the end is unchanged
+  within noise (-1.2% / +5.7%): the hash-set inserts dominate and that walk
+  was already the last one before topology.
+- The valid `from_snapshot` p50 moved -2% / -5% at 10,000 / 100,000 and
+  +0.3% at 100; the four 100,000-order runs span 11.3 to 14.3 ms (base) and
+  11.8 to 14.5 ms (new) on this shared host, so this is not a demonstrated
+  speedup.
 
 ### Not pursued
 
 Detecting duplicate ids with the queue's own rejecting insert (`try_push`)
 instead of the scratch set would save roughly the set's cost (the
-duplicate-last row: about 12% of a valid 100,000-order `from_snapshot`, about
+`dup_last` row: about 13% of a valid 100,000-order `from_snapshot`, about
 1% of the JSON restore) but not peak memory (the set is freed before the
 queue grows). It would also move the duplicate check after partial queue
 construction and make the precedence against the queue's own failures
 depend on insertion progress. Not done here; the precedence contract above
 would have to be restated and retested first.
-

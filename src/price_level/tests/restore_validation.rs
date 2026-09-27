@@ -1,5 +1,5 @@
-//! Issue #150: `PriceLevel::from_snapshot` validates the orders in one checked
-//! pass. These tests pin that it is observably identical to the pre-#150
+//! Issue #150: `PriceLevel::from_snapshot` validates the orders in two walks
+//! (aggregates, then ids and topology fused). These tests pin that it is observably identical to the pre-#150
 //! three-walk restore (`PriceLevel::from_snapshot_legacy`, test-only): same
 //! restored level for every valid snapshot, and the same error, with the same
 //! precedence, for every invalid one.
@@ -641,5 +641,77 @@ mod tests {
         // Byte-identical re-encoding of the restored level.
         assert_eq!(new.snapshot_to_json().expect("json"), json);
         assert_eq!(fingerprint(&new), fingerprint(&old));
+    }
+
+    // ------------------------------------------------------------------
+    // Review of #150: moved statistics restart their seqlock sequence.
+    // ------------------------------------------------------------------
+
+    /// Owned statistics with an exhausted-looking sequence, moved (not
+    /// cloned) into a snapshot, then restored WITHOUT `try_clone` (which
+    /// would itself restart the sequence and mask the move).
+    fn snapshot_with_exhausted_stats_seq() -> PriceLevelSnapshot {
+        let stats = PriceLevelStatistics::new_at(TimestampMs::new(7));
+        stats.record_execution(3, PRICE, 0, 50).expect("record");
+        // Even and above the entry limit: the next section is refused.
+        stats.test_seed_stats_seq(u64::MAX - 1);
+        assert!(stats.record_execution(1, PRICE, 0, 60).is_err());
+        assert!(stats.stats_degraded());
+        stats.test_seed_stats_seq(u64::MAX - 1);
+        PriceLevelSnapshot::with_orders_and_stats(
+            Price::new(PRICE),
+            vec![Spec::valid(1).build(), Spec::valid(2).build()],
+            stats,
+        )
+        .expect("snapshot")
+    }
+
+    #[test]
+    fn restore_restarts_statistics_sequence_of_moved_statistics() {
+        let restored =
+            PriceLevel::from_snapshot(snapshot_with_exhausted_stats_seq()).expect("restore");
+        let stats = restored.stats();
+        assert_eq!(stats.test_stats_seq(), 0, "sequence restarted");
+        // Counters and the degraded flag are preserved.
+        assert_eq!(stats.orders_executed(), 1);
+        assert_eq!(stats.quantity_executed(), 3);
+        assert_eq!(stats.last_execution_time(), 50);
+        assert!(stats.stats_degraded());
+        // The documented rebuild recovery (#165): recording works again.
+        assert_eq!(stats.record_execution(1, PRICE, 0, 70), Ok(()));
+        assert_eq!(stats.orders_executed(), 2);
+    }
+
+    #[test]
+    fn restore_and_legacy_restore_agree_on_moved_exhausted_statistics() {
+        let new = PriceLevel::from_snapshot(snapshot_with_exhausted_stats_seq()).expect("new");
+        let old =
+            PriceLevel::from_snapshot_legacy(snapshot_with_exhausted_stats_seq()).expect("old");
+        assert_eq!(new.stats().test_stats_seq(), old.stats().test_stats_seq());
+        assert_eq!(
+            new.stats().record_execution(1, PRICE, 0, 70),
+            old.stats().record_execution(1, PRICE, 0, 70)
+        );
+        assert_eq!(fingerprint(&new), fingerprint(&old));
+    }
+
+    #[test]
+    fn aggregate_failure_anywhere_reserves_no_scratch_set() {
+        // The aggregate fold completes before the duplicate-id set is
+        // reserved, so an aggregate rejection at any position never reaches
+        // the reservation (the refusal seam would otherwise fire), exactly as
+        // before #150.
+        for at in [0, 1, DEEP - 1] {
+            let mut specs: Vec<Spec> = (1..=DEEP as u64).map(Spec::valid).collect();
+            inject(&mut specs, Violation::OrderTotal, at);
+            let _fail = test_seam::fail_after(CapacityResource::RestoreScratch, 0);
+            assert_eq!(
+                PriceLevel::from_snapshot(snapshot_of(&specs)).map(|_| ()),
+                Err(PriceLevelError::InvalidOperation {
+                    message: "order total quantity overflows u64".to_string()
+                })
+            );
+            assert_eq!(test_seam::injected(), 0, "no reservation attempted at {at}");
+        }
     }
 }

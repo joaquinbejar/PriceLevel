@@ -21,9 +21,17 @@
 //! crate: A/B comparisons build this harness on both revisions and run the
 //! two binaries alternately (see `BENCH.md`).
 //!
-//! A separate, untimed pass ([`run_alloc`]) reports allocation count, bytes
-//! and the peak live bytes (the counting allocator's high-water mark over one
-//! operation, including the restored level while it is alive) per operation.
+//! - `from_snapshot_total_second` / `from_snapshot_total_last`: the visible
+//!   sum overflows at the second / last order (aggregate failure, the
+//!   highest-ranked rejection).
+//!
+//! Report names carry the size (`name@size`), so persisted artifact keys
+//! are unique across sizes.
+//!
+//! A separate, untimed pass ([`run_alloc`]) reports allocation count and
+//! bytes per operation, and the median and maximum over repetitions of each
+//! operation's own peak live bytes (rebased to zero before every operation;
+//! see [`count`]).
 
 use crate::alloc::{self, AllocStats};
 use crate::config::Config;
@@ -77,6 +85,10 @@ struct Inputs {
     valid: PriceLevelSnapshot,
     dup_last: PriceLevelSnapshot,
     price_last: PriceLevelSnapshot,
+    /// First order at `u64::MAX`: the visible sum overflows at the second.
+    total_second: PriceLevelSnapshot,
+    /// Last order at `u64::MAX`: the visible sum overflows at the last.
+    total_last: PriceLevelSnapshot,
     valid_json: String,
     dup_last_json: String,
 }
@@ -131,6 +143,15 @@ fn with_price(order: &OrderType<()>, price: Price) -> OrderType<()> {
     }
 }
 
+/// `snapshot` with order `index`'s quantity set to `u64::MAX`. Built through
+/// serde because every public constructor refreshes (and so rejects) the
+/// aggregates; snapshot deserialization stores them as given.
+fn with_quantity_overflow(snapshot: &PriceLevelSnapshot, index: usize) -> PriceLevelSnapshot {
+    let mut value = serde_json::to_value(snapshot).expect("restore_sizes: to_value");
+    value["orders"][index]["Standard"]["quantity"] = serde_json::Value::from(u64::MAX);
+    serde_json::from_value(value).expect("restore_sizes: from_value")
+}
+
 fn signed_json(snapshot: &PriceLevelSnapshot) -> String {
     PriceLevelSnapshotPackage::new(snapshot.try_clone().expect("restore_sizes: try_clone"))
         .expect("restore_sizes: package")
@@ -161,6 +182,8 @@ fn inputs(size: u64) -> Inputs {
     let price_last = PriceLevelSnapshot::with_orders(price, wrong).expect("restore_sizes: price");
 
     let dup_last_json = signed_json(&dup_last);
+    let total_second = with_quantity_overflow(&valid, 0);
+    let total_last = with_quantity_overflow(&valid, n - 1);
 
     // Outcome checks, untimed.
     assert!(PriceLevel::from_snapshot(valid.try_clone().expect("clone")).is_ok());
@@ -172,6 +195,12 @@ fn inputs(size: u64) -> Inputs {
         PriceLevel::from_snapshot(price_last.try_clone().expect("clone")),
         Err(PriceLevelError::InvalidOperation { .. })
     ));
+    for overflowing in [&total_second, &total_last] {
+        assert!(matches!(
+            PriceLevel::from_snapshot(overflowing.try_clone().expect("clone")),
+            Err(PriceLevelError::InvalidOperation { .. })
+        ));
+    }
     assert!(PriceLevel::from_snapshot_json(&valid_json).is_ok());
     assert!(matches!(
         PriceLevel::from_snapshot_json(&dup_last_json),
@@ -182,6 +211,8 @@ fn inputs(size: u64) -> Inputs {
         valid,
         dup_last,
         price_last,
+        total_second,
+        total_last,
         valid_json,
         dup_last_json,
     }
@@ -223,7 +254,56 @@ fn time_from_json(json: &str, samples: usize, warmup: usize) -> Vec<u64> {
     out
 }
 
-/// Runs every size / operation and returns one report each.
+/// One restore operation: `from_snapshot` on a snapshot copy, or
+/// `from_snapshot_json` on a string.
+enum Op<'a> {
+    Snapshot(&'a PriceLevelSnapshot),
+    Json(&'a str),
+}
+
+/// Every measured case for one size: (name, measured call, operation).
+fn cases(inputs: &Inputs) -> [(&'static str, &'static str, Op<'_>); 7] {
+    [
+        (
+            "from_snapshot_valid",
+            "PriceLevel::from_snapshot (valid)",
+            Op::Snapshot(&inputs.valid),
+        ),
+        (
+            "from_snapshot_dup_last",
+            "PriceLevel::from_snapshot (duplicate id at the last order)",
+            Op::Snapshot(&inputs.dup_last),
+        ),
+        (
+            "from_snapshot_price_last",
+            "PriceLevel::from_snapshot (wrong price at the last order)",
+            Op::Snapshot(&inputs.price_last),
+        ),
+        (
+            "from_snapshot_total_second",
+            "PriceLevel::from_snapshot (visible sum overflows at the second order)",
+            Op::Snapshot(&inputs.total_second),
+        ),
+        (
+            "from_snapshot_total_last",
+            "PriceLevel::from_snapshot (visible sum overflows at the last order)",
+            Op::Snapshot(&inputs.total_last),
+        ),
+        (
+            "from_json_valid",
+            "PriceLevel::from_snapshot_json (valid)",
+            Op::Json(&inputs.valid_json),
+        ),
+        (
+            "from_json_dup_last",
+            "PriceLevel::from_snapshot_json (signed, duplicate id last)",
+            Op::Json(&inputs.dup_last_json),
+        ),
+    ]
+}
+
+/// Runs every size / operation and returns one report each. Report names
+/// carry the size (`name@size`) so every persisted artifact key is unique.
 #[must_use]
 pub fn run(config: &Config) -> Vec<ScenarioReport> {
     let mut reports = Vec::new();
@@ -235,36 +315,13 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
             "{samples} samples; package JSON {} bytes",
             inputs.valid_json.len()
         );
-        let cases: [(&str, &'static str, Vec<u64>); 5] = [
-            (
-                "from_snapshot_valid",
-                "PriceLevel::from_snapshot (valid)",
-                time_from_snapshot(&inputs.valid, samples, warmup),
-            ),
-            (
-                "from_snapshot_dup_last",
-                "PriceLevel::from_snapshot (duplicate id at the last order)",
-                time_from_snapshot(&inputs.dup_last, samples, warmup),
-            ),
-            (
-                "from_snapshot_price_last",
-                "PriceLevel::from_snapshot (wrong price at the last order)",
-                time_from_snapshot(&inputs.price_last, samples, warmup),
-            ),
-            (
-                "from_json_valid",
-                "PriceLevel::from_snapshot_json (valid)",
-                time_from_json(&inputs.valid_json, samples, warmup),
-            ),
-            (
-                "from_json_dup_last",
-                "PriceLevel::from_snapshot_json (signed, duplicate id last)",
-                time_from_json(&inputs.dup_last_json, samples, warmup),
-            ),
-        ];
-        for (name, call, durations) in cases {
+        for (name, call, op) in cases(&inputs) {
+            let durations = match op {
+                Op::Snapshot(snapshot) => time_from_snapshot(snapshot, samples, warmup),
+                Op::Json(json) => time_from_json(json, samples, warmup),
+            };
             reports.push(ScenarioReport::from_samples(
-                name,
+                format!("{name}@{size}"),
                 "restore_sizes",
                 size,
                 call,
@@ -276,77 +333,75 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
     reports
 }
 
-/// Counts `reps` runs of `op` (each output dropped inside the window, so the
-/// peak is the single-operation high-water mark). `setup` runs with counting
-/// disabled.
-fn count<S, I, F, O>(reps: usize, mut setup: S, mut op: F) -> (AllocStats, i64)
+/// Allocation totals over `reps` operations plus the per-operation peaks.
+struct AllocResult {
+    stats: AllocStats,
+    /// Per-repetition high-water mark of live counted bytes.
+    peaks: Vec<i64>,
+}
+
+/// Counts `reps` runs of `op`. `setup` runs with counting disabled, before
+/// the window. The live-byte baseline is rebased to zero immediately before
+/// each operation, so each repetition's peak is that one operation's own
+/// high-water mark: the bytes it allocated beyond what already existed (the
+/// pre-existing input is excluded; input buffers the operation frees lower
+/// the live count), including its output while alive.
+fn count<S, I, F, O>(reps: usize, mut setup: S, mut op: F) -> AllocResult
 where
     S: FnMut() -> I,
     F: FnMut(I) -> O,
 {
     let mut inputs: Vec<I> = (0..reps).map(|_| setup()).collect();
+    let mut peaks = Vec::with_capacity(reps);
     alloc::reset();
     alloc::enable();
     let before = AllocStats::read();
     for input in inputs.drain(..) {
+        alloc::rebase_live();
         drop(black_box(op(input)));
+        peaks.push(alloc::peak_live_bytes());
     }
     let after = AllocStats::read();
     alloc::disable();
-    (after.since(before), alloc::peak_live_bytes())
+    AllocResult {
+        stats: after.since(before),
+        peaks,
+    }
 }
 
 /// Runs the allocation pass and returns one printable line per size /
-/// operation.
+/// operation: mean allocations and bytes per operation, and the median and
+/// maximum of the per-operation peaks.
 #[must_use]
 pub fn run_alloc(config: &Config) -> Vec<String> {
     let mut lines = Vec::new();
     for &size in sizes() {
         let inputs = inputs(size);
         let reps = alloc_reps_for(config, size);
-        let mut push = |name: &str, (stats, peak): (AllocStats, i64)| {
+        for (name, _call, op) in cases(&inputs) {
+            let mut result = match op {
+                Op::Snapshot(snapshot) => count(
+                    reps,
+                    || snapshot.try_clone().expect("try_clone"),
+                    PriceLevel::from_snapshot,
+                ),
+                Op::Json(json) => count(reps, || (), |()| PriceLevel::from_snapshot_json(json)),
+            };
+            result.peaks.sort_unstable();
+            let median = result
+                .peaks
+                .get(result.peaks.len() / 2)
+                .copied()
+                .unwrap_or(0);
+            let max = result.peaks.last().copied().unwrap_or(0);
             let reps_f = reps as f64;
             lines.push(format!(
-                "{name:<26} n={size:<7} reps={reps:<5} alloc_count/op={:<10.2} \
-                 alloc_bytes/op={:<12.0} peak_live_bytes={}",
-                stats.alloc_count as f64 / reps_f,
-                stats.alloc_bytes as f64 / reps_f,
-                peak,
+                "{name:<28} n={size:<7} reps={reps:<5} alloc_count/op={:<10.2} \
+                 alloc_bytes/op={:<12.0} peak_live_bytes/op median={median} max={max}",
+                result.stats.alloc_count as f64 / reps_f,
+                result.stats.alloc_bytes as f64 / reps_f,
             ));
-        };
-        let clone = |s: &PriceLevelSnapshot| s.try_clone().expect("try_clone");
-        push(
-            "from_snapshot_valid",
-            count(reps, || clone(&inputs.valid), PriceLevel::from_snapshot),
-        );
-        push(
-            "from_snapshot_dup_last",
-            count(reps, || clone(&inputs.dup_last), PriceLevel::from_snapshot),
-        );
-        push(
-            "from_snapshot_price_last",
-            count(
-                reps,
-                || clone(&inputs.price_last),
-                PriceLevel::from_snapshot,
-            ),
-        );
-        push(
-            "from_json_valid",
-            count(
-                reps,
-                || (),
-                |()| PriceLevel::from_snapshot_json(&inputs.valid_json),
-            ),
-        );
-        push(
-            "from_json_dup_last",
-            count(
-                reps,
-                || (),
-                |()| PriceLevel::from_snapshot_json(&inputs.dup_last_json),
-            ),
-        );
+        }
     }
     lines
 }
