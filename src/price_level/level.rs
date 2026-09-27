@@ -676,6 +676,20 @@ impl PriceLevel {
     /// process survives; the `RwLock` is left poisoned, so the NEXT guard
     /// acquisition recovers it and trips [`Self::level_poisoned`], exercising the
     /// real fail-fast path (not a directly-set flag).
+    /// Force the topology word to `side` pinned with the maximum representable
+    /// order count (issue #145 test seam), so the next same-side admission
+    /// fails `topology_admit` with a count overflow and exercises the
+    /// visible / hidden rollback branch of [`Self::add_order`]. Leaves the queue
+    /// and quantity counters untouched; the level is only fit for asserting
+    /// that rollback afterwards.
+    #[cfg(test)]
+    pub(crate) fn test_saturate_order_count(&self, side: Side) {
+        self.topology.store(
+            topology::pack(topology::tag_of(side), topology::COUNT_MASK),
+            Ordering::Release,
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn test_poison_guard(&self) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -845,12 +859,28 @@ impl PriceLevel {
                 });
             }
 
-            if self
-                .hidden_quantity
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                    c.checked_add(hidden_qty)
-                })
-                .is_err()
+            // Skip the hidden reservation entirely for a zero delta (issue
+            // #145): every standard / post-only / pegged / trailing-stop /
+            // market-to-limit order lands here with `hidden_qty == 0`.
+            // `checked_add(0)` can never fail, so the skip changes no error
+            // outcome or precedence, and the counter value is identical either
+            // way. The skipped RMW carried no publication or happens-before
+            // responsibility: EVERY operation on `hidden_quantity` in this crate
+            // is `Relaxed` (this reservation, its rollbacks, the match-path
+            // replenish / strand decrements, and the `hidden_quantity()` load),
+            // so there is no Release store heading a release sequence that this
+            // RMW would have extended, and no Acquire reader that could
+            // synchronize with it. Publication of the order is done by
+            // `try_push_with` (DashMap shard lock + SkipMap insert), and the
+            // side / count ordering by the `AcqRel` pin CAS in
+            // `topology_admit` below, both of which still run unchanged.
+            if hidden_qty != 0
+                && self
+                    .hidden_quantity
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                        c.checked_add(hidden_qty)
+                    })
+                    .is_err()
             {
                 // Roll back the visible reservation this call made.
                 self.visible_quantity
@@ -878,8 +908,12 @@ impl PriceLevel {
                     // the topology word was not mutated (pin goes last).
                     self.visible_quantity
                         .fetch_sub(visible_qty, Ordering::Relaxed);
-                    self.hidden_quantity
-                        .fetch_sub(hidden_qty, Ordering::Relaxed);
+                    // A zero hidden delta was never reserved above (issue
+                    // #145), so there is nothing to undo; skip the no-op RMW.
+                    if hidden_qty != 0 {
+                        self.hidden_quantity
+                            .fetch_sub(hidden_qty, Ordering::Relaxed);
+                    }
                     return Err(err);
                 }
             }
