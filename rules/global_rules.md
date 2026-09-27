@@ -5,8 +5,10 @@ descriptions in English.
 `pricelevel` is the per-price-level building block for a limit order book:
 one `PriceLevel` owns the orders resting at a single price, matches an
 incoming taker against that queue, and tracks atomic quantity counters and
-execution statistics. It is **synchronous and lock-free** — there is no
-async, no tokio, no networking, and no feature flags. Keep it that way.
+execution statistics. It is **synchronous** and built on lock-free data
+structures and atomics — there is no async, no tokio, no networking, and no
+feature flags. Keep it that way. The complete public methods are not all
+lock-free; see Concurrency for the documented locks.
 
 ---
 
@@ -183,9 +185,15 @@ Testing below.
 
 ## Concurrency
 
-The engine is **lock-free and synchronous**. There is no async runtime, no
-tokio, no networking. Concurrency lives entirely in atomics and lock-free
-data structures.
+The engine is **synchronous** and built on lock-free structures. There is no
+async runtime, no tokio, no networking. The ordered index and the quantity /
+statistics counters are lock-free; the complete public methods are not all
+lock-free. Documented exceptions: the per-level `RwLock` that gives FOK
+matching level-wide exclusion (admissions and updates take its shared side),
+the DashMap shard write lock taken per maker entry during matching and
+cancellation, and the `portable_atomic::AtomicU128` global-lock fallback on
+targets without a native 128-bit CAS. Do not describe a method as lock-free
+when it takes one of these.
 
 - Lock-free primitives only: `crossbeam-skiplist` (a `SkipMap` ordered index
   backs `OrderQueue`, keyed by a monotonic sequence for price-time priority),

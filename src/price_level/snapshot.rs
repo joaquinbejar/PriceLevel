@@ -275,8 +275,12 @@ impl PriceLevelSnapshot {
 /// - **Version 4** (issue #140) is the current shape: statistics
 ///   `value_executed` is a `u128` (it was `u64`). A v4 payload may carry a value
 ///   above `u64::MAX` that a v3 reader cannot represent, so new packages are
-///   labelled v4 and a pre-0.10 reader rejects them up front with a version
-///   mismatch instead of failing mid-decode.
+///   labelled v4. A pre-0.10 reader rejects every v4 package, but not always
+///   by version: it deserializes the whole package before `validate` checks the
+///   version, so a v4 package whose value fits in `u64` fails with a version
+///   mismatch, while one whose value exceeds `u64::MAX` already fails to decode
+///   with a deserialization error. Either way the old reader returns an error
+///   and never restores wrong statistics.
 ///
 /// [`PriceLevelSnapshotPackage::validate`] accepts v2 (legacy, 8-field,
 /// `stats_degraded` defaults `false`), v3 and v4, so old snapshots keep

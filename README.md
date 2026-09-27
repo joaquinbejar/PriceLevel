@@ -494,8 +494,13 @@ marks the statistics degraded.
 
 `SNAPSHOT_FORMAT_VERSION` is bumped from `3` to `4`. A v4 payload may carry a
 `value_executed` above `u64::MAX`, which a v3 reader cannot represent, so new
-packages are labelled v4 and a pre-0.10 reader rejects them with a version
-mismatch rather than failing mid-decode. Restore is **backward compatible**:
+packages are labelled v4. A pre-0.10 reader rejects every v4 package, but it
+deserializes the whole package before checking the version: a v4 package
+whose value fits in `u64` fails with a version mismatch
+([`PriceLevelError::InvalidOperation`]), while one whose value exceeds
+`u64::MAX` fails earlier with a [`PriceLevelError::DeserializationError`].
+Either way the old reader errors and never restores wrong statistics.
+Restore is **backward compatible**:
 [`PriceLevelSnapshotPackage::validate`] accepts v2, v3 and v4, and the JSON
 of a legacy `u64` value is unchanged, so snapshots written by earlier
 releases keep restoring with their original SHA-256 checksum. The
