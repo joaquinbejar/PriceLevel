@@ -200,16 +200,42 @@ pub struct PriceLevelStatistics {
 ///
 /// Entry reserves the whole section: it refuses to open unless the sequence
 /// is at most [`STATS_SEQ_ENTRY_LIMIT`], so the entry value `s + 1` and the
-/// exit value `s + 2` both fit `u64`. Under the single-writer contract nothing
-/// else moves the sequence while the section is open, so the exit increment
-/// is proven in range and `Drop` never fails or wraps.
+/// exit value `s + 2` both stay at or below [`STATS_SEQ_CEILING`]. Under the
+/// single-writer contract nothing else moves the sequence while the section
+/// is open, so the exit increment is proven in range and `Drop` never fails
+/// or wraps.
+///
+/// # No permanently odd sequence (pre-release hardening)
+///
+/// Every transition, entry or exit, is refused if it would move the sequence
+/// above [`STATS_SEQ_CEILING`] (`u64::MAX - 1`, even). The only odd value an
+/// exit could be stranded on is `u64::MAX`, which is therefore unreachable.
+/// With overlapping writers (a contract violation) an exit can be refused,
+/// but only when the sequence already sits at the even ceiling, where it then
+/// stays (no entry opens above [`STATS_SEQ_ENTRY_LIMIT`]); otherwise every
+/// entry is matched by an exit and the quiescent sequence is even. Either
+/// way [`PriceLevelStatistics::read_consistent`] cannot spin forever once
+/// writers stop.
 struct WriteSeqGuard<'a> {
     seq: &'a AtomicU64,
 }
 
+/// Largest value the sequence may ever take (pre-release hardening). It is
+/// even, and `u64::MAX` (odd) is never reached, so a refused exit can never
+/// leave the sequence permanently odd.
+const STATS_SEQ_CEILING: u64 = u64::MAX - 1;
+
 /// Largest sequence value from which a write section may open (issue #165):
-/// entry moves it to at most `u64::MAX - 1` and exit to at most `u64::MAX`.
-const STATS_SEQ_ENTRY_LIMIT: u64 = u64::MAX - 2;
+/// entry moves it to at most `u64::MAX - 2` and exit to at most
+/// [`STATS_SEQ_CEILING`]. For the even values a single writer starts from
+/// this admits exactly what the former `u64::MAX - 2` limit did.
+const STATS_SEQ_ENTRY_LIMIT: u64 = u64::MAX - 3;
+
+/// The checked, ceiling-bounded `+1` shared by entry and exit.
+#[inline]
+fn seq_step(s: u64) -> Option<u64> {
+    s.checked_add(1).filter(|next| *next <= STATS_SEQ_CEILING)
+}
 
 impl<'a> WriteSeqGuard<'a> {
     /// Opens a write section, or returns `Err` with the sequence untouched
@@ -224,7 +250,7 @@ impl<'a> WriteSeqGuard<'a> {
         if seq
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
                 if s <= STATS_SEQ_ENTRY_LIMIT {
-                    s.checked_add(1)
+                    seq_step(s)
                 } else {
                     None
                 }
@@ -245,14 +271,15 @@ impl Drop for WriteSeqGuard<'_> {
     fn drop(&mut self) {
         // Exit: odd -> even, `Release` so every field write in the section
         // happens-before a reader's `Acquire` load of the (now even) sequence.
-        // Proven in range: entry admitted `s <= u64::MAX - 2`, so the value
-        // here is at most `u64::MAX - 1` under the single-writer contract. The
-        // increment is still checked, so even a contract violation (an
-        // overlapping writer) cannot wrap the sequence; in that unsupported
-        // case a refused exit leaves it where it is.
+        // Proven in range: entry admitted `s <= u64::MAX - 3`, so the value
+        // here is at most `u64::MAX - 2` under the single-writer contract. The
+        // increment is still checked against the even ceiling, so a contract
+        // violation (an overlapping writer) can neither wrap the sequence nor
+        // strand it on the odd `u64::MAX`: a refused exit happens only at the
+        // even ceiling, where the sequence then stays.
         let _ = self
             .seq
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |s| s.checked_add(1));
+            .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
     }
 }
 
@@ -368,6 +395,62 @@ impl PriceLevelStatistics {
         }
     }
 
+    /// Checked rollback `-= value` on a `usize` counter (pre-release
+    /// hardening; replaces a wrapping `fetch_sub`). Returns `false`, leaving
+    /// the counter unchanged, if it holds less than `value`.
+    #[inline]
+    fn rollback_usize(target: &AtomicUsize, value: usize) -> bool {
+        target
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_sub(value)
+            })
+            .is_ok()
+    }
+
+    /// As [`rollback_usize`](Self::rollback_usize), for a `u64` counter.
+    #[inline]
+    fn rollback_u64(target: &AtomicU64, value: u64) -> bool {
+        target
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_sub(value)
+            })
+            .is_ok()
+    }
+
+    /// As [`rollback_usize`](Self::rollback_usize), for the `u128` value
+    /// accumulator.
+    #[inline]
+    fn rollback_u128(target: &AtomicU128, value: u128) -> bool {
+        target
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                c.checked_sub(value)
+            })
+            .is_ok()
+    }
+
+    /// Passes `err` through, logging at ERROR first when a rollback was
+    /// refused. Called after the seqlock write section has closed, so the
+    /// subscriber never runs while readers spin on an odd sequence.
+    #[inline]
+    fn after_rollback(err: PriceLevelError, intact: bool) -> PriceLevelError {
+        if !intact {
+            Self::rollback_refused(&err);
+        }
+        err
+    }
+
+    /// ERROR report for a refused rollback: the statistics are already marked
+    /// degraded, and a counter may keep part of the dropped execution.
+    #[cold]
+    #[inline(never)]
+    fn rollback_refused(err: &PriceLevelError) {
+        tracing::error!(
+            error = %err,
+            "statistics rollback refused: a counter held less than this record \
+             added (invariant already broken); statistics marked degraded"
+        );
+    }
+
     /// Set the sticky degraded flag; returns `true` iff THIS call transitioned it
     /// `false -> true` (issue #129). The caller (`PriceLevel::match_order`) logs
     /// the WARN only on that transition, so a burst of dropped executions marks
@@ -400,7 +483,9 @@ impl PriceLevelStatistics {
     /// always does — the matcher cannot record forever). A writer descheduled
     /// inside its section keeps readers spinning until it resumes. A panicking
     /// writer still restores the even sequence via the guard's `Drop`, so the
-    /// reader is never stranded on a permanently-odd sequence.
+    /// reader is never stranded on a permanently-odd sequence; nor is it after
+    /// overlapping writers exhaust the sequence, because no transition may
+    /// reach the odd `u64::MAX` (see `WriteSeqGuard`).
     fn read_consistent(&self) -> StatsData {
         loop {
             let s1 = self.stats_seq.load(Ordering::Acquire);
@@ -581,8 +666,10 @@ impl PriceLevelStatistics {
     ///
     /// An accepted execution contributes to **every** aggregate, or to **none**.
     /// If a later counter overflows after earlier ones already advanced, this
-    /// rolls the committed prefix back (a `fetch_sub` of exactly what this call
-    /// added, never below zero because those units are still present). So a
+    /// rolls the committed prefix back (a checked subtraction of exactly what
+    /// this call added, never below zero because those units are still
+    /// present; a refused rollback, possible only once an invariant is broken,
+    /// leaves that counter unchanged and is logged at ERROR). So a
     /// caller never observes a partial contribution in the final state. On any
     /// failure — a validation error or a counter overflow — the sticky
     /// [`stats_degraded`](Self::stats_degraded) flag is set: the dropped
@@ -608,7 +695,8 @@ impl PriceLevelStatistics {
     /// deltas), but the sequence guard does not protect a concurrent
     /// multi-field reader from them: it can accept a partial tuple. An overlap
     /// with `reset` is worse: a `store(0)` landing between a committed prefix
-    /// and its `fetch_sub` rollback wraps the counter. Neither is prevented by
+    /// and its rollback leaves part of the prefix behind (the checked rollback
+    /// is refused rather than wrapping the counter). Neither is prevented by
     /// the guard; both are caller contract violations.
     ///
     /// # Errors
@@ -642,7 +730,7 @@ impl PriceLevelStatistics {
         // An exhausted sequence (issue #165) refuses the section before any
         // counter moves: the execution is dropped all-or-nothing like any
         // other rejected record, and the degraded flag makes the drop visible.
-        let _write = match WriteSeqGuard::try_new(&self.stats_seq) {
+        let write_section = match WriteSeqGuard::try_new(&self.stats_seq) {
             Ok(guard) => guard,
             Err(err) => {
                 self.mark_degraded();
@@ -695,22 +783,29 @@ impl PriceLevelStatistics {
             return Err(err);
         }
 
+        // Rollbacks are checked subtractions (pre-release hardening): each
+        // undoes units this call just added, so a refusal is only possible if
+        // an invariant is already broken (e.g. a `reset` overlapping this
+        // record, a writer-contract violation). A refused rollback leaves that
+        // counter where it is, never wraps it, and is reported at ERROR after
+        // the seqlock section closes (see `rollback_refused`).
         if let Err(err) =
             Self::checked_fetch_add_u64(&self.quantity_executed, quantity, "quantity_executed")
         {
-            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            let intact = Self::rollback_usize(&self.orders_executed, 1);
             self.mark_degraded();
-            return Err(err);
+            drop(write_section);
+            return Err(Self::after_rollback(err, intact));
         }
 
         if let Err(err) =
             Self::checked_fetch_add_u128(&self.value_executed, value, "value_executed")
         {
-            self.quantity_executed
-                .fetch_sub(quantity, Ordering::Relaxed);
-            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            let intact = Self::rollback_u64(&self.quantity_executed, quantity)
+                & Self::rollback_usize(&self.orders_executed, 1);
             self.mark_degraded();
-            return Err(err);
+            drop(write_section);
+            return Err(Self::after_rollback(err, intact));
         }
 
         if let Some(waiting_time) = waiting_time
@@ -720,12 +815,12 @@ impl PriceLevelStatistics {
                 "sum_waiting_time",
             )
         {
-            self.value_executed.fetch_sub(value, Ordering::Relaxed);
-            self.quantity_executed
-                .fetch_sub(quantity, Ordering::Relaxed);
-            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            let intact = Self::rollback_u128(&self.value_executed, value)
+                & Self::rollback_u64(&self.quantity_executed, quantity)
+                & Self::rollback_usize(&self.orders_executed, 1);
             self.mark_degraded();
-            return Err(err);
+            drop(write_section);
+            return Err(Self::after_rollback(err, intact));
         }
 
         // Monotonic (issue #129): an out-of-order record (or an unsupported
@@ -976,7 +1071,9 @@ impl PriceLevelStatistics {
     /// does not exclude a concurrent `record_execution` (issue #153). A reset
     /// overlapping a `record_execution` whose overflow rollback is in progress
     /// can `store(0)` a counter between the committed prefix and its
-    /// `fetch_sub`, wrapping that counter toward its maximum. Quiescence is
+    /// rollback; the checked rollback is then refused (logged at ERROR, the
+    /// statistics stay degraded) rather than wrapping the counter, but the
+    /// totals no longer describe the executions. Quiescence is
     /// what rules this out, not the guard. No engine path resets during
     /// matching; it remains a caller obligation because reset is public.
     ///
@@ -1500,5 +1597,73 @@ impl<'de> Deserialize<'de> for PriceLevelStatistics {
         ];
 
         deserializer.deserialize_struct("PriceLevelStatistics", FIELDS, StatisticsVisitor)
+    }
+}
+
+#[cfg(test)]
+// Test-only arithmetic (Testing section of `rules/global_rules.md`).
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use super::{PriceLevelStatistics, STATS_SEQ_CEILING, WriteSeqGuard};
+
+    /// Pre-release hardening: overlapping write sections (a writer-contract
+    /// violation) near exhaustion must not strand the sequence on an odd
+    /// value, or `read_consistent` would spin forever. Before the fix,
+    /// overlapping sections opened near `u64::MAX - 2` could drive the
+    /// sequence to the odd `u64::MAX`, where the last exit was refused.
+    #[test]
+    fn overlapping_sections_near_exhaustion_never_leave_sequence_odd() {
+        for start in (u64::MAX - 9)..=(u64::MAX - 1) {
+            for open in 1..=5usize {
+                let stats = PriceLevelStatistics::new();
+                stats.test_seed_stats_seq(start);
+                let guards: Vec<WriteSeqGuard<'_>> = (0..open)
+                    .filter_map(|_| WriteSeqGuard::try_new(&stats.stats_seq).ok())
+                    .collect();
+                assert!(stats.test_stats_seq() <= STATS_SEQ_CEILING);
+                let opened = guards.len();
+                drop(guards);
+                let end = stats.test_stats_seq();
+                assert!(end <= STATS_SEQ_CEILING, "start {start} open {open}");
+                if start % 2 == 0 {
+                    assert_eq!(end % 2, 0, "start {start} open {open} opened {opened}");
+                    // Terminates: the sequence is even and no writer is open.
+                    let _ = stats.read_consistent();
+                }
+            }
+        }
+    }
+
+    /// Pre-release hardening: the all-or-nothing rollback is a checked
+    /// subtraction; a counter holding less than the delta is left unchanged
+    /// (never wrapped) and the refusal is reported.
+    #[test]
+    fn rollback_refuses_instead_of_wrapping() {
+        use portable_atomic::AtomicU128;
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+        let a = AtomicUsize::new(0);
+        assert!(!PriceLevelStatistics::rollback_usize(&a, 1));
+        assert_eq!(a.load(Ordering::Relaxed), 0);
+        let b = AtomicU64::new(4);
+        assert!(!PriceLevelStatistics::rollback_u64(&b, 5));
+        assert_eq!(b.load(Ordering::Relaxed), 4);
+        assert!(PriceLevelStatistics::rollback_u64(&b, 4));
+        assert_eq!(b.load(Ordering::Relaxed), 0);
+        let c = AtomicU128::new(7);
+        assert!(!PriceLevelStatistics::rollback_u128(&c, 8));
+        assert_eq!(c.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
+    fn single_writer_limits_are_unchanged() {
+        let stats = PriceLevelStatistics::new();
+        stats.test_seed_stats_seq(u64::MAX - 3);
+        let guard = WriteSeqGuard::try_new(&stats.stats_seq).expect("last section opens");
+        assert_eq!(stats.test_stats_seq(), u64::MAX - 2);
+        drop(guard);
+        assert_eq!(stats.test_stats_seq(), u64::MAX - 1);
+        assert!(WriteSeqGuard::try_new(&stats.stats_seq).is_err());
+        assert_eq!(stats.test_stats_seq(), u64::MAX - 1);
     }
 }
