@@ -1,6 +1,7 @@
 mod caller_boundaries;
 mod entry;
 mod level;
+mod order_math_failures;
 mod order_queue;
 mod result_failures;
 mod snapshot;
