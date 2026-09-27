@@ -1690,4 +1690,52 @@ mod from_str_specific_tests {
             }
         }
     }
+
+    /// Caller payload boundary (issue #172): a payload whose `Clone` panics
+    /// unwinds out of the pure generic utilities (`match_against` clones the
+    /// payload into the residual) without touching the source order, and a
+    /// panicking `map_extra_fields` closure unwinds out of a by-value call that
+    /// owns no library state. Test-only `catch_unwind`.
+    #[test]
+    fn test_panicking_payload_clone_and_map_closure_leave_source_intact() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        #[derive(Debug, PartialEq)]
+        struct PanicOnClone(u32);
+
+        impl Clone for PanicOnClone {
+            fn clone(&self) -> Self {
+                panic!("deliberately panicking payload Clone (test)");
+            }
+        }
+
+        let order = OrderType::Standard {
+            id: Id::from_u64(1),
+            price: Price::new(10000),
+            quantity: Quantity::new(10),
+            side: Side::Buy,
+            user_id: Hash32::zero(),
+            timestamp: TimestampMs::new(1),
+            time_in_force: TimeInForce::Gtc,
+            extra_fields: PanicOnClone(7),
+        };
+
+        // Partial fill: the residual needs a payload clone.
+        let unwound = catch_unwind(AssertUnwindSafe(|| order.match_against(4)));
+        assert!(unwound.is_err());
+        assert_eq!(order.visible_quantity(), Quantity::new(10));
+        assert_eq!(order.extra_fields(), &PanicOnClone(7));
+
+        // Full fill: no residual, so no payload clone and no panic.
+        let (consumed, residual, _, remaining) = order.match_against(10);
+        assert_eq!((consumed, remaining), (10, 0));
+        assert!(residual.is_none());
+
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            order.map_extra_fields(|_payload| -> u8 {
+                panic!("deliberately panicking map closure (test)")
+            })
+        }));
+        assert!(unwound.is_err());
+    }
 }

@@ -29,7 +29,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// locks. The queue as a whole is therefore **not** lock-free: admission,
 /// update, cancel and each match step take the target entry's shard write
 /// lock, and iteration takes shard read locks.
-#[derive(Debug)]
+///
+/// `Debug` materializes the orders first and only then writes to the caller's
+/// formatter, so no shard lock is held while caller-supplied formatting
+/// destination code runs (issue #172).
 pub struct OrderQueue {
     /// A map of order IDs to `(insertion sequence, order)` for O(1) lookups.
     /// The sequence travels with the value so it can be recovered on pop and
@@ -634,6 +637,11 @@ impl OrderQueue {
     }
 
     /// Iterate through current orders without materializing an intermediate vector.
+    ///
+    /// The iterator holds a `DashMap` shard read lock between `next()` calls,
+    /// so the caller's loop body must not mutate this queue (or its owning
+    /// level) from the same thread and should stay short; see
+    /// `PriceLevel::iter_orders` for the full caller obligation (issue #172).
     pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
         self.orders.iter().map(|entry| entry.value().1.clone())
     }
@@ -777,6 +785,23 @@ impl OrderQueue {
     #[inline]
     pub fn len(&self) -> usize {
         self.orders.len()
+    }
+}
+
+impl fmt::Debug for OrderQueue {
+    /// Materializes the resting orders (in insertion-sequence order) BEFORE
+    /// writing anything, so the formatter's destination — caller-supplied
+    /// `fmt::Write` code — never runs while a `DashMap` shard read lock is held
+    /// (issue #172). A derived impl would format while iterating the shards,
+    /// blocking writers to those shards for as long as the destination takes
+    /// and deadlocking a destination that re-enters this queue.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let orders = self.snapshot_by_seq();
+        let next_seq = self.next_seq.load(Ordering::Relaxed);
+        f.debug_struct("OrderQueue")
+            .field("orders", &orders)
+            .field("next_seq", &next_seq)
+            .finish_non_exhaustive()
     }
 }
 
