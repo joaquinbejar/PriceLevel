@@ -168,6 +168,24 @@ impl FallibleWriter {
         Self::default()
     }
 
+    /// A writer whose buffer is reserved fallibly for `capacity` bytes up
+    /// front (the same initial size `serde_json::to_string` uses, so short
+    /// payloads do not pay the small-growth steps).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::SerializationBuffer`]).
+    pub(crate) fn try_with_capacity(capacity: usize) -> Result<Self, PriceLevelError> {
+        let mut writer = Self::new();
+        try_reserve_exact_vec(
+            &mut writer.buf,
+            capacity,
+            CapacityResource::SerializationBuffer,
+        )?;
+        Ok(writer)
+    }
+
     /// The first reservation failure, if any write was refused.
     #[must_use]
     pub(crate) fn take_failure(&mut self) -> Option<PriceLevelError> {
@@ -181,29 +199,56 @@ impl FallibleWriter {
     }
 }
 
-impl std::io::Write for FallibleWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let needs_growth = self
-            .buf
-            .capacity()
-            .checked_sub(self.buf.len())
-            .is_none_or(|spare| bytes.len() > spare);
-        if needs_growth
-            && let Err(err) = try_reserve_vec(
-                &mut self.buf,
-                bytes.len(),
-                CapacityResource::SerializationBuffer,
-            )
-        {
-            if self.failure.is_none() {
-                self.failure = Some(err);
-            }
-            return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory));
+impl FallibleWriter {
+    /// Appends `bytes`, growing fallibly only when they do not fit the spare
+    /// capacity (the common case after the initial reservation is a length
+    /// compare and a copy).
+    #[inline]
+    fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let spare = self.buf.capacity().checked_sub(self.buf.len());
+        if spare.is_none_or(|spare| bytes.len() > spare) {
+            self.grow(bytes.len())?;
         }
         self.buf.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Cold growth path: reserve fallibly, or record the failure and return
+    /// an allocation-free `io::Error`.
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, additional: usize) -> std::io::Result<()> {
+        match try_reserve_vec(
+            &mut self.buf,
+            additional,
+            CapacityResource::SerializationBuffer,
+        ) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if self.failure.is_none() {
+                    self.failure = Some(err);
+                }
+                Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory))
+            }
+        }
+    }
+}
+
+impl std::io::Write for FallibleWriter {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.append(bytes)?;
         Ok(bytes.len())
     }
 
+    // `serde_json` writes through `write_all`; the default would loop over
+    // `write`. Appending is all-or-nothing, so one call suffices.
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.append(bytes)
+    }
+
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }

@@ -482,7 +482,7 @@ impl PriceLevelSnapshotPackage {
     /// grow, and [`PriceLevelError::SerializationError`] if the package cannot
     /// otherwise be encoded to a JSON string.
     pub fn to_json(&self) -> Result<String, PriceLevelError> {
-        let mut writer = FallibleWriter::new();
+        let mut writer = FallibleWriter::try_with_capacity(JSON_INITIAL_CAPACITY)?;
         if let Err(error) = serde_json::to_writer(&mut writer, self) {
             // A refused reservation is reported as its typed, allocation-free
             // error; `serde_json`'s own wrapper of the `io::Error` is dropped.
@@ -619,6 +619,9 @@ impl PriceLevelSnapshotPackage {
         Ok(checksum)
     }
 }
+
+/// Initial JSON output reservation, matching `serde_json::to_string`.
+const JSON_INITIAL_CAPACITY: usize = 128;
 
 /// An [`std::io::Write`] adapter feeding every byte into a SHA-256 hasher, so
 /// the checksum payload is never buffered (issue #164). Infallible: hashing
