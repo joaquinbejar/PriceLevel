@@ -577,11 +577,8 @@ impl MatchResult {
             .as_vec()
             .iter()
             .try_fold(0u64, |acc, trade| {
-                acc.checked_add(trade.quantity().as_u64()).ok_or_else(|| {
-                    PriceLevelError::InvalidOperation {
-                        message: "executed quantity overflow".to_string(),
-                    }
-                })
+                acc.checked_add(trade.quantity().as_u64())
+                    .ok_or_else(executed_quantity_overflow)
             })
             .map(Quantity::new)
     }
@@ -594,20 +591,11 @@ impl MatchResult {
     /// `price * quantity` product overflows `u128`, or if accumulating those
     /// products overflows `u128`.
     pub fn executed_value(&self) -> Result<u128, PriceLevelError> {
-        self.trades.as_vec().iter().try_fold(0u128, |acc, trade| {
-            let trade_value = trade
-                .price()
-                .as_u128()
-                .checked_mul(u128::from(trade.quantity().as_u64()))
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
-                    message: "executed value multiplication overflow".to_string(),
-                })?;
-
-            acc.checked_add(trade_value)
-                .ok_or_else(|| PriceLevelError::InvalidOperation {
-                    message: "executed value accumulation overflow".to_string(),
-                })
-        })
+        self.trades
+            .as_vec()
+            .iter()
+            .try_fold(0u128, |acc, trade| accumulate_value(acc, trade))
+            .map_err(ValueOverflow::into_error)
     }
 
     /// Calculate the average execution price
@@ -615,18 +603,57 @@ impl MatchResult {
     /// Returns `Ok(None)` when no quantity has been executed (no average price
     /// exists), avoiding a division by zero.
     ///
+    /// Quantity and value are accumulated in a single traversal of the trades
+    /// (#151), with the same checked arithmetic and the same error precedence
+    /// as calling [`Self::executed_quantity`] and then
+    /// [`Self::executed_value`]: a quantity overflow is reported first
+    /// whatever trade it occurs at, a zero executed quantity yields
+    /// `Ok(None)` before any value error can surface, and otherwise the first
+    /// value overflow in trade order is reported.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if the underlying
     /// [`Self::executed_quantity`] or [`Self::executed_value`] computation
     /// overflows.
     pub fn average_price(&self) -> Result<Option<f64>, PriceLevelError> {
+        let mut executed_qty = 0u64;
+        let mut executed_value = 0u128;
+        for trade in self.trades.as_vec() {
+            let quantity = trade.quantity().as_u64();
+            let step = executed_qty.checked_add(quantity).zip(
+                trade
+                    .price()
+                    .as_u128()
+                    .checked_mul(u128::from(quantity))
+                    .and_then(|trade_value| executed_value.checked_add(trade_value)),
+            );
+            match step {
+                Some((qty, value)) => {
+                    executed_qty = qty;
+                    executed_value = value;
+                }
+                // Any overflow: rerun the two separate scans, which define
+                // the error precedence (quantity first, `Ok(None)` for zero
+                // quantity, then the first value overflow in trade order).
+                None => return self.average_price_separate(),
+            }
+        }
+        if executed_qty == 0 {
+            return Ok(None);
+        }
+        Ok(Some(executed_value as f64 / executed_qty as f64))
+    }
+
+    /// Overflow path of [`Self::average_price`]: the quantity-then-value
+    /// sequence whose error behavior the fused traversal reproduces.
+    #[cold]
+    fn average_price_separate(&self) -> Result<Option<f64>, PriceLevelError> {
         let executed_qty = self.executed_quantity()?.as_u64();
         if executed_qty == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(self.executed_value()? as f64 / executed_qty as f64))
+            return Ok(None);
         }
+        Ok(Some(self.executed_value()? as f64 / executed_qty as f64))
     }
 
     /// Consumes `self`, returning it only if it satisfies the invariants a
@@ -771,6 +798,54 @@ impl MatchResult {
         }
 
         Ok(self)
+    }
+}
+
+/// Which step of the executed-value computation overflowed. Kept as a
+/// payload-free tag so the fused [`MatchResult::average_price`] traversal can
+/// defer the error (and its message allocation) until it knows the quantity
+/// sum succeeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueOverflow {
+    /// `price * quantity` of a single trade overflowed `u128`.
+    Multiplication,
+    /// Summing the per-trade values overflowed `u128`.
+    Accumulation,
+}
+
+impl ValueOverflow {
+    /// The public error for this overflow; messages are unchanged from the
+    /// pre-#151 accessors.
+    #[cold]
+    fn into_error(self) -> PriceLevelError {
+        let message = match self {
+            ValueOverflow::Multiplication => "executed value multiplication overflow",
+            ValueOverflow::Accumulation => "executed value accumulation overflow",
+        };
+        PriceLevelError::InvalidOperation {
+            message: message.to_string(),
+        }
+    }
+}
+
+/// Adds `trade`'s `price * quantity` to `acc` with checked arithmetic.
+#[inline]
+fn accumulate_value(acc: u128, trade: &Trade) -> Result<u128, ValueOverflow> {
+    let trade_value = trade
+        .price()
+        .as_u128()
+        .checked_mul(u128::from(trade.quantity().as_u64()))
+        .ok_or(ValueOverflow::Multiplication)?;
+    acc.checked_add(trade_value)
+        .ok_or(ValueOverflow::Accumulation)
+}
+
+/// The error [`MatchResult::executed_quantity`] reports when the trade
+/// quantities do not sum within `u64`.
+#[cold]
+fn executed_quantity_overflow() -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: "executed quantity overflow".to_string(),
     }
 }
 
