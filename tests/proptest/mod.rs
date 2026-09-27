@@ -19,5 +19,27 @@
 //! `tests/proptest/properties.proptest-regressions` and replayed on the next
 //! run.
 
+// This crate root is entirely test code (issue #173's Production Panic
+// Policy gate, `[lints.clippy]` in `Cargo.toml`, is package-wide and would
+// otherwise apply here too). `clippy.toml`'s `allow-*-in-tests` keys already
+// exempt `unwrap_used` / `expect_used` / `panic` / `indexing_slicing` for
+// items directly under `#[cfg(test)]` or `#[test]`, but this file's helper
+// functions (`build_level`, etc.) sit at plain module scope, not inside a
+// `mod tests {}` block, so clippy's per-item test detection does not reach
+// them — hence the explicit blanket allow. `string_slice` and
+// `arithmetic_side_effects` have no "in tests" toggle at all. None of this
+// reaches `src/`.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 mod properties;
 mod strategies;

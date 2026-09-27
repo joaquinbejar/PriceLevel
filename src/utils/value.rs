@@ -57,6 +57,14 @@ impl Price {
             });
         }
 
+        // Guarded above: `value` is finite, non-negative and `rounded <
+        // 2^128`, so this cast neither truncates nor changes sign — the
+        // range check right above exists BECAUSE the raw `as` cast would
+        // otherwise silently saturate on out-of-range input instead of
+        // truncating/wrapping in the usual two's-complement sense; clippy
+        // cannot see that the preceding branch already rejected every input
+        // it warns about (issue #173).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Ok(Self(rounded as u128))
     }
 
@@ -145,6 +153,14 @@ impl Quantity {
             });
         }
 
+        // Guarded above: `value` is finite, non-negative and `rounded <
+        // 2^64`, so this cast neither truncates nor changes sign — the range
+        // check right above exists BECAUSE the raw `as` cast would otherwise
+        // silently saturate on out-of-range input instead of
+        // truncating/wrapping in the usual two's-complement sense; clippy
+        // cannot see that the preceding branch already rejected every input
+        // it warns about (issue #173).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Ok(Self(rounded as u64))
     }
 

@@ -12,6 +12,12 @@
 //! real `match_order` against the prediction.
 
 #[cfg(test)]
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::panic,
+    clippy::panic_in_result_fn
+)]
 mod tests {
     use crate::UuidGenerator;
     use crate::errors::{CapacityResource, PriceLevelError};

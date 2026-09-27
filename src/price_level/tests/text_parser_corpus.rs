@@ -14,6 +14,18 @@
 //! `PRICELEVEL_REGEN_PARSER_CORPUS=1 cargo test text_parser_corpus`.
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): the corpus
+// mutator does raw byte-offset arithmetic, a narrowing hash-to-hex cast and
+// UTF-8-boundary string slicing on generated ASCII-safe positions, all
+// permitted inside `mod tests` per the Testing section of
+// `rules/global_rules.md`. `allow-indexing-slicing-in-tests`
+// (`clippy.toml`) does not cover `clippy::string_slice`, hence the explicit
+// allow here. Production code outside this module keeps the full deny list.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::string_slice
+)]
 mod tests {
     use crate::execution::{MatchResult, Trade, TradeList};
     use crate::orders::{Hash32, OrderType, OrderUpdate, PegReferenceType, Side, TimeInForce};

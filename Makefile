@@ -32,14 +32,37 @@ fmt:
 fmt-check:
 	cargo +stable fmt --check
 
-# Run Clippy for linting
+# Run Clippy for linting, plus the Production Panic Policy syntax gate
+# (issue #173): clippy's `[lints.clippy]` restriction lints (Cargo.toml) and
+# this crate's `clippy.toml` cover unwrap/expect/panic/unreachable/todo/
+# unimplemented/indexing/string-slicing/narrowing-casts/raw-arithmetic in
+# production. `lint-panic` below covers what clippy has NO lint for at all
+# (the `assert!`/`debug_assert!` family) and what clippy's own
+# `#[cfg(test)]` heuristic can wrongly exempt (a standalone `#[cfg(test)]`
+# production helper that is not a `mod tests { ... }` block), plus
+# `saturating_*`/`wrapping_*` on production state.
 .PHONY: lint
-lint:
+lint: lint-panic
 	cargo clippy --all-targets --all-features -- -D warnings
 
+# Production Panic Policy syntax gate (issue #173): scripts/check_panic_policy.py.
+# Runs the scanner's own fixture self-test first — a broken scanner must
+# never silently report a clean src/ — then scans src/ for real.
+.PHONY: lint-panic
+lint-panic:
+	python3 scripts/check_panic_policy.py --self-test
+	python3 scripts/check_panic_policy.py
+
 .PHONY: lint-fix
-lint-fix: 
-	cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged -- -D warnings
+lint-fix:
+	# `-A clippy::manual_saturating_arithmetic`: `cargo clippy --fix` has
+	# rewritten checked arithmetic into `saturating_*` before (issue #173,
+	# reported against #178) — this crate never wants that rewrite auto-
+	# applied. `lint-panic` re-scans src/ for saturating_*/wrapping_*
+	# afterward as an independent, non-autofix-dependent check.
+	cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged \
+		-- -D warnings -A clippy::manual_saturating_arithmetic
+	$(MAKE) lint-panic
 
 # Clean the project
 .PHONY: clean
@@ -60,7 +83,14 @@ fix:
 	cargo fix --allow-staged --allow-dirty
 
 .PHONY: pre-push
-pre-push: fix fmt lint-fix test readme doc
+# Ordering (issue #173, review comment on #178): `lint-fix` runs BEFORE
+# `fmt`, not after. `cargo clippy --fix` can rewrite code (including, before
+# `-A clippy::manual_saturating_arithmetic` above, into `saturating_*`)
+# without reformatting it, so running `fmt` first and `lint-fix` last used to
+# leave the tree unformatted after a "clean" pre-push. `lint-panic` runs
+# after `fmt` since it is a plain text scan unaffected by formatting, and
+# before `test` so a Production Panic Policy regression fails fast.
+pre-push: fix lint-fix fmt lint-panic test readme doc
 
 .PHONY: doc
 doc:

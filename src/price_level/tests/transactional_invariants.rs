@@ -16,6 +16,12 @@
 //! API.
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): raw arithmetic and
+// a `u64`-to-`usize` narrowing cast on a test round-count constant are
+// permitted inside `mod tests` per the Testing section of
+// `rules/global_rules.md`. Production code outside this module keeps the
+// full deny list.
+#[allow(clippy::arithmetic_side_effects, clippy::cast_possible_truncation)]
 mod tests {
     use crate::UuidGenerator;
     use crate::errors::PriceLevelError;

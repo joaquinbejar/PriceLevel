@@ -189,7 +189,7 @@ mod tests_hash32_issue_201 {
 
     #[test]
     fn test_hash32_deserialize_bytes_and_char_match_pre_201_string_path() {
-        use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+        use crate::utils::encode::serde_parity_tests::assert_byte_and_char_parity;
         let valid = reference_hex(&Hash32::new([0xa7; 32]));
         let plus = with_first_replaced(&valid, "+");
         for text in [

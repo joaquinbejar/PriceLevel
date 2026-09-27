@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v2
-        
+      - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y make libfontconfig1-dev pkg-config
@@ -33,6 +33,15 @@ jobs:
 
       - name: Install make
         run: sudo apt-get install make
+
+      # Production Panic Policy syntax gate (issue #173): assert!/
+      # debug_assert!/panic-family forms clippy has no lint for, plus the
+      # standalone `#[cfg(test)]` production-helper shape clippy's own
+      # `allow-*-in-tests` (clippy.toml) can wrongly exempt. Also a
+      # prerequisite of `make lint` below; run explicitly first for a
+      # clearly separate, named failure in the CI log.
+      - name: Production Panic Policy gate
+        run: make lint-panic
 
       - name: Lint
         run: make lint

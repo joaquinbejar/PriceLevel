@@ -1,4 +1,14 @@
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): raw arithmetic and
+// a narrowing / sign-changing `f64`-to-`u128` cast on a test-computed average
+// are permitted inside `mod tests` per the Testing section of
+// `rules/global_rules.md`. Production code outside this module keeps the
+// full deny list.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 mod tests {
     use crate::execution::list::TradeList;
     use crate::execution::match_result::{MatchOutcome, MatchResult};

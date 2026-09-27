@@ -34,6 +34,51 @@ include = [
 # quiet under `-D warnings` for normal builds.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
+# Production Panic Policy gate (issue #173). This table is package-wide: it
+# applies to every target of THIS package (`src/lib.rs`, the `tests`,
+# `proptest`, `loom_*` integration-test binaries, and the `benches` /
+# `latency` bench binaries), not to the separate `examples` workspace member.
+#
+# `clippy.toml` (`allow-unwrap-in-tests` / `allow-expect-in-tests` /
+# `allow-panic-in-tests` / `allow-indexing-slicing-in-tests`) narrows
+# `unwrap_used`, `expect_used`, `panic`, `indexing_slicing` and `string_slice`
+# so clippy's own `#[cfg(test)]` / `#[test]` detection exempts real test items
+# (co-located `mod tests { ... }` blocks under `src/<module>/tests/`, and the
+# `tests/unit`, `tests/proptest`, `tests/loom_*` integration targets, which
+# compile with `cfg(test)` as a whole). It does NOT exempt a standalone
+# `#[cfg(test)] fn` production helper that lives outside a `mod tests {}`
+# block — clippy's heuristic is per-item, not per-block, so those keep the
+# deny. `scripts/check_panic_policy.py` is the second layer that catches what
+# clippy has no lint for at all (`assert!`/`debug_assert!` families) and
+# re-checks the forms clippy's `#[cfg(test)]` heuristic can still wrongly
+# wave through on a standalone helper (see the script header).
+#
+# Bench (`benches/mod.rs`, `benches/latency/main.rs`) and integration-test
+# crate roots (`tests/unit/mod.rs`, `tests/proptest/mod.rs`,
+# `tests/loom/*.rs`) carry their own crate-level `#![allow(...)]` for the
+# lints without a `clippy.toml` "in tests" toggle (`arithmetic_side_effects`,
+# `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap`,
+# `manual_assert`, `panic_in_result_fn`, `get_unwrap`, `exit`, `unreachable`,
+# `todo`, `unimplemented`) — see each file's header comment. The policy is
+# production-only; it deliberately does not restrict test or bench code.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+manual_assert = "deny"
+panic_in_result_fn = "deny"
+get_unwrap = "deny"
+exit = "deny"
+
 [dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

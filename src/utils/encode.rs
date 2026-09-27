@@ -65,7 +65,7 @@ pub(crate) fn encode_hash32_hex<'b>(
 /// review): drives every string-like deserializer entry point and compares
 /// each outcome with the pre-#201 `String::deserialize` + `FromStr` path.
 #[cfg(test)]
-pub(crate) mod serde_parity {
+pub(crate) mod serde_parity_tests {
     use serde::Deserialize;
     use serde::de::value::{
         BorrowedBytesDeserializer, BytesDeserializer, CharDeserializer, Error as ValueError,

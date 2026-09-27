@@ -413,6 +413,11 @@ impl Id {
 }
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): the deterministic
+// entropy-source test doubles below do raw counter arithmetic, permitted
+// inside `mod tests` per the Testing section of `rules/global_rules.md`.
+// Production code outside this module keeps the full deny list.
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use super::Id;
     use crate::Side;
@@ -1022,7 +1027,7 @@ mod tests {
 
         #[test]
         fn test_deserialize_bytes_and_char_match_pre_201_string_path() {
-            use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+            use crate::utils::encode::serde_parity_tests::assert_byte_and_char_parity;
             let texts = [
                 reference_text(Id::sequential(1)),
                 reference_text(Id::sequential(u64::MAX)),

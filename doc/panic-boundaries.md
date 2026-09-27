@@ -207,6 +207,91 @@ does not promise recovery from it. The derived `Clone` of
 `PriceLevelSnapshot` / `PriceLevelSnapshotPackage` is kept for convenience
 and aborts the same way; use their `try_clone`.
 
+## Automated enforcement scope and its limits (issue #173)
+
+The Production Panic Policy gate (`[lints.clippy]` in `Cargo.toml`,
+`clippy.toml`, and `scripts/check_panic_policy.py` via `make lint-panic`,
+wired into `make lint` / `make pre-push` and CI's `lint.yml`) is syntax-level
+enforcement of the "no explicit panic form in crate-owned production code"
+half of the policy. It is not, and does not claim to be, a proof that any
+code path here — let alone the caller-supplied code this document is about —
+never panics:
+
+- It denies `.unwrap()` / `.expect()` / `.unwrap_err()` / `.expect_err()` /
+  `panic!` / `unreachable!` / `todo!` / `unimplemented!` / indexing /
+  string-slicing / narrowing-or-sign-changing casts / raw arithmetic
+  (clippy), and `assert!` / `assert_eq!` / `assert_ne!` / `debug_assert!` /
+  `debug_assert_eq!` / `debug_assert_ne!` / `saturating_*` / `wrapping_*`
+  (the script — clippy has no lint for the assert family at all). Both tools
+  exempt real test code and re-check a standalone `#[cfg(test)]` production
+  helper (this crate's `test_seam` modules, hook installers/firers) that
+  clippy's own `#[cfg(test)]` heuristic would otherwise wrongly wave
+  through.
+- It does **not** see through a documented panic condition on a dependency
+  call, an atomic-ordering assumption, an iterator/time arithmetic edge
+  case, or a caller-supplied `Clone` / `Drop` / formatter / callback — every
+  boundary in the inventory above. Those stay a manual review question:
+  "Review collection operations, atomic orderings, time/iterator
+  arithmetic, serialization and dependency calls for their documented panic
+  conditions... every reachable operation... must be reviewed"
+  (`rules/global_rules.md`'s Production Panic Policy) is retained as a
+  checklist item, not replaced by a green CI run.
+- It does not run over `benches/`, `examples/`, or the `tests` integration
+  targets — those carry their own crate-root `#![allow(...)]` (see each
+  file's header comment) because they are not production code, not because
+  they are exempt from review as demos / harnesses in their own right.
+- **Indexing/slicing inside a `#[cfg(test)]` test seam (PR #207 review).**
+  `clippy.toml`'s `allow-indexing-slicing-in-tests` exempts `clippy::
+  indexing_slicing` for ANY `#[cfg(test)]` item — the same coarseness that
+  makes `scripts/check_panic_policy.py` re-check unwrap/expect/panic/
+  saturating on a standalone production-adjacent test seam. Two ways to
+  close this were evaluated: (a) drop the clippy.toml key and add an
+  explicit `#[allow(clippy::indexing_slicing, clippy::string_slice)]` to
+  every co-located `mod tests { ... }` block that indexes or slices, or (b)
+  add a syntax-aware indexing check to the script, scoped the same way as
+  its other checks. (a) was rejected: nearly every one of the ~30
+  co-located test files indexes or slices somewhere, so dropping the
+  toggle would require touching most of them for no behavioural change.
+  (b) is what shipped: `INDEXING_PATTERN` in the script matches an
+  identifier, or a closing `)` / `]`, immediately followed by `[` (so
+  `v[1]` and `matrix[0][1]` count, but a type `&[u8]` / `[u8; 4]` or a
+  literal `[1, 2, 3]` — never preceded by an identifier or closing
+  delimiter — do not), excluding a short keyword denylist
+  (`return`/`yield`/`break`/`in`/...) that can precede an array literal
+  instead of indexing. It runs ONLY inside the production-adjacent
+  `#[cfg(test)]` spans `check_panic_policy.py` already tracks (never over
+  ordinary production code, where clippy's own AST-accurate lint already
+  applies). Known limitation: it does not follow a field access or a more
+  complex expression before `[` (`self.buf[i]`, `(a + b)[i]`) — a false
+  negative, not a false positive, and it is one heuristic layer, not a
+  parser, same as the rest of the script. The keyword denylist also
+  excludes `mut` (`&mut [u8]` parameter/return types, `&mut [1u8, 2]`
+  borrowed mutable array literals) and `as` (`x as [T; N]`) — both looked
+  like an identifier directly before `[`, the same shape as real indexing,
+  until a second review pass (PR #207) found the false positive.
+- **Item-scope terminator with an array type in the signature (PR #207
+  review).** The item-scope scan that locates an `fn`/`impl`/`struct`/
+  `type`/`thread_local!` item's extent originally stopped at the first
+  literal `{` or `;`, full stop. An array-type parameter or return type
+  (`fn check(v: &[u8; 2]) -> u8`) has a `;` INSIDE `[u8; 2]` that is not
+  the signature's terminator; the naive scan stopped there, computed a
+  scope ending mid-signature, and the function's real body — with its
+  real indexing — fell outside `cfg_test_scope` entirely, escaping the
+  indexing check. `find_item_terminator` now tracks `(`/`[` nesting depth
+  and only accepts a `{`/`;` at depth 0, so a `;` nested inside a type is
+  correctly skipped. `<...>` generics are deliberately not depth-tracked
+  (ambiguous with comparison operators outside a signature); a `{`/`;`
+  nested only inside one is a residual, documented limitation.
+- A narrow, reviewed exception is still an exception, not a fix: the
+  `f64`-to-integer boundary casts in `src/utils/value.rs` carry a
+  function-scoped `#[allow(clippy::cast_possible_truncation,
+  clippy::cast_sign_loss)]` with a comment naming the preceding range check
+  that makes the cast exact; `src/utils/uuid.rs`'s `DECIMAL_RADIX` carries
+  the script's own `panic-policy-allow-saturating` marker for the same
+  reason (a provably-exact, compile-time-only value). Every other finding
+  the gate would otherwise raise on `main` at the time of #173 was fixed,
+  not allowed.
+
 ## Tests
 
 `src/price_level/tests/fallible_growth.rs` injects reservation refusals
@@ -218,3 +303,16 @@ and checks the typed error with queue, counters, caller buffers and the
 `src/orders/tests/order_type.rs` use deliberately panicking subscribers,
 formatting destinations, payload `Clone` impls and `map_extra_fields`
 closures, with test-only `catch_unwind`, to pin the behaviour above.
+`scripts/check_panic_policy.py --self-test` (`scripts/panic_policy_fixtures/`)
+pins the gate's own scanner behaviour: which forms fail, which test shapes
+pass, and that comments / string literals mentioning a forbidden form in
+prose are never mistaken for code. Each macro-delimiter form
+(`(...)`/`{...}`/`[...]`, and whitespace before `!`) has its own
+single-violation fixture, so one caught form cannot mask another that was
+missed; separate fixtures also cover a char literal containing `"` or `{`/
+`}`, escaped and Unicode-escaped char/byte-char literals, lifetimes/labels,
+and raw strings, each immediately followed by a real violation the scanner
+must still catch. The `#[cfg(test)]`-scoped indexing check has its own
+fail/pass pairs, including the exact `fn check(v: &[u8]) -> u8 { v[1] }`
+shape and a `mod test_seam { ... }` variant, against array-type/array-
+literal and keyword-prefixed-literal shapes that must not be flagged.
