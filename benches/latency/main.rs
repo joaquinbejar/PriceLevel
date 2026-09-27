@@ -72,6 +72,12 @@ fn main() {
         return;
     }
     println!("== Allocation measurements (separate pass, not timed) ==");
+    // Element sizes behind the result-buffer byte counts (issue #148).
+    println!(
+        "element sizes: Trade={} bytes, Id={} bytes",
+        std::mem::size_of::<pricelevel::Trade>(),
+        std::mem::size_of::<pricelevel::Id>()
+    );
     let alloc_reports = alloc_measurements::run_all(&config);
     for alloc_report in &alloc_reports {
         println!("{alloc_report}");

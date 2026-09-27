@@ -7,6 +7,7 @@ pub mod match_orders;
 pub mod match_result_analytics;
 pub mod mixed_operations;
 pub mod newtypes;
+pub mod result_capacity;
 pub mod serialization;
 pub mod snapshot_recovery;
 pub mod special_orders;
@@ -28,4 +29,5 @@ pub fn register_benchmarks(c: &mut criterion::Criterion) {
     lifecycle::register_benchmarks(c);
     trade_ids::register_benchmarks(c);
     match_result_analytics::register_benchmarks(c);
+    result_capacity::register_benchmarks(c);
 }

@@ -212,3 +212,27 @@ pub fn seeded_reserve_level(
     }
     level
 }
+
+/// Builds a `depth`-deep sell level whose FIFO front (id `0`) is one huge
+/// standard maker and whose remaining `depth - 1` makers hold 10 each, so
+/// every small taker partially fills that same front maker: one trade, no
+/// fully consumed maker (issue #148's "repeated partial fills of one large
+/// maker on a deep level").
+#[must_use]
+pub fn deep_level_with_large_front(depth: u64) -> PriceLevel {
+    let level = PriceLevel::new(LEVEL_PRICE);
+    level
+        .add_order(standard_order(
+            0,
+            Side::Sell,
+            1_000_000_000_000,
+            TimeInForce::Gtc,
+        ))
+        .expect("fixture seeding: the large front maker must be admitted");
+    for i in 1..depth {
+        level
+            .add_order(standard_order(i, Side::Sell, 10, TimeInForce::Gtc))
+            .expect("fixture seeding: add_order must succeed for a fresh sequential id");
+    }
+    level
+}
