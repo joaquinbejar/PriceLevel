@@ -2,6 +2,7 @@ mod caller_boundaries;
 mod entry;
 mod level;
 mod order_queue;
+mod result_failures;
 mod snapshot;
 mod statistics;
 mod text_parser_corpus;
