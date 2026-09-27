@@ -2,16 +2,21 @@
 //!
 //! `OrderQueue::match_front` restarts its front scan from the lowest sequence
 //! on every step and skips the sequences the current sweep has parked. With a
-//! live prefix of `S` parked makers followed by `K` fills that would cost
-//! about `S * K` extra visits. These tests pin down why `S <= 1` for every
-//! state reachable through the public API, so the cost is at most one extra
-//! visit per step:
+//! prefix of `S` parked index keys followed by `K` fills that costs about
+//! `S * K` extra visits. What these tests pin down:
 //!
 //! - the no-progress `SetAside` guard can never fire: for a positive taker
 //!   remainder `match_against` always consumes, draws hidden, or removes the
 //!   maker, for every `OrderType` variant and every field value;
 //! - the self-trade skip parks only a maker whose id equals the taker's, and
-//!   the id-keyed storage holds at most one resting order per id;
+//!   the id-keyed storage holds at most one resting order per id, so at most
+//!   one parked key is LIVE;
+//! - parked keys can still go STALE: a cancel removes the map entry before the
+//!   index key, and a readmission of the same id in that gap is parked again
+//!   by the same sweep. Overlapping cancels can leave several stale parked
+//!   keys. `match_front` drops a stale parked key on first encounter, so each
+//!   costs one visit in total and the steady cost stays at one extra visit per
+//!   step;
 //! - every other `SetAside` reason (`Failed`, `IdsExhausted`,
 //!   `SequenceExhausted`, `Abort`) stops the sweep, so nothing is rescanned.
 
@@ -23,11 +28,14 @@ mod tests {
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side, TimeInForce};
     use crate::price_level::level::PriceLevel;
     use crate::price_level::order_queue::{
-        FrontAction, FrontOutcome, OrderQueue, UpdateDecision, test_take_front_scan_visits,
+        FrontAction, FrontOutcome, OrderQueue, UpdateDecision, set_remove_gap_hook,
+        test_take_front_scan_visits,
     };
     use crate::utils::{Price, Quantity, TimestampMs};
+    use std::cell::{Cell, RefCell};
     use std::collections::HashSet;
     use std::num::NonZeroU64;
+    use std::rc::Rc;
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -297,5 +305,109 @@ mod tests {
         assert_eq!(fills as u64, K / 2);
         // One visit per fill, then the tail maker is parked, then `Empty`.
         assert_eq!(test_take_front_scan_visits(), K / 2 + 2);
+    }
+
+    /// One sweep step with the self-trade rule: park the taker id, fully
+    /// consume anything else. `Some(true)` for a fill, `Some(false)` for a
+    /// park, `None` when the scan found nothing.
+    fn self_skip_step(
+        queue: &OrderQueue,
+        set_aside: &RefCell<HashSet<u64>>,
+        taker: Id,
+    ) -> Option<bool> {
+        let mut set_aside = set_aside.borrow_mut();
+        match queue.match_front(&mut set_aside, |_seq, order| {
+            if order.id() == taker {
+                (FrontAction::SetAside, false)
+            } else {
+                (FrontAction::Remove, true)
+            }
+        }) {
+            FrontOutcome::Empty => None,
+            FrontOutcome::Matched { result } => Some(result),
+        }
+    }
+
+    #[test]
+    fn overlapping_cancel_gaps_leave_stale_parked_keys_that_are_visited_once() {
+        // Review of #155: the parked-prefix bound is not "one live id". Schedule
+        // (all on one thread, driven by the cancel-gap seam, no sleeps):
+        //
+        // 1. The sweep parks the taker id `T` at s0.
+        // 2. A cancel of `T` removes the map entry and pauses before removing
+        //    index key s0 (the seam fires in that gap).
+        // 3. In the gap `T` is readmitted at a fresh tail sequence and the SAME
+        //    sweep (same scratch set) parks it again.
+        // 4. Steps 2-3 nest `D` times, so `D` stale parked keys (s0 .. s(D-1))
+        //    precede one live parked key, all ahead of `K` makers admitted
+        //    afterwards.
+        //
+        // Before the fix the front scan filtered `set_aside` before any stale
+        // check, so every scan re-visited every stale parked key: the parking
+        // steps cost `1 + D(D+3)/2` visits and each of the `K` fills `D + 2`,
+        // 399 in total for D = 4, K = 64. `match_front` now drops a parked key
+        // whose map entry is gone or carries another sequence on first
+        // encounter, so each parking step visits one stale key and the new
+        // one (`1 + 2D`) and each fill visits only the live parked key and the
+        // maker (`2K`): 137 in total.
+        const D: u64 = 4;
+        const K: u64 = 64;
+        let taker = Id::from_u64(10_000);
+        let queue = Rc::new(OrderQueue::new());
+        let set_aside = Rc::new(RefCell::new(HashSet::new()));
+        let depth = Rc::new(Cell::new(0u64));
+        let fills = Rc::new(Cell::new(0u64));
+        let visits = Rc::new(Cell::new((0u64, 0u64)));
+
+        assert!(queue.try_push(Arc::new(standard(10_000, 5))).is_ok());
+        let _ = test_take_front_scan_visits();
+        assert_eq!(self_skip_step(&queue, &set_aside, taker), Some(false));
+
+        let hook = {
+            let queue = Rc::clone(&queue);
+            let set_aside = Rc::clone(&set_aside);
+            let depth = Rc::clone(&depth);
+            let fills = Rc::clone(&fills);
+            let visits = Rc::clone(&visits);
+            Rc::new(move |id: Id| {
+                if id != taker {
+                    return;
+                }
+                let level = depth.get() + 1;
+                depth.set(level);
+                // Readmit the cancelled id and let the same sweep park it.
+                assert!(queue.try_push(Arc::new(standard(10_000, 5))).is_ok());
+                assert_eq!(self_skip_step(&queue, &set_aside, taker), Some(false));
+                if level < D {
+                    // Another overlapping cancel pauses in its own gap.
+                    assert!(queue.remove(taker).is_some());
+                    return;
+                }
+                // Innermost gap: D stale parked keys + one live parked key.
+                for id in 1..=K {
+                    assert!(queue.try_push(Arc::new(standard(id, 1))).is_ok());
+                }
+                let parking = test_take_front_scan_visits();
+                for _ in 0..K {
+                    assert_eq!(self_skip_step(&queue, &set_aside, taker), Some(true));
+                    fills.set(fills.get() + 1);
+                }
+                visits.set((parking, test_take_front_scan_visits()));
+            }) as Rc<dyn Fn(Id)>
+        };
+        let guard = set_remove_gap_hook(hook);
+        assert!(queue.remove(taker).is_some());
+        drop(guard);
+
+        assert_eq!(depth.get(), D);
+        assert_eq!(fills.get(), K);
+        let (parking, filling) = visits.get();
+        assert_eq!(parking, 1 + 2 * D, "each parking step visits one stale key");
+        assert_eq!(filling, 2 * K, "no stale key survives into the fills");
+        // Every cancel finished; only the last readmission of `T` rests, and
+        // the map and index agree.
+        assert_eq!(queue.len(), 1);
+        assert!(queue.find(taker).is_some());
+        assert!(queue.debug_map_index_consistent());
     }
 }

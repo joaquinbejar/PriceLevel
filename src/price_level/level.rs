@@ -2025,9 +2025,11 @@ impl PriceLevel {
         // remainder `match_against` always consumes, draws hidden, or removes
         // the maker (pinned by `tests/parked_prefix.rs`, issue #155). It is
         // defense-in-depth against a future zero-progress shape. The only
-        // parking that fires today is the self-trade skip, and id-keyed storage
-        // limits it to one live entry, so re-scanning the parked prefix from
-        // the front costs at most one extra visit per step (see BENCH.md).
+        // parking that fires today is the self-trade skip. Id-keyed storage
+        // limits it to one LIVE parked entry; stale parked keys left by a
+        // cancel racing a readmission are dropped by `match_front` on first
+        // encounter, so re-scanning from the front costs at most one extra
+        // visit per step plus one per stale key (see BENCH.md).
         let mut set_aside: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
         // Per-step bookkeeping carried out of the locked decision closure. The

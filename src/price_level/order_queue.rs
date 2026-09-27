@@ -39,6 +39,48 @@ pub(crate) fn test_take_front_scan_visits() -> u64 {
     FRONT_SCAN_VISITS.with(|visits| visits.replace(0))
 }
 
+// Deterministic race seam for the cancel gap (issue #155). `remove` fires
+// this hook on the calling thread after the map entry is gone (shard lock
+// released) and before the index key is removed, so a test can run a
+// readmission and match steps in exactly that window without sleeps. The hook
+// is an `Rc` cloned out of the slot before it runs, so a hook may call
+// `remove` again and nest overlapping cancels. Test builds only.
+#[cfg(test)]
+type RemoveGapHook = std::rc::Rc<dyn Fn(Id)>;
+
+#[cfg(test)]
+thread_local! {
+    static REMOVE_GAP_HOOK: std::cell::RefCell<Option<RemoveGapHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install the cancel-gap hook for this thread (test seam, issue #155).
+/// Returns a guard that clears it on drop.
+#[cfg(test)]
+pub(crate) fn set_remove_gap_hook(hook: RemoveGapHook) -> RemoveGapHookGuard {
+    REMOVE_GAP_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    RemoveGapHookGuard
+}
+
+/// Clears the cancel-gap hook when dropped (test seam, issue #155).
+#[cfg(test)]
+pub(crate) struct RemoveGapHookGuard;
+
+#[cfg(test)]
+impl Drop for RemoveGapHookGuard {
+    fn drop(&mut self) {
+        REMOVE_GAP_HOOK.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+fn fire_remove_gap_hook(order_id: Id) {
+    let hook = REMOVE_GAP_HOOK.with(|slot| slot.borrow().clone());
+    if let Some(hook) = hook {
+        hook(order_id);
+    }
+}
+
 /// A thread-safe queue of orders with specialized operations.
 ///
 /// Time priority (price-time / FIFO within the level) is maintained by an
@@ -434,11 +476,14 @@ impl OrderQueue {
     /// never double-count with the cancel.
     ///
     /// `set_aside` carries the insertion sequences of makers the current sweep
-    /// has parked (the no-progress guard); they are skipped when choosing the
-    /// front so the sweep does not re-pick them. A `SetAside` action inserts the
-    /// chosen seq into it. It is a `HashSet` so membership during the front scan
-    /// is O(1) rather than the O(n) `Vec::contains` it replaced; it is only ever
-    /// inserted into and probed, never iterated for ordering.
+    /// has parked (the no-progress guard and the self-trade skip); they are
+    /// skipped when choosing the front so the sweep does not re-pick them. A
+    /// `SetAside` action inserts the chosen seq into it. A parked key whose id
+    /// no longer rests under that sequence (cancelled, readmitted or demoted
+    /// since it was parked) is removed from the index and from `set_aside` the
+    /// first time the scan meets it (issue #155). It is a `HashSet` so
+    /// membership during the front scan is O(1); it is only ever inserted
+    /// into, probed and pruned, never iterated for ordering.
     ///
     /// `decide` is the pure match decision (e.g. [`OrderType::match_against`]
     /// plus trade bookkeeping). It runs while the per-entry lock is held, so it
@@ -468,16 +513,39 @@ impl OrderQueue {
             // Find the lowest-sequence index entry not already set aside this
             // sweep. `index.iter()` yields entries in ascending sequence order
             // (front = oldest = highest time priority).
-            let Some((seq, order_id)) = self
-                .index
-                .iter()
-                .find(|e| {
-                    #[cfg(test)]
-                    record_front_scan_visit();
-                    !set_aside.contains(e.key())
-                })
-                .map(|e| (*e.key(), *e.value()))
-            else {
+            //
+            // A parked key can go stale while it stays in `set_aside`: a cancel
+            // removes the map entry and only then the index key, and a
+            // readmission or demotion of the same id moves it to a fresh
+            // sequence (issue #155). Skipping parked keys on the hash probe
+            // alone would re-visit such a stale key on every later step of the
+            // sweep. So a parked key is checked against the map on each visit
+            // and, if its id no longer rests there under this sequence, the key
+            // is dropped for good. Sequences are never reused, so a key whose
+            // map entry is gone or carries another sequence can never become
+            // live again; removing it is the same self-heal as the `Vacant` and
+            // stale-front (#119) arms below. The read lock is taken only for
+            // parked keys, never on the common path with an empty `set_aside`,
+            // and is released before the next entry is inspected.
+            let mut front = None;
+            for entry in self.index.iter() {
+                #[cfg(test)]
+                record_front_scan_visit();
+                let seq = *entry.key();
+                if !set_aside.contains(&seq) {
+                    front = Some((seq, *entry.value()));
+                    break;
+                }
+                let live = self
+                    .orders
+                    .get(entry.value())
+                    .is_some_and(|slot| slot.value().0 == seq);
+                if !live {
+                    self.index.remove(&seq);
+                    set_aside.remove(&seq);
+                }
+            }
+            let Some((seq, order_id)) = front else {
                 return FrontOutcome::Empty;
             };
 
@@ -744,6 +812,11 @@ impl OrderQueue {
     #[must_use]
     pub fn remove(&self, order_id: Id) -> Option<Arc<OrderType<()>>> {
         let (_, (seq, order)) = self.orders.remove(&order_id)?;
+        // Race seam (issue #155): the gap between the map removal (which has
+        // released the shard lock) and the index removal, where a concurrent
+        // readmission and match step can run.
+        #[cfg(test)]
+        fire_remove_gap_hook(order_id);
         self.index.remove(&seq);
         Some(order)
     }
