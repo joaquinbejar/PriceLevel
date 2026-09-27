@@ -11,6 +11,7 @@
 //! earlier version of this harness silently measured the degraded/error
 //! path instead.
 
+use crate::alloc_measurements::Retention;
 use crate::config::Config;
 use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS, LEVEL_PRICE, TAKER_ID_BASE};
 use crate::report::ScenarioReport;
@@ -28,6 +29,9 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
         many_fill_sweep(config),
         iceberg_replenish(config),
         reserve_replenish(config),
+        single_maker_partial(config, Retention::None),
+        single_maker_partial(config, Retention::Admission),
+        single_maker_partial(config, Retention::View),
     ]
 }
 
@@ -513,5 +517,99 @@ fn reserve_replenish(config: &Config) -> ScenarioReport {
         "PriceLevel::match_order — consumes reserve visible tranche, triggers replenish",
         durations_ns,
         format!("{filled}/{} Filled", config.samples),
+    )
+}
+
+/// Repeated 10-unit fills of one huge standard maker resting alone on the
+/// level (issue #147), with and without an externally retained `Arc` of the
+/// maker (see [`Retention`]). For `Retention::View` the untimed setup takes a
+/// fresh `iter_orders().next()` handle before every timed call and drops the
+/// previous one, so every fill sees a shared maker; the held handle's drop
+/// is never timed.
+fn single_maker_partial(config: &Config, retention: Retention) -> ScenarioReport {
+    const TAKER_QTY: u64 = 10;
+    let name = match retention {
+        Retention::None => "single_partial",
+        Retention::Admission => "single_partial_adm",
+        Retention::View => "single_partial_view",
+    };
+    let level = PriceLevel::new(LEVEL_PRICE);
+    let admission = level
+        .add_order(fixtures::standard_order(
+            0,
+            Side::Sell,
+            1_000_000_000_000,
+            TimeInForce::Gtc,
+        ))
+        .expect("single_maker_partial: the large maker must be admitted");
+    let admission = (retention == Retention::Admission).then_some(admission);
+    let generator = fixtures::trade_id_generator();
+    let mut view: Option<std::sync::Arc<OrderType<()>>> = None;
+
+    warmup(config.warmup, |i| {
+        view = (retention == Retention::View)
+            .then(|| level.iter_orders().next())
+            .flatten();
+        level.match_order(
+            TAKER_QTY,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        )
+    });
+    level
+        .stats()
+        .reset_at(TimestampMs::new(0))
+        .expect("fresh statistics sequence has headroom");
+
+    let (durations_ns, results) = measure_with_setup(
+        config.samples,
+        |_| {
+            view = (retention == Retention::View)
+                .then(|| level.iter_orders().next())
+                .flatten();
+        },
+        |i| {
+            level.match_order(
+                TAKER_QTY,
+                Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
+                TimeInForce::Gtc,
+                TakerKind::Standard,
+                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+                &generator,
+            )
+        },
+    );
+    drop(view);
+    drop(admission);
+
+    let exact = results
+        .iter()
+        .filter(|r| {
+            r.outcome() == MatchOutcome::Filled
+                && r.trades().len() == 1
+                && r.filled_order_ids().is_empty()
+        })
+        .count();
+    assert_eq!(
+        exact, config.samples,
+        "{name}: every call must fill with one trade and no filled maker"
+    );
+    assert_eq!(
+        level.order_count(),
+        1,
+        "{name}: the maker must never be fully consumed"
+    );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * TAKER_QTY, name);
+
+    ScenarioReport::from_samples(
+        name,
+        "match",
+        1,
+        "PriceLevel::match_order — repeated partial fill of one large standard maker (#147)",
+        durations_ns,
+        format!("{exact}/{} Filled (1 trade, 0 filled ids)", config.samples),
     )
 }
