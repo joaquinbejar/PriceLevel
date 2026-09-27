@@ -14,8 +14,9 @@
 //! are not. Matching commits each fill under the maker's `DashMap` shard write lock (the
 //! serialization point with a cancel or resize of that order) and assumes one logical
 //! matcher per level. Admissions and updates take their target's shard write lock and the
-//! shared side of a per-level guard, which can block behind an `O(depth)` fill-or-kill
-//! match holding the exclusive side across its feasibility check and sweep (issue #112).
+//! shared side of a per-level guard, which can block behind a fill-or-kill
+//! match holding the exclusive side across its feasibility check and sweep (issue #112),
+//! a section bounded by the makers the fill visits (issue #143).
 //! See the crate-level "Concurrency Model" section for the full table.
 //!
 //! # Key Types
