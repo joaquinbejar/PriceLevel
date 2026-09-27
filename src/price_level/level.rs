@@ -1962,7 +1962,9 @@ impl PriceLevel {
                 // allocation-free CAS (or a plain block take for fill-or-kill);
                 // no event is emitted under the entry lock. A value reserved
                 // here for a step that then aborts on visible-counter overflow
-                // is skipped, never reissued (uniqueness is preserved).
+                // is skipped, never reissued (uniqueness is preserved). For a
+                // fill-or-kill taker that stops early, the unused remainder of
+                // its pre-reserved block is skipped the same way.
                 let trade_seq = if consumed > 0 {
                     let reserved = match fok_ids.as_mut().and_then(IdBlock::take) {
                         Some(value) => Ok(value),
