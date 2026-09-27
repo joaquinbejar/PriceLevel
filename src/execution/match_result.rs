@@ -3,6 +3,7 @@ use crate::execution::list::TradeList;
 use crate::execution::trade::Trade;
 use crate::orders::Id;
 use crate::utils::Quantity;
+use crate::utils::dedup::first_repeat_position;
 use crate::utils::text::{MAX_TEXT_NESTING_DEPTH, NestingError, matching_close, try_push};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -779,37 +780,58 @@ impl MatchResult {
         //    order and filled-id order agree. The `any` on the shared iterator
         //    advances it past each match, which is exactly subsequence
         //    semantics (and implies plain membership).
-        if !self.filled_order_ids.is_empty() {
-            let mut seen = std::collections::HashSet::new();
-            seen.try_reserve(self.filled_order_ids.len()).map_err(|_| {
-                PriceLevelError::capacity_exceeded(
-                    CapacityResource::ValidationScratch,
-                    self.filled_order_ids.len(),
-                )
-            })?;
-            let mut makers = self
-                .trades
+        check_filled_ids(
+            &self.filled_order_ids,
+            self.trades
                 .as_vec()
                 .iter()
-                .map(|trade| trade.maker_order_id());
-            for filled in &self.filled_order_ids {
-                if !seen.insert(*filled) {
-                    return Err(PriceLevelError::InvalidOperation {
-                        message: format!("filled order id {filled} appears more than once"),
-                    });
-                }
-                if !makers.by_ref().any(|maker| maker == *filled) {
-                    return Err(PriceLevelError::InvalidOperation {
-                        message: format!(
-                            "filled order id {filled} is not an in-order maker of the trades"
-                        ),
-                    });
-                }
-            }
-        }
+                .map(|trade| trade.maker_order_id()),
+        )?;
 
         Ok(self)
     }
+}
+
+/// Step 5 of [`MatchResult::validated`]: `filled` is a duplicate-free,
+/// order-preserving subsequence of `makers`.
+///
+/// The duplicate check is hasher-free (pre-release hardening): the former
+/// `HashSet` built a `RandomState`, which can panic on OS RNG failure or during
+/// thread-local destruction on some platforms. The earliest repeat position is
+/// computed up front by sorting ([`first_repeat_position`]); the walk then
+/// reports, at each index, the duplicate before the subsequence check, exactly
+/// as the former interleaved `insert` / `any` walk did, so the error returned
+/// for any input is unchanged.
+///
+/// # Errors
+///
+/// [`PriceLevelError::CapacityExceeded`] (`ValidationScratch`) when the
+/// scratch cannot be reserved; [`PriceLevelError::InvalidOperation`] for the
+/// first repeated id or the first id that is not an in-order maker.
+pub(crate) fn check_filled_ids<M>(filled: &[Id], makers: M) -> Result<(), PriceLevelError>
+where
+    M: Iterator<Item = Id>,
+{
+    let first_repeat =
+        first_repeat_position(filled.iter().copied(), CapacityResource::ValidationScratch)?;
+    let mut makers = makers;
+    for (position, filled_id) in filled.iter().enumerate() {
+        if first_repeat == Some(position) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!("filled order id {filled_id} appears more than once"),
+            });
+        }
+        // The `any` on the shared iterator advances it past each match, which
+        // is exactly subsequence semantics (and implies plain membership).
+        if !makers.by_ref().any(|maker| maker == *filled_id) {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "filled order id {filled_id} is not an in-order maker of the trades"
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Which step of the executed-value computation overflowed. Kept as a
