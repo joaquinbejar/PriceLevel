@@ -368,8 +368,12 @@ mod tests {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(result.add_trade(sample_trade_with_maker(20, 30)).is_ok());
         assert!(result.add_trade(sample_trade_with_maker(21, 20)).is_ok());
-        result.add_filled_order_id(Id::from_u64(20));
-        result.add_filled_order_id(Id::from_u64(21));
+        result
+            .add_filled_order_id(Id::from_u64(20))
+            .expect("add_filled_order_id");
+        result
+            .add_filled_order_id(Id::from_u64(21))
+            .expect("add_filled_order_id");
 
         let rendered = result.to_string();
         let parsed = match MatchResult::from_str(&rendered) {
@@ -403,7 +407,9 @@ mod tests {
     fn valid_result_with_filled_ids_round_trips_serde_json() {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(result.add_trade(sample_trade_with_maker(20, 40)).is_ok());
-        result.add_filled_order_id(Id::from_u64(20));
+        result
+            .add_filled_order_id(Id::from_u64(20))
+            .expect("add_filled_order_id");
 
         let json = serde_json::to_string(&result).expect("serialize");
         let parsed: MatchResult = serde_json::from_str(&json).expect("valid payload must decode");
@@ -522,7 +528,8 @@ mod tests {
     fn deserialize_rejects_filled_id_absent_from_trades() {
         let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
-        base.add_filled_order_id(Id::from_u64(20));
+        base.add_filled_order_id(Id::from_u64(20))
+            .expect("add_filled_order_id");
         let json = mutated_json(&base, |v| {
             // 99 never traded.
             v["filled_order_ids"] = serde_json::json!(["20", "99"]);
@@ -724,8 +731,10 @@ mod tests {
         let mut base = MatchResult::new(Id::from_u64(10), Quantity::new(100));
         assert!(base.add_trade(sample_trade_with_maker(20, 40)).is_ok());
         assert!(base.add_trade(sample_trade_with_maker(21, 60)).is_ok());
-        base.add_filled_order_id(Id::from_u64(20));
-        base.add_filled_order_id(Id::from_u64(21));
+        base.add_filled_order_id(Id::from_u64(20))
+            .expect("add_filled_order_id");
+        base.add_filled_order_id(Id::from_u64(21))
+            .expect("add_filled_order_id");
 
         let json = mutated_json(&base, |v| {
             v["filled_order_ids"] = serde_json::json!([Id::from_u64(20), Id::from_u64(20)]);
@@ -761,7 +770,9 @@ mod tests {
             {
                 remaining -= qty;
                 if fill && filled.insert(maker) {
-                    result.add_filled_order_id(Id::from_u64(maker));
+                    result
+                        .add_filled_order_id(Id::from_u64(maker))
+                        .expect("add_filled_order_id");
                 }
             }
         }

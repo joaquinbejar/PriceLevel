@@ -57,15 +57,17 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
     let mut trade_list = TradeList::new();
     for i in 0..20_u64 {
-        trade_list.add(Trade::with_timestamp(
-            Id::from_u64(100 + i),
-            Id::from_u64(1),
-            Id::from_u64(i),
-            Price::new(10000),
-            Quantity::new(10),
-            Side::Buy,
-            TimestampMs::new(1_616_823_000_000 + i),
-        ));
+        trade_list
+            .add(Trade::with_timestamp(
+                Id::from_u64(100 + i),
+                Id::from_u64(1),
+                Id::from_u64(i),
+                Price::new(10000),
+                Quantity::new(10),
+                Side::Buy,
+                TimestampMs::new(1_616_823_000_000 + i),
+            ))
+            .expect("TradeList::add");
     }
 
     // TradeList Display

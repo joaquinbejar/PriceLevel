@@ -1,4 +1,4 @@
 mod tests;
 mod types;
 
-pub use types::PriceLevelError;
+pub use types::{CapacityResource, PriceLevelError};

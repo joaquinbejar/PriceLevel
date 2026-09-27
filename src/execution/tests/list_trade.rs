@@ -29,7 +29,7 @@ mod tests {
     #[test]
     fn trade_list_display_and_parse_roundtrip() {
         let mut list = TradeList::new();
-        list.add(sample_trade());
+        list.add(sample_trade()).expect("TradeList::add");
 
         let rendered = list.to_string();
         assert!(rendered.starts_with("Trades:["));

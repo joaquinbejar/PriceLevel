@@ -6,7 +6,7 @@
 //! use pricelevel::prelude::*;
 //! ```
 
-pub use crate::errors::PriceLevelError;
+pub use crate::errors::{CapacityResource, PriceLevelError};
 pub use crate::execution::{MatchOutcome, MatchResult, TakerKind, Trade, TradeList};
 pub use crate::orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use crate::orders::PegReferenceType;

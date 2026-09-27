@@ -1,4 +1,47 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter, Result};
+
+/// The storage a [`PriceLevelError::CapacityExceeded`] failure could not grow.
+///
+/// A fixed, `Copy`, payload-free tag so reporting an allocation / capacity
+/// failure never needs to allocate (a `String` message built after a failed
+/// allocation could itself fail). New growth paths add variants here, so the
+/// enum is `#[non_exhaustive]`: match it with a wildcard arm.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapacityResource {
+    /// The trade vector of a [`TradeList`](crate::TradeList) /
+    /// [`MatchResult`](crate::MatchResult).
+    Trades,
+    /// The filled-maker id vector of a [`MatchResult`](crate::MatchResult).
+    FilledOrderIds,
+    /// Scratch storage used while validating a decoded
+    /// [`MatchResult`](crate::MatchResult) (the duplicate-id set).
+    ValidationScratch,
+    /// A text buffer (for example a message copied by a fallible clone).
+    Text,
+}
+
+impl CapacityResource {
+    /// Static, allocation-free name of the resource.
+    #[must_use]
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Trades => "trades",
+            Self::FilledOrderIds => "filled order ids",
+            Self::ValidationScratch => "validation scratch",
+            Self::Text => "text",
+        }
+    }
+}
+
+impl Display for CapacityResource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Represents errors that can occur when processing price levels in trading operations.
 ///
@@ -18,6 +61,13 @@ use std::fmt::{Debug, Display, Formatter, Result};
 /// // Creating a missing field error
 /// let missing_field_error = PriceLevelError::MissingField("price".to_string());
 /// ```
+///
+/// `Clone`, `PartialEq`, `Eq`, `Serialize` and `Deserialize` are derived so an
+/// error can travel inside a [`MatchResult`](crate::MatchResult) (see
+/// [`MatchResult::error`](crate::MatchResult::error)) and round-trip with it.
+/// New variants are appended at the end so the positional (bincode) variant
+/// indices of existing variants never move.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PriceLevelError {
     /// Error that occurs when parsing fails with a specific message.
     ///
@@ -102,6 +152,94 @@ pub enum PriceLevelError {
         /// Descriptive message with the entropy failure details
         message: String,
     },
+
+    /// Error raised when a collection could not grow: the requested capacity
+    /// exceeds what the allocator / `isize::MAX` byte limit allows, or the
+    /// allocator refused the request.
+    ///
+    /// The payload is fixed-size (no `String`), so reporting the failure never
+    /// allocates after an allocation has just failed. Raised by the fallible
+    /// execution-result constructors and growth paths
+    /// ([`TradeList::try_with_capacity`](crate::TradeList::try_with_capacity),
+    /// [`MatchResult::try_with_capacity`](crate::MatchResult::try_with_capacity),
+    /// [`MatchResult::add_trade`](crate::MatchResult::add_trade), ...) and
+    /// reported by [`MatchResult::error`](crate::MatchResult::error) when a
+    /// match stops early.
+    CapacityExceeded {
+        /// The storage that could not grow.
+        resource: CapacityResource,
+        /// The number of additional elements that were requested.
+        additional: usize,
+    },
+}
+
+impl PriceLevelError {
+    /// Builds a [`PriceLevelError::CapacityExceeded`]. Cold: only reached when
+    /// an allocation / capacity request fails.
+    #[cold]
+    #[inline(never)]
+    #[must_use]
+    pub(crate) fn capacity_exceeded(resource: CapacityResource, additional: usize) -> Self {
+        Self::CapacityExceeded {
+            resource,
+            additional,
+        }
+    }
+
+    /// Clones the error without an infallible allocation: every `String`
+    /// payload is copied through `try_reserve_exact`, and a failure is reported
+    /// as the allocation-free [`PriceLevelError::CapacityExceeded`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::Text`]) if a message buffer cannot be allocated.
+    pub(crate) fn try_clone(&self) -> std::result::Result<Self, PriceLevelError> {
+        fn copy(text: &str) -> std::result::Result<String, PriceLevelError> {
+            let mut out = String::new();
+            out.try_reserve_exact(text.len()).map_err(|_| {
+                PriceLevelError::capacity_exceeded(CapacityResource::Text, text.len())
+            })?;
+            out.push_str(text);
+            Ok(out)
+        }
+        Ok(match self {
+            Self::ParseError { message } => Self::ParseError {
+                message: copy(message)?,
+            },
+            Self::InvalidFormat => Self::InvalidFormat,
+            Self::UnknownOrderType(value) => Self::UnknownOrderType(copy(value)?),
+            Self::MissingField(value) => Self::MissingField(copy(value)?),
+            Self::DuplicateOrderId(value) => Self::DuplicateOrderId(copy(value)?),
+            Self::InvalidFieldValue { field, value } => Self::InvalidFieldValue {
+                field: copy(field)?,
+                value: copy(value)?,
+            },
+            Self::InvalidOperation { message } => Self::InvalidOperation {
+                message: copy(message)?,
+            },
+            Self::SerializationError { message } => Self::SerializationError {
+                message: copy(message)?,
+            },
+            Self::DeserializationError { message } => Self::DeserializationError {
+                message: copy(message)?,
+            },
+            Self::ChecksumMismatch { expected, actual } => Self::ChecksumMismatch {
+                expected: copy(expected)?,
+                actual: copy(actual)?,
+            },
+            Self::EntropyUnavailable { message } => Self::EntropyUnavailable {
+                message: copy(message)?,
+            },
+            Self::CapacityExceeded {
+                resource,
+                additional,
+            } => Self::CapacityExceeded {
+                resource: *resource,
+                additional: *additional,
+            },
+        })
+    }
 }
 impl Display for PriceLevelError {
     // Error formatting is off the hot match path: keep it out of line and hint
@@ -135,6 +273,13 @@ impl Display for PriceLevelError {
             PriceLevelError::EntropyUnavailable { message } => {
                 write!(f, "Entropy unavailable: {message}")
             }
+            PriceLevelError::CapacityExceeded {
+                resource,
+                additional,
+            } => write!(
+                f,
+                "Capacity exceeded: could not reserve {additional} more {resource} entries"
+            ),
         }
     }
 }
@@ -171,6 +316,13 @@ impl Debug for PriceLevelError {
             PriceLevelError::EntropyUnavailable { message } => {
                 write!(f, "Entropy unavailable: {message}")
             }
+            PriceLevelError::CapacityExceeded {
+                resource,
+                additional,
+            } => write!(
+                f,
+                "Capacity exceeded: could not reserve {additional} more {resource} entries"
+            ),
         }
     }
 }

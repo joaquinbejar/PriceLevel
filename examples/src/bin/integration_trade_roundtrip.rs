@@ -95,8 +95,12 @@ fn main() {
     // --- Phase 4: TradeList roundtrip ---
     println!("[Phase 4] TradeList Display/FromStr roundtrip...");
     let mut trade_list = TradeList::new();
-    trade_list.add(trade);
-    trade_list.add(trade_buy);
+    if let Err(e) = trade_list.add(trade) {
+        exit_err(&format!("TradeList::add failed: {e}"));
+    }
+    if let Err(e) = trade_list.add(trade_buy) {
+        exit_err(&format!("TradeList::add failed: {e}"));
+    }
 
     assert_eq_or_exit(trade_list.len(), 2, "TradeList len");
     assert_or_exit(!trade_list.is_empty(), "TradeList should not be empty");

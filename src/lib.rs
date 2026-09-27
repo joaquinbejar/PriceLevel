@@ -572,7 +572,7 @@
 //! | [`OrderType::hidden_quantity`] | `u64` | [`Quantity`] |
 //! | [`OrderType::timestamp`] | `u64` | [`TimestampMs`] |
 //! | [`MatchResult::new`] (`initial_quantity`) | `u64` | [`Quantity`] |
-//! | [`MatchResult::with_capacity`] (`initial_quantity`) | `u64` | [`Quantity`] |
+//! | [`MatchResult::try_with_capacity`] (`initial_quantity`) | `u64` | [`Quantity`] |
 //! | [`MatchResult::remaining_quantity`] | `u64` | [`Quantity`] |
 //! | [`MatchResult::executed_quantity`] | `Result<u64, _>` | `Result<`[`Quantity`]`, _>` |
 //! | [`PriceLevelSnapshot::new`] (`price`) | `u128` | [`Price`] |
@@ -919,6 +919,49 @@
 //! ));
 //! ```
 //!
+//! ## Migration Guide (fallible execution results and the match failure slot — breaking)
+//!
+//! Result allocation and growth no longer panic (#170), and [`MatchResult`]
+//! carries the failure that stopped a match early (#164 contract).
+//!
+//! | v0.9 | v0.10 |
+//! |------|-------|
+//! | `TradeList::with_capacity(n) -> TradeList` | [`TradeList::try_with_capacity(n)`](TradeList::try_with_capacity) `-> Result<TradeList, _>` |
+//! | `MatchResult::with_capacity(id, qty, n) -> MatchResult` | [`MatchResult::try_with_capacity(id, qty, n)`](MatchResult::try_with_capacity) `-> Result<MatchResult, _>` |
+//! | `TradeList::add(trade)` | [`TradeList::add(trade)`](TradeList::add) `-> Result<(), _>` |
+//! | `MatchResult::add_filled_order_id(id)` | [`MatchResult::add_filled_order_id(id)`](MatchResult::add_filled_order_id) `-> Result<(), _>` |
+//! | — | [`MatchResult::error`], [`MatchResult::is_failed`], [`MatchResult::try_reserve`], [`MatchResult::try_clone`], [`TradeList::try_reserve`], [`TradeList::capacity`], [`TradeList::try_clone`] |
+//! | — | [`PriceLevelError::CapacityExceeded`] `{ resource: `[`CapacityResource`]`, additional: usize }` |
+//!
+//! - Capacity failures (an unrepresentable size such as `usize::MAX`, or an
+//!   allocator refusal) return [`PriceLevelError::CapacityExceeded`], whose
+//!   payload is fixed-size so reporting it never allocates. `n == 0` never
+//!   allocates.
+//! - [`MatchResult::add_trade`] validates and reserves before committing, so an
+//!   `Err` leaves trades, filled ids, remaining quantity, completion and
+//!   outcome unchanged.
+//! - [`PriceLevel::match_order`] still returns [`MatchResult`]. When a step
+//!   fails, the sweep stops and [`MatchResult::error`] is `Some`; the trades,
+//!   filled ids and remaining quantity describe exactly what the level
+//!   committed, and the level's counters agree with its queue. A fill-or-kill
+//!   taker reserves its exact storage before touching any maker: on failure it
+//!   is [`MatchOutcome::Killed`] with the error set and the level unchanged.
+//!   Callers that used to treat every result as a natural end should check
+//!   `result.error()` before resting a remainder.
+//! - [`PriceLevel::matchable_quantity`] now replays the resting queue in
+//!   insertion-sequence (sweep) order rather than `(timestamp, sequence)`
+//!   order. The returned total is unchanged; the per-step replay is now exact.
+//! - [`PriceLevelError`] now derives `Clone`, `PartialEq`, `Eq`, `Serialize`
+//!   and `Deserialize` (it travels inside `MatchResult`). Exhaustive matches
+//!   need an arm for `CapacityExceeded`; [`CapacityResource`] is
+//!   `#[non_exhaustive]`.
+//! - Wire format: serde (JSON and bincode) emits an `error` field (`null` /
+//!   `None` when the match ran to its end). JSON written before the field
+//!   existed decodes as "no error". Positional encoders (bincode) must decode
+//!   with the same crate version that encoded, as with any added field. The
+//!   `Display` / `FromStr` text form does not carry the error slot (it decodes
+//!   as "no error", like `outcome`).
+//!
 
 mod orders;
 mod price_level;
@@ -929,7 +972,7 @@ mod execution;
 
 pub mod prelude;
 
-pub use errors::PriceLevelError;
+pub use errors::{CapacityResource, PriceLevelError};
 pub use execution::{MatchOutcome, MatchResult, TakerKind, Trade, TradeList};
 pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
