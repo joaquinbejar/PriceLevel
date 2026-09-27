@@ -594,7 +594,7 @@ impl MatchResult {
         self.trades
             .as_vec()
             .iter()
-            .try_fold(0u128, |acc, trade| accumulate_value(acc, trade))
+            .try_fold(0u128, accumulate_value)
             .map_err(ValueOverflow::into_error)
     }
 
@@ -610,6 +610,10 @@ impl MatchResult {
     /// whatever trade it occurs at, a zero executed quantity yields
     /// `Ok(None)` before any value error can surface, and otherwise the first
     /// value overflow in trade order is reported.
+    ///
+    /// The analytics are recomputed on every call; no aggregate is cached,
+    /// so [`Self::add_trade`] on the matching hot path does no extra
+    /// arithmetic. A caller reading them repeatedly should keep the values.
     ///
     /// # Errors
     ///
