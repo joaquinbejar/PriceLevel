@@ -52,6 +52,19 @@ mod hardening_tests {
         }
     }
 
+    /// The pre-hardening `Hash32::from_hex` (per-pair `u8::from_str_radix`).
+    fn reference_hash32(s: &str) -> Option<Hash32> {
+        if s.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for (slot, pair) in bytes.iter_mut().zip(s.as_bytes().chunks(2)) {
+            let pair = std::str::from_utf8(pair).ok()?;
+            *slot = u8::from_str_radix(pair, 16).ok()?;
+        }
+        Some(Hash32::new(bytes))
+    }
+
     /// Scalars around the vocabularies: every ASCII letter of the literals in
     /// both cases, the non-ASCII scalars whose uppercase is ASCII, and a few
     /// that uppercase to a longer / non-ASCII form.
@@ -185,6 +198,84 @@ mod hardening_tests {
             prop_assert_eq!(TimeInForce::from_str(&s).ok(), reference_tif(&s));
         }
 
+        #[test]
+        fn prop_hash32_matches_reference_except_signs(
+            s in prop_oneof![
+                "[0-9a-fA-F]{64}",
+                "[0-9a-fA-F+\\-]{64}",
+                ".{60,66}",
+            ]
+        ) {
+            let actual = Hash32::from_hex(&s).ok();
+            if s.contains('+') {
+                prop_assert_eq!(actual, None);
+            } else {
+                prop_assert_eq!(actual, reference_hash32(&s));
+            }
+        }
+    }
+
+    // ---- Hash32 grammar ----------------------------------------------------
+
+    #[test]
+    fn test_hash32_rejects_plus_sign_pairs() {
+        let plus = "+f".repeat(32);
+        assert_eq!(reference_hash32(&plus), Some(Hash32::new([0x0f; 32])));
+        let err = Hash32::from_hex(&plus).unwrap_err();
+        assert_eq!(
+            err,
+            PriceLevelError::ParseError {
+                message: "Invalid hex character in Hash32: +f".to_string(),
+            }
+        );
+        let mut one_plus = "a5".repeat(32);
+        one_plus.replace_range(62..63, "+");
+        assert!(Hash32::from_hex(&one_plus).is_err());
+    }
+
+    #[test]
+    fn test_hash32_accepts_canonical_lower_upper_and_mixed_case() {
+        let expected = Hash32::new([0xab; 32]);
+        assert_eq!(Hash32::from_hex(&"ab".repeat(32)).ok(), Some(expected));
+        assert_eq!(Hash32::from_hex(&"AB".repeat(32)).ok(), Some(expected));
+        assert_eq!(Hash32::from_hex(&"aB".repeat(32)).ok(), Some(expected));
+        let all: String = (0u8..32).map(|b| format!("{b:02x}")).collect();
+        let mut bytes = [0u8; 32];
+        for (b, value) in bytes.iter_mut().zip(0u8..) {
+            *b = value;
+        }
+        assert_eq!(Hash32::from_hex(&all).ok(), Some(Hash32::new(bytes)));
+    }
+
+    #[test]
+    fn test_hash32_error_messages_unchanged() {
+        let mut bad = "00".repeat(32);
+        bad.replace_range(0..2, "zz");
+        assert_eq!(
+            Hash32::from_hex(&bad).unwrap_err(),
+            PriceLevelError::ParseError {
+                message: "Invalid hex character in Hash32: zz".to_string(),
+            }
+        );
+        // `é` is two bytes and straddles no pair boundary here: pair `é`.
+        let mut multibyte = "00".repeat(31);
+        multibyte.insert(0, 'é');
+        assert_eq!(
+            Hash32::from_hex(&multibyte).unwrap_err(),
+            PriceLevelError::ParseError {
+                message: "Invalid hex character in Hash32: é".to_string(),
+            }
+        );
+        // `é` at an odd offset splits across two pairs: invalid UTF-8 pair.
+        let mut split = "0".to_string();
+        split.push('é');
+        split.push_str(&"0".repeat(61));
+        assert_eq!(
+            Hash32::from_hex(&split).unwrap_err(),
+            PriceLevelError::ParseError {
+                message: "Invalid UTF-8 in hex string".to_string(),
+            }
+        );
     }
 
     // ---- Bounded echo ------------------------------------------------------
