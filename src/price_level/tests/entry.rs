@@ -555,3 +555,441 @@ mod tests_order_book_entry_deserialize {
         assert_eq!(deserialized.index, original_entry.index);
     }
 }
+
+#[cfg(test)]
+mod tests_order_book_entry_text_and_serde_contract {
+    use crate::errors::PriceLevelError;
+    use crate::orders::Hash32;
+    use crate::price_level::entry::OrderBookEntry;
+    use crate::price_level::level::PriceLevel;
+    use crate::utils::{Price, Quantity, TimestampMs};
+    use crate::{Id, OrderType, Side, TimeInForce};
+    use serde::Serialize;
+    use serde::ser::{self, Impossible};
+    use std::fmt::{self, Write as _};
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    const PRICE: u128 = 1000;
+
+    /// A valid level whose `visible + hidden` total overflows `u64`: a
+    /// standard order of `u64::MAX - 1` plus a same-side, same-price iceberg
+    /// with visible 1 and hidden 1. Each order total and each counter fits.
+    fn overflowing_total_level() -> Arc<PriceLevel> {
+        let level = Arc::new(PriceLevel::new(PRICE));
+        level
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(1),
+                price: Price::new(PRICE),
+                quantity: Quantity::new(u64::MAX - 1),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("standard order admits");
+        level
+            .add_order(OrderType::IcebergOrder {
+                id: Id::from_u64(2),
+                price: Price::new(PRICE),
+                visible_quantity: Quantity::new(1),
+                hidden_quantity: Quantity::new(1),
+                side: Side::Sell,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_001),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("iceberg order admits");
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.hidden_quantity(), 1);
+        level
+    }
+
+    fn populated_level() -> Arc<PriceLevel> {
+        let level = Arc::new(PriceLevel::new(PRICE));
+        level
+            .add_order(OrderType::IcebergOrder {
+                id: Id::from_u64(7),
+                price: Price::new(PRICE),
+                visible_quantity: Quantity::new(10),
+                hidden_quantity: Quantity::new(30),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("iceberg order admits");
+        level
+    }
+
+    fn resting_ids(level: &PriceLevel) -> Vec<Id> {
+        level.snapshot_orders().iter().map(|o| o.id()).collect()
+    }
+
+    #[test]
+    fn test_order_book_entry_display_overflowing_total_formats_without_panic() {
+        let entry = OrderBookEntry::new(overflowing_total_level(), 3);
+
+        let via_to_string = entry.to_string();
+        let via_format = format!("{entry}");
+
+        let expected = format!(
+            "OrderBookEntry:price={PRICE};visible_quantity={};index=3",
+            u64::MAX
+        );
+        assert_eq!(via_to_string, expected);
+        assert_eq!(via_format, expected);
+    }
+
+    #[test]
+    fn test_order_book_entry_to_full_string_overflowing_total_returns_invalid_operation() {
+        let level = overflowing_total_level();
+        let ids_before = resting_ids(&level);
+        let entry = OrderBookEntry::new(Arc::clone(&level), 3);
+
+        let result = entry.to_full_string();
+
+        match result {
+            Err(PriceLevelError::InvalidOperation { message }) => {
+                assert!(message.contains("total quantity overflow"), "{message}");
+            }
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+        // The referenced level is left unchanged.
+        assert_eq!(level.visible_quantity(), u64::MAX);
+        assert_eq!(level.hidden_quantity(), 1);
+        assert_eq!(level.order_count(), 2);
+        assert_eq!(resting_ids(&level), ids_before);
+    }
+
+    #[test]
+    fn test_order_book_entry_to_full_string_normal_level_includes_all_fields() {
+        let entry = OrderBookEntry::new(populated_level(), 5);
+
+        let text = entry.to_full_string().expect("total fits in u64");
+
+        assert_eq!(
+            text,
+            "OrderBookEntry:price=1000;visible_quantity=10;total_quantity=40;index=5"
+        );
+    }
+
+    #[test]
+    fn test_order_book_entry_display_normal_level_omits_total_quantity() {
+        let entry = OrderBookEntry::new(populated_level(), 5);
+
+        assert_eq!(
+            entry.to_string(),
+            "OrderBookEntry:price=1000;visible_quantity=10;index=5"
+        );
+    }
+
+    #[test]
+    fn test_order_book_entry_to_full_string_round_trip_parses() {
+        let original = OrderBookEntry::new(populated_level(), 5);
+
+        let text = original.to_full_string().expect("total fits in u64");
+        let parsed = OrderBookEntry::from_str(&text).expect("full text parses");
+
+        assert_eq!(parsed.price(), original.price());
+        assert_eq!(parsed.index, original.index);
+    }
+
+    #[test]
+    fn test_order_book_entry_to_full_string_max_values_fit_reserved_capacity() {
+        let level = Arc::new(PriceLevel::new(u128::MAX));
+        level
+            .add_order(OrderType::Standard {
+                id: Id::from_u64(1),
+                price: Price::new(u128::MAX),
+                quantity: Quantity::new(u64::MAX),
+                side: Side::Buy,
+                user_id: Hash32::zero(),
+                timestamp: TimestampMs::new(1_616_823_000_000),
+                time_in_force: TimeInForce::Gtc,
+                extra_fields: (),
+            })
+            .expect("standard order admits");
+        let entry = OrderBookEntry::new(level, usize::MAX);
+
+        let text = entry.to_full_string().expect("total fits in u64");
+
+        let expected = format!(
+            "OrderBookEntry:price={};visible_quantity={};total_quantity={};index={}",
+            u128::MAX,
+            u64::MAX,
+            u64::MAX,
+            usize::MAX
+        );
+        assert_eq!(text, expected);
+        // The digit bounds used for the up-front reservation hold.
+        assert!(u128::MAX.to_string().len() <= 39);
+        assert!(u64::MAX.to_string().len() <= 20);
+        assert!(usize::MAX.to_string().len() <= 20);
+    }
+
+    /// `fmt::Write` sink that always fails, to prove real sink errors still
+    /// propagate through `Display` as `fmt::Error` (and nothing panics).
+    struct FailingSink;
+
+    impl fmt::Write for FailingSink {
+        fn write_str(&mut self, _s: &str) -> fmt::Result {
+            Err(fmt::Error)
+        }
+    }
+
+    #[test]
+    fn test_order_book_entry_display_failing_sink_propagates_fmt_error() {
+        let entry = OrderBookEntry::new(overflowing_total_level(), 3);
+
+        let result = write!(FailingSink, "{entry}");
+
+        assert_eq!(result, Err(fmt::Error));
+    }
+
+    // ---- Count-aware serializer ------------------------------------------
+
+    #[derive(Debug, PartialEq)]
+    struct CountError(String);
+
+    impl fmt::Display for CountError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl std::error::Error for CountError {}
+
+    impl ser::Error for CountError {
+        fn custom<T: fmt::Display>(msg: T) -> Self {
+            CountError(msg.to_string())
+        }
+    }
+
+    /// Records what a struct serialization declared and emitted.
+    #[derive(Debug, Default, PartialEq)]
+    struct StructRecord {
+        name: &'static str,
+        declared_len: usize,
+        fields: Vec<&'static str>,
+        ended: bool,
+    }
+
+    /// Minimal serializer that only accepts a top-level struct and records
+    /// the declared length and the emitted field names, in order.
+    struct CountingSerializer<'a> {
+        record: &'a mut StructRecord,
+    }
+
+    struct CountingStruct<'a> {
+        record: &'a mut StructRecord,
+    }
+
+    impl ser::SerializeStruct for CountingStruct<'_> {
+        type Ok = ();
+        type Error = CountError;
+
+        fn serialize_field<T: ?Sized + Serialize>(
+            &mut self,
+            key: &'static str,
+            _value: &T,
+        ) -> Result<(), CountError> {
+            self.record.fields.push(key);
+            Ok(())
+        }
+
+        fn end(self) -> Result<(), CountError> {
+            self.record.ended = true;
+            Ok(())
+        }
+    }
+
+    fn unsupported<T>() -> Result<T, CountError> {
+        Err(CountError("unsupported by CountingSerializer".to_string()))
+    }
+
+    impl<'a> ser::Serializer for CountingSerializer<'a> {
+        type Ok = ();
+        type Error = CountError;
+        type SerializeSeq = Impossible<(), CountError>;
+        type SerializeTuple = Impossible<(), CountError>;
+        type SerializeTupleStruct = Impossible<(), CountError>;
+        type SerializeTupleVariant = Impossible<(), CountError>;
+        type SerializeMap = Impossible<(), CountError>;
+        type SerializeStruct = CountingStruct<'a>;
+        type SerializeStructVariant = Impossible<(), CountError>;
+
+        fn serialize_struct(
+            self,
+            name: &'static str,
+            len: usize,
+        ) -> Result<CountingStruct<'a>, CountError> {
+            self.record.name = name;
+            self.record.declared_len = len;
+            Ok(CountingStruct {
+                record: self.record,
+            })
+        }
+
+        fn serialize_bool(self, _v: bool) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_i8(self, _v: i8) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_i16(self, _v: i16) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_i32(self, _v: i32) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_i64(self, _v: i64) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_u8(self, _v: u8) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_u16(self, _v: u16) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_u32(self, _v: u32) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_u64(self, _v: u64) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_f32(self, _v: f32) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_f64(self, _v: f64) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_char(self, _v: char) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_str(self, _v: &str) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_bytes(self, _v: &[u8]) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_none(self) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_some<T: ?Sized + Serialize>(self, _value: &T) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_unit(self) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_unit_struct(self, _name: &'static str) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_unit_variant(
+            self,
+            _name: &'static str,
+            _variant_index: u32,
+            _variant: &'static str,
+        ) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_newtype_struct<T: ?Sized + Serialize>(
+            self,
+            _name: &'static str,
+            _value: &T,
+        ) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_newtype_variant<T: ?Sized + Serialize>(
+            self,
+            _name: &'static str,
+            _variant_index: u32,
+            _variant: &'static str,
+            _value: &T,
+        ) -> Result<(), CountError> {
+            unsupported()
+        }
+        fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, CountError> {
+            unsupported()
+        }
+        fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, CountError> {
+            unsupported()
+        }
+        fn serialize_tuple_struct(
+            self,
+            _name: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeTupleStruct, CountError> {
+            unsupported()
+        }
+        fn serialize_tuple_variant(
+            self,
+            _name: &'static str,
+            _variant_index: u32,
+            _variant: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeTupleVariant, CountError> {
+            unsupported()
+        }
+        fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, CountError> {
+            unsupported()
+        }
+        fn serialize_struct_variant(
+            self,
+            _name: &'static str,
+            _variant_index: u32,
+            _variant: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeStructVariant, CountError> {
+            unsupported()
+        }
+    }
+
+    #[test]
+    fn test_order_book_entry_serialize_declared_len_matches_emitted_fields() {
+        let entry = OrderBookEntry::new(populated_level(), 5);
+        let mut record = StructRecord::default();
+
+        entry
+            .serialize(CountingSerializer {
+                record: &mut record,
+            })
+            .expect("counting serialization succeeds");
+
+        assert_eq!(record.name, "OrderBookEntry");
+        assert_eq!(
+            record.fields,
+            ["price", "visible_quantity", "total_quantity", "index"]
+        );
+        assert_eq!(record.declared_len, record.fields.len());
+        assert_eq!(record.declared_len, 4);
+        assert!(record.ended);
+    }
+
+    #[test]
+    fn test_order_book_entry_serialize_overflowing_total_returns_serializer_error() {
+        let level = overflowing_total_level();
+        let entry = OrderBookEntry::new(Arc::clone(&level), 3);
+        let mut record = StructRecord::default();
+
+        let result = entry.serialize(CountingSerializer {
+            record: &mut record,
+        });
+
+        match result {
+            Err(CountError(message)) => {
+                assert!(message.contains("total quantity overflow"), "{message}");
+            }
+            Ok(()) => panic!("expected serializer error"),
+        }
+        assert_eq!(record.declared_len, 4);
+        assert_eq!(record.fields, ["price", "visible_quantity"]);
+        assert!(!record.ended);
+        assert_eq!(level.order_count(), 2);
+
+        assert!(serde_json::to_string(&entry).is_err());
+    }
+}
