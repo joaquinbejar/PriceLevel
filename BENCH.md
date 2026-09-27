@@ -268,6 +268,7 @@ Every knob is an environment variable (`benches/latency/config.rs`):
 | `PL_LATENCY_WARMUP`               | 2,000   | Discarded warmup iterations per scenario |
 | `PL_LATENCY_SEED`                 | fixed   | Recorded in the manifest (this harness uses deterministic sequential ids, not a PRNG, so this is provenance, not a workload input, today) |
 | `PL_LATENCY_LARGE_DEPTHS`         | off     | Set to `1` to additionally sweep 10,000 / 100,000 resting-order depth |
+| `PL_LATENCY_STRICT_FIFO`          | off     | Set to `1` to fail the `fok_depth` writer contention cases on any starvation anomaly instead of counting it (issue #206) |
 | `PL_LATENCY_CONTENTION_THREADS`   | 4       | Total threads in the contention scenario (1 matcher + N-1 writers) |
 | `PL_LATENCY_CONTENTION_OPS`       | 5,000   | Matcher-thread operations measured per contention run |
 | `PL_LATENCY_ALLOC_REPS`           | 2,000   | Repetitions per operation in the allocation-measurement pass |
@@ -1233,6 +1234,8 @@ statistics are asserted not degraded.
 - `writer_*_during_*`: one thread loops the qty-1 first-maker call (FOK, or
   GTC as the control) at depth 10,000 while this thread times 5,000
   `add_order` + `update_order(Cancel)` pairs on its own tail orders.
+  Starvation anomalies are counted, not asserted; see "Writer starvation
+  behind a looping FOK matcher" below.
 
 ### Environment
 
@@ -1286,8 +1289,7 @@ estimates):
   (queued behind back-to-back 150 µs exclusive sections) to 15 / 10 µs. Its
   p99 rises from under 1 µs to about 4.5 µs because the matcher now
   completes about 350,000 to 480,000 FOK calls per second instead of about
-  6,300, so
-  the writer meets a short exclusive section far more often.
+  6,300, so the writer meets a short exclusive section far more often.
 - **Regression: a FOK that must walk the whole level** (the rejected case)
   is slower by the lazy prefix plus per-step overhead: Criterion +4 to +14%
   at depth 10,000 and +3 to +7% at depth 100; in the latency harness +18%
@@ -1299,18 +1301,55 @@ estimates):
 - `gtc_first_maker` is unchanged within noise: the GTC path does not run the
   dry run.
 
-### A pre-existing FIFO race exposed by the contention scenario
+### Writer starvation behind a looping FOK matcher (issue #206)
 
-While this scenario was being built, `writers_during` caught a FIFO
-violation on unmodified `origin/main`: under a FOK matcher looping qty-1
-calls at depth 10,000 with a concurrent writer adding and cancelling its
-own orders at the tail, a FOK call occasionally consumed the writer's
-newest order instead of the front maker. The level stayed internally
-consistent afterwards (map and index agree, count correct), and the
-writer's cancel then reported `Ok(None)`. The base binary tripped it in
-most runs (five failed attempts before one clean run in the table above).
-Adding a 150 µs spin inside the new dry run reproduced it 4 times out of 4,
-so the new code does not remove the race: it only makes it much rarer by
-shortening the exclusive section (no failure in 9 runs without the spin).
-The scenario now asserts strict FIFO for every matcher call. The root cause
-is not addressed here and needs its own issue.
+The `writers_during_fok` case also exposes a fairness problem that exists on
+`origin/main` independently of this change. Admissions and cancels take the
+fill-or-kill guard's shared side for their whole queue mutation, and a FOK
+holds the exclusive side across its dry run and sweep, so no mutation can
+land inside a FOK. But `std::sync::RwLock` gives the shared side no fairness
+against a thread that retakes the exclusive side in a loop. With the former
+full-depth dry run (about 150 µs per FOK at depth 10,000) the writer's
+p99.9 add latency was 144,505 µs, and single waits reached about 1.5 s,
+roughly depth × FOK time.
+
+While the writer waits to cancel its own order `W`, the matcher consumes
+every maker ahead of `W`. `W` becomes the true front and is filled, and the
+late cancel returns `Ok(None)`. This is correct FIFO under starvation, not a
+FIFO violation. An earlier revision of this scenario asserted that a writer
+order is never filled, and that assertion failed intermittently for this
+reason.
+
+The scenario now counts these events and reports them in the outcome note
+(and so in `manifest.json`):
+
+- `writer-owned consumed`: a matcher call filled a writer order;
+- `cancel found nothing`: a writer cancel returned `Ok(None)`;
+- `matcher out of order`: the matcher filled one of its own makers out of id
+  (admission) order.
+
+The public API exposes no insertion sequence, so every writer order records
+an admission bracket instead: the number of matcher replacement adds that
+had completed before its `add_order` started (certainly older makers) and
+the number that had started by the time it returned (every later one is
+certainly younger). Each consumed `W` is classified against the matcher's
+own front at that call. It is `proven front` when every possibly older
+matcher maker was already consumed, `proven violation` when a certainly
+older one still rested, and `ambiguous` otherwise. `PL_LATENCY_STRICT_FIFO=1`
+turns any anomaly into a hard failure that prints every classified event.
+The strict mode is off by default, so an unfair scheduler cannot fail
+`cargo test --all-targets`, which runs this harness in debug.
+
+On the base engine, four counting runs reported 19, 0, 0 and 10 writer
+orders consumed. Every one was `proven front` with no violation and no
+out-of-order fill, and each was matched by a `cancel found nothing`. A
+strict run failed with, for example, `W 1000000000486 front 77045 bracket
+[67044, 67045] proven front`: `W` was admitted after replacement 67,044
+completed and before 67,045 started, so the oldest matcher maker still
+resting (id 10,000 + 67,045) is the first one younger than `W`.
+
+The bounded dry run shrinks the exclusive section from about 150 µs to about
+0.3 µs. It therefore cuts the starvation window drastically: writer add
+p99.9 falls from 144,505 µs to 15 µs in the table above. It does not fix the
+lack of fairness itself; a FOK that must visit every maker still holds the
+guard for about 200 µs at depth 10,000. That is tracked in #206.

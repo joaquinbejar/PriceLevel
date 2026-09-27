@@ -91,6 +91,12 @@ pub struct Config {
     /// When `true`, also run the 10,000 / 100,000 resting-order depth
     /// sweeps. Off by default (`PL_LATENCY_LARGE_DEPTHS=1` to opt in).
     pub large_depths: bool,
+    /// When `true`, a starvation anomaly in the `fok_depth` writer
+    /// contention cases (a writer order consumed by the matcher, a writer
+    /// cancel finding nothing, an out-of-order matcher fill; issue #206) is
+    /// a hard failure instead of a counter. Off by default
+    /// (`PL_LATENCY_STRICT_FIFO=1` to opt in).
+    pub strict_fifo: bool,
     /// Worker thread count for the contention scenario.
     pub contention_threads: usize,
     /// Matcher-thread operation count for the contention scenario.
@@ -177,6 +183,7 @@ impl Config {
             warmup: env_usize("PL_LATENCY_WARMUP", default_warmup),
             seed: env_u64("PL_LATENCY_SEED", DEFAULT_SEED),
             large_depths: env_bool("PL_LATENCY_LARGE_DEPTHS"),
+            strict_fifo: env_bool("PL_LATENCY_STRICT_FIFO"),
             contention_threads: env_usize(
                 "PL_LATENCY_CONTENTION_THREADS",
                 DEFAULT_CONTENTION_THREADS,
