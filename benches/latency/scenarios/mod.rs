@@ -7,6 +7,7 @@ mod depth;
 mod isolated;
 mod matching;
 mod snapshot;
+pub mod snapshot_sizes;
 mod stats_contention;
 mod tif;
 
@@ -31,6 +32,9 @@ pub fn run_all(config: &Config) -> Vec<ScenarioReport> {
     }
     if config.runs("snapshot") {
         reports.extend(snapshot::run(config));
+    }
+    if config.runs("snapshot_sizes") {
+        reports.extend(snapshot_sizes::run(config));
     }
     if config.runs("depth") {
         reports.extend(depth::run(config));

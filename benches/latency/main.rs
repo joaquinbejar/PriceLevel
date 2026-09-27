@@ -68,6 +68,16 @@ fn main() {
     );
     println!();
 
+    if config.runs("snapshot_sizes") {
+        // Issue #149: allocation count / bytes / peak live bytes of the
+        // snapshot encode + validate paths, per level size (untimed pass).
+        println!("== Snapshot size sweep allocations (separate pass, not timed) ==");
+        for line in scenarios::snapshot_sizes::run_alloc(&config) {
+            println!("{line}");
+        }
+        println!();
+    }
+
     if !config.runs("alloc") {
         return;
     }
