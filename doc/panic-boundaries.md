@@ -73,8 +73,8 @@ compliant.
 
 | Call | Guard | Partial mutation | Notes |
 |------|-------|------------------|-------|
-| `Display` for `PriceLevel`, `OrderQueue` | none | none | materialize via `snapshot_orders` / `snapshot_vec`, then write |
-| `Debug` for `PriceLevel`, `OrderQueue` | none (since #172) | none | manual impls materialize first; `fok_guard` is omitted. The derived impls held `DashMap` shard read locks (and a `fok_guard` read guard) while writing, so a re-entrant destination deadlocked |
+| `Display` for `PriceLevel`, `OrderQueue` | none | none | materialize via `snapshot_orders` / `snapshot_vec`, then write. The materialization is fallible (#164): a refusal writes an `orders=!<error>` marker (rejected by `FromStr`) instead of returning `fmt::Error`, which would make `to_string` panic |
+| `Debug` for `PriceLevel`, `OrderQueue` | none (since #172) | none | manual impls materialize first; `fok_guard` is omitted. The derived impls held `DashMap` shard read locks (and a `fok_guard` read guard) while writing, so a re-entrant destination deadlocked. A refused materialization shows `<unavailable: ..>` (#164) |
 | `Display` / `Debug` for the other crate types | none | none | plain values |
 
 Re-entry from a formatting destination into the level is safe.
@@ -83,8 +83,8 @@ Re-entry from a formatting destination into the level is safe.
 
 | Call | Guard | Partial mutation | Notes |
 |------|-------|------------------|-------|
-| `Serialize for PriceLevel` | none | none | builds `PriceLevelData` (materialized) first |
-| `Serialize for OrderQueue` | none | none | `snapshot_by_seq` first |
+| `Serialize for PriceLevel` | none | none | materializes the orders (fallibly, #164) first, then writes the `PriceLevelData` shape with the orders borrowed |
+| `Serialize for OrderQueue` | none | none | `snapshot_by_seq` (fallible, #164) first |
 | `Serialize for PriceLevelStatistics` | none | none | one seqlock-consistent read into locals first |
 | `Serialize` for snapshots, `Id`, `Hash32`, `PegReferenceType`, `Trade`, `MatchResult`, ... | none | none | owned values |
 | `Deserialize` for `PriceLevel`, `OrderQueue`, snapshots | none | a fresh, not-yet-shared value only | an unwind drops the partially built value |
@@ -121,6 +121,8 @@ and tests.
 | `snapshot` recollection `debug!` (rejected walk: mixed sides or aggregate overflow) and attempts-exhausted `warn!` (#162) | `fok_guard` **shared (read) side**, held for the whole bounded recollection | none: a rejected walk is discarded and the level is never mutated by `snapshot`. An unwind releases the read guard without poisoning it; synchronous reentry into a `Fok` `match_order` on the same level blocks behind that read guard (covered by the global no-reentry obligation) |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
+| sweep park refusal (`SweepScratch`, #164; logged with the sweep stop `error!`) | as the set-aside row | this step is a no-op: `SetAside` mutates nothing and the parked-sequence set's refused reservation leaves it unchanged. **Earlier steps are committed**, as above |
+| sweep post-lock replenish counter refusal (#128 defensive branch, #164; logged with the sweep stop `error!`) | as the set-aside row | the maker was re-sequenced with its new split but the level counters could not follow, so the level is poisoned before the event. **The step and earlier steps are committed** |
 | sweep resting-order count refusal `debug!` (`TopologyUnderflow`, #163) | as the set-aside row | this step is a no-op: the count check ran inside the step's `match_front` entry critical section and refused the full consume before `Remove` committed; the error is built after the entry lock is released. **Earlier steps are committed**, as above |
 | sweep post-removal release failure (#163; logged with the sweep stop `error!`) | as the set-aside row | the maker is removed and the step's counters moved; the topology count could not be released (it already disagreed with the queue), so the level is poisoned before the event. **The step and earlier steps are committed** |
 | removal count refusal `warn!` (`update_order` cancel / price move, #163) | `fok_guard` **shared (read) side** (held by `update_order`); no `DashMap` lock | none: the count check ran inside `OrderQueue::remove_if`'s entry critical section, refused, and released the entry lock before the error is built and logged |
@@ -163,7 +165,48 @@ all-or-nothing. Removing the loss entirely would require deferring every sweep
 event until after `match_order` returns. That is a proposed follow-up, not a
 current guarantee.
 
+## Allocation limits (issue #164)
+
+Every owned collection the engine and the snapshot / serialization paths
+grow is reserved through `try_reserve*` (`src/utils/alloc.rs`) before the
+state it describes is mutated. A refusal is reported as
+`PriceLevelError::CapacityExceeded { resource, additional }`: a `Copy` tag and
+a `usize`, so the report itself never allocates. Capacity arithmetic is
+checked. Covered sites: the queue views and their sort buffer (in-place
+unstable sort, no scratch), the fill-or-kill dry-run copy, the sweep's
+parked-sequence set, `MatchResult` / `TradeList` (#170), the restore
+duplicate-id set, `PriceLevelData`, snapshot `try_clone`, package JSON, the
+hex checksum, decoded order vectors and checksum strings, and the text
+parsers (#174).
+
+Proven-capacity sites that do not reserve: the dry run's `VecDeque` (built
+from the reserved vector in O(1); each step pops one maker before it pushes
+at most one residual, so it never grows), and pushes / extends that follow a
+successful reservation of their exact size.
+
+What is **not** covered, and why:
+
+| Allocation | Where | Why it is not fallible | Caller precondition |
+|------------|-------|------------------------|---------------------|
+| `DashMap` entry / shard growth | `OrderQueue` admission, `try_from_vec`, restore | no stable fallible insertion API | size levels to available memory; an allocator failure aborts |
+| `SkipMap` node | `OrderQueue` index insert / re-key | no fallible API | as above |
+| `Arc::new` | admission, residual / refreshed orders, dry-run residuals, decoded snapshot orders, `stats` | fixed-size; `Arc::try_new` is unstable | as above |
+| `serde_json` internals | error boxing (`serde_json::Error` is a `Box`), scratch buffers while decoding, the `io::Error` wrapper after a refused `FallibleWriter` write | dependency code | a refusal inside `serde_json` aborts; our own buffers report `CapacityExceeded` (on decode, through `serde`'s error type) |
+| error text | `InvalidOperation` / `DeserializationError` messages built for non-allocation failures | small, bounded by the failure, not input growth | none |
+| `tracing` subscriber | events | caller code (see above) | the subscriber must not allocate unboundedly; capacity refusals in `snapshot` and the fill-or-kill dry run are returned without an event |
+
+An allocator failure in any of these is a process-wide abort
+(`handle_alloc_error`), not a Rust panic: it cannot be caught and the library
+does not promise recovery from it. The derived `Clone` of
+`PriceLevelSnapshot` / `PriceLevelSnapshotPackage` is kept for convenience
+and aborts the same way; use their `try_clone`.
+
 ## Tests
+
+`src/price_level/tests/fallible_growth.rs` injects reservation refusals
+through the `cfg(test)`-only `utils::alloc::test_seam` (no production knob)
+and checks the typed error with queue, counters, caller buffers and the
+`MatchResult` prefix preserved.
 
 `src/price_level/tests/caller_boundaries.rs` and
 `src/orders/tests/order_type.rs` use deliberately panicking subscribers,

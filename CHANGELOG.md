@@ -243,7 +243,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercised through internal near-limit fixtures. No hot-path allocation was
   added.
 
+- **Collection growth is fallible before state mutation (#164).** Refused
+  reservations return the allocation-free `CapacityExceeded` (new
+  `CapacityResource` variants `OrderSnapshot`, `SweepScratch`,
+  `RestoreScratch`, `SerializationBuffer`).
+  - `PriceLevel::snapshot_orders`, `snapshot_by_insertion_seq`,
+    `matchable_quantity`, `OrderQueue::snapshot_vec` and `to_vec` return
+    `Result`; `snapshot_by_seq_into` returns `Result<(), _>` and leaves the
+    caller's buffer untouched on error.
+  - `From<&PriceLevel> for PriceLevelData` and
+    `From<OrderQueue> for Vec<Arc<OrderType<()>>>` become `TryFrom`.
+  - The timestamp-order view sorts in place (unstable sort on a unique key);
+    no stable-sort scratch buffer.
+  - The sweep's park set grows fallibly: a refusal stops a
+    non-fill-or-kill sweep with the committed prefix and
+    `MatchResult::error`; fill-or-kill reserves its dry-run copy and park set
+    before the first mutation and is killed with the level untouched on a
+    refusal.
+  - Snapshot restore reserves its duplicate-id set fallibly; the checksum
+    payload is streamed into SHA-256 (checksums unchanged); package JSON,
+    the hex checksum and decoded order vectors / checksum strings grow
+    fallibly. `snapshot()` returns a capacity error without recollecting.
+  - `Display` / `Debug` of `PriceLevel` / `OrderQueue` write an error marker
+    instead of `fmt::Error` when materialization is refused; `FromStr`
+    rejects the marker.
+  - Text-parser buffer refusals are `CapacityExceeded { resource: Text }`
+    (were `InvalidOperation`).
+  - The defensive post-lock replenish counter branch poisons the level on a
+    refused transition instead of ignoring it.
+
 ### Added
+
+- `PriceLevelSnapshot::try_clone` and `PriceLevelSnapshotPackage::try_clone`
+  (#164): fallible owned copies (the derived `Clone` is kept and documented
+  as aborting on allocator failure).
 
 - `UuidGenerator::EXHAUSTED`, `UuidGenerator::is_exhausted`,
   `UuidGenerator::remaining`, `UuidGenerator::namespace` and

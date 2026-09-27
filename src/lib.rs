@@ -376,7 +376,7 @@
 //! | v0.6 | v0.7 |
 //! |------|------|
 //! | `level.iter_orders() -> Vec<Arc<OrderType<()>>>` | [`level.iter_orders()`](PriceLevel::iter_orders) `-> impl Iterator` |
-//! | (no equivalent) | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Vec<Arc<OrderType<()>>>` |
+//! | (no equivalent) | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Vec<Arc<OrderType<()>>>` (a `Result` since v0.10, #164) |
 //!
 //! ### Snapshot Persistence and Recovery
 //!
@@ -923,7 +923,8 @@
 //! Segmentation is unchanged, and an element that fails to parse is still
 //! reported before a bracket imbalance, so errors for other malformed input
 //! are the same. A parser that cannot grow its output vector reports
-//! [`PriceLevelError::InvalidOperation`] instead of aborting.
+//! [`PriceLevelError::CapacityExceeded`] instead of aborting (resource `Text`; an
+//! `InvalidOperation` before #164).
 //!
 //! ```rust
 //! use pricelevel::{PriceLevelError, TradeList};
@@ -1213,6 +1214,61 @@
 //!   The match pre-size hint uses a checked `usize::try_from` of the taker
 //!   quantity: a quantity above `usize::MAX` sizes by the order count instead
 //!   of truncating.
+//!
+//! ## Migration Guide (fallible collection growth — breaking)
+//!
+//! Every owned collection the engine and the snapshot / serialization paths
+//! grow is now reserved through `try_reserve*` before any state mutation
+//! (#164). A refused reservation is reported as the fixed-size
+//! [`PriceLevelError::CapacityExceeded`] (its [`CapacityResource`] tag is
+//! `Copy`, so reporting it never allocates) instead of aborting the process.
+//! `CapacityResource` gains `OrderSnapshot`, `SweepScratch`,
+//! `RestoreScratch` and `SerializationBuffer` (it is `#[non_exhaustive]`).
+//!
+//! | Before | After |
+//! |--------|-------|
+//! | `level.snapshot_orders() -> Vec<_>` | [`level.snapshot_orders()`](PriceLevel::snapshot_orders) `-> Result<Vec<_>, PriceLevelError>` |
+//! | `level.snapshot_by_insertion_seq() -> Vec<_>` | [`level.snapshot_by_insertion_seq()`](PriceLevel::snapshot_by_insertion_seq) `-> Result<Vec<_>, _>` |
+//! | `level.snapshot_by_seq_into(&mut out)` | [`level.snapshot_by_seq_into(&mut out)`](PriceLevel::snapshot_by_seq_into) `-> Result<(), _>`; `out` is untouched on `Err` |
+//! | `level.matchable_quantity(q, id) -> u64` | [`level.matchable_quantity(q, id)`](PriceLevel::matchable_quantity) `-> Result<u64, _>` |
+//! | `queue.snapshot_vec()` / `queue.to_vec() -> Vec<_>` | [`OrderQueue::snapshot_vec`] / [`OrderQueue::to_vec`] `-> Result<Vec<_>, _>` |
+//! | `Vec::from(queue)` / `queue.into()` | `Vec::try_from(queue)` / `queue.try_into()` |
+//! | `PriceLevelData::from(&level)` / `(&level).into()` | `PriceLevelData::try_from(&level)` |
+//! | `snapshot.clone()` / `package.clone()` (infallible, kept) | also [`PriceLevelSnapshot::try_clone`] / [`PriceLevelSnapshotPackage::try_clone`] |
+//!
+//! Behavior:
+//!
+//! - **Sorting.** [`OrderQueue::snapshot_vec`] (and
+//!   [`PriceLevel::snapshot_orders`]) sort in place with an unstable sort on
+//!   the unique `(timestamp, sequence)` key: same order as before, no hidden
+//!   stable-sort scratch buffer.
+//! - **Matching.** A parked maker (self-trade skip) whose sequence cannot be
+//!   recorded stops a non-fill-or-kill sweep with the committed prefix and
+//!   [`MatchResult::error`] (`SweepScratch`). A fill-or-kill taker reserves
+//!   its dry-run working copy and its park set before the first mutation; a
+//!   refusal kills it with the level untouched and the error set.
+//!   [`PriceLevel::matchable_quantity`] returns `Err` only when its working
+//!   copy cannot be reserved (a silent `0` would under-report depth).
+//! - **Snapshots.** [`PriceLevel::snapshot`] returns the capacity error at
+//!   once (no recollection). The checksum payload is streamed into SHA-256
+//!   (no payload buffer; checksums are byte-identical), the hex string and
+//!   [`PriceLevelSnapshotPackage::to_json`] output grow fallibly, and decoded
+//!   order vectors / checksum strings are reserved fallibly (a refusal while
+//!   decoding surfaces as `DeserializationError` through `serde`). Legacy
+//!   payloads decode unchanged.
+//! - **Formatting.** `Display` / `Debug` for [`PriceLevel`] and
+//!   [`OrderQueue`] never return `fmt::Error` on a refused materialization
+//!   (that would make `to_string` panic): they write an `orders=!<error>` /
+//!   `<unavailable: ..>` marker, which the `FromStr` parsers reject.
+//! - **Text parsers.** A refused parser buffer is now `CapacityExceeded`
+//!   (resource `Text`) instead of an `InvalidOperation` whose message was
+//!   allocated after the failure.
+//! - **Poisoning.** The defensive post-lock replenish counter branch (#128)
+//!   no longer ignores a refused counter transition: it poisons the level and
+//!   stops the sweep with `InvalidOperation`, like the #163 failed rollback.
+//! - **Not covered.** `DashMap` / `SkipMap` node insertion and `Arc::new` have
+//!   no stable fallible API; an allocator failure there aborts the process
+//!   (not a Rust panic). See `doc/panic-boundaries.md`.
 //!
 
 mod orders;
