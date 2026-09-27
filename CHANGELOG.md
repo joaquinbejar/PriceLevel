@@ -184,6 +184,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remainder and a consistent level. A fill-or-kill taker reserves its exact
   trade-id count before touching any maker and is `Killed` with the error set
   and the level unchanged when the generator cannot supply them.
+- **Engine invariants are transactional typed failures (#163).** The
+  resting-order count release is checked and validated before the queue
+  removal it follows: a count that disagrees with the queue now makes a
+  cancel / price-moving `update_order` return `InvalidOperation` with the
+  level untouched, stops a non-fill-or-kill sweep with the committed prefix
+  and `MatchResult::error`, and kills a fill-or-kill taker before its first
+  mutation. It previously triggered a `debug_assert!` in debug builds and a
+  silent skipped decrement in release. A failure after a committed removal,
+  or a failed update-counter rollback, poisons the level (fail fast). A
+  resize validates the decided order id before reserving level counters, so
+  no partial reservation survives a rejection. The poisoned-level error text
+  changed. On targets narrower than 64 bits, admission and restore cap the
+  resting-order count at `usize::MAX` so `order_count()` is exact.
 
 - **Internal counters refuse to wrap (#165).** New
   `PriceLevelError::CounterExhausted { counter }` variant and

@@ -81,6 +81,18 @@ fn fire_remove_gap_hook(order_id: Id) {
     }
 }
 
+/// Error for an update decision whose order does not carry the id it is stored
+/// under (issue #163). Returned before any reservation or commit.
+#[cold]
+#[inline(never)]
+fn update_id_mismatch(stored: Id, decided: Id) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "update decision for order {stored} carries a different order id {decided}; rejected before commit"
+        ),
+    }
+}
+
 /// A thread-safe queue of orders with specialized operations.
 ///
 /// Time priority (price-time / FIFO within the level) is maintained by an
@@ -167,7 +179,7 @@ pub(crate) enum FrontAction {
     SetAside,
 }
 
-/// The mutation an [`OrderQueue::update_entry`] decision closure asks the queue
+/// The mutation an [`OrderQueue::update_entry_with`] decision closure asks the queue
 /// to commit, after deriving it from the **live** stored order under the entry
 /// lock. Mirrors the [`FrontAction`] precedent for the match sweep.
 #[derive(Debug)]
@@ -182,6 +194,18 @@ pub(crate) enum UpdateDecision {
     /// it reserves any level counter (issue #165), so the commit cannot fail.
     /// Same shape as the [`FrontAction::ReplaceAtTail`] the match sweep commits.
     ReplaceAtTail(Arc<OrderType<()>>, ReservedSeq),
+}
+
+/// The outcome of [`OrderQueue::remove_if`] (issue #163).
+#[derive(Debug)]
+pub(crate) enum RemoveOutcome {
+    /// The id is not resident; nothing was checked or changed.
+    Absent,
+    /// The id is resident but the check refused the removal; the entry, its
+    /// sequence and the index are unchanged.
+    Refused,
+    /// The entry was removed from the map and the index.
+    Removed(Arc<OrderType<()>>),
 }
 
 /// The outcome of a single [`OrderQueue::match_front`] step, reported back to
@@ -239,8 +263,10 @@ impl OrderQueue {
     #[inline]
     #[must_use]
     pub(crate) fn seq_headroom(&self) -> u64 {
-        // `next_seq <= u64::MAX` always, so the difference is in range.
-        u64::MAX - self.next_seq.load(Ordering::Relaxed)
+        // `next_seq <= u64::MAX` always, so `abs_diff` is exactly
+        // `u64::MAX - next_seq`; it is total, so no unchecked subtraction is
+        // needed to express it (issue #163 arithmetic policy).
+        u64::MAX.abs_diff(self.next_seq.load(Ordering::Relaxed))
     }
 
     /// Test-only seeding seam (issue #165): place the sequence counter at
@@ -272,7 +298,7 @@ impl OrderQueue {
     /// uses [`OrderQueue::try_push`] / [`OrderQueue::try_push_with`]
     /// (insert-if-absent, issue #113) and every quantity update re-derives and
     /// re-sequences in place under the entry lock via
-    /// [`OrderQueue::update_entry`] (issue #115). Its blind overwrite would
+    /// [`OrderQueue::update_entry_with`] (issue #115). Its blind overwrite would
     /// leave the id-keyed map and the ordered index disagreeing, so it is
     /// deliberately not part of the public API — like [`OrderQueue::reinsert`],
     /// it is `#[cfg(test)]`.
@@ -685,8 +711,29 @@ impl OrderQueue {
         }
     }
 
-    /// Atomically derive, decide, and commit an update against the **live**
-    /// stored order for `order_id`, all inside the per-entry lock (issue #115).
+    /// Single-closure [`OrderQueue::update_entry_with`] with no reservation
+    /// phase. Production updates reserve level counters and call
+    /// `update_entry_with` directly; this form is kept for queue-level tests.
+    #[cfg(test)]
+    #[must_use = "the caller must handle committed / rejected / absent outcomes"]
+    pub(crate) fn update_entry<F>(
+        &self,
+        order_id: Id,
+        decide: F,
+    ) -> Option<Result<Arc<OrderType<()>>, PriceLevelError>>
+    where
+        F: FnOnce(&OrderType<()>) -> Result<UpdateDecision, PriceLevelError>,
+    {
+        self.update_entry_with(
+            order_id,
+            |live| decide(live).map(|decision| (decision, ())),
+            |()| Ok(()),
+        )
+    }
+
+    /// Atomically derive, decide, validate, reserve and commit an update
+    /// against the **live** stored order for `order_id`, all inside the
+    /// per-entry lock (issues #115, #163).
     ///
     /// `decide` runs against the order currently resident in the map — not a
     /// stale pre-read — and returns the [`UpdateDecision`] to commit, or a
@@ -699,10 +746,24 @@ impl OrderQueue {
     /// pattern; the closure must not let a reference into the live order escape
     /// its return value.
     ///
-    /// Returns:
-    /// - `None` if the id is not present (concurrently removed / never existed);
-    /// - `Some(Err(_))` if `decide` rejected the update (queue untouched);
-    /// - `Some(Ok(new_order))` with the committed order on success.
+    /// The protocol is two-phase (issue #163): a pure decision, queue-side
+    /// validation, then the caller's side-effecting reservation, then the
+    /// infallible commit.
+    ///
+    /// 1. `decide` runs against the live stored order and returns the
+    ///    [`UpdateDecision`] plus a reservation plan `P`. It must be free of
+    ///    side effects on anything a rejection would have to undo.
+    /// 2. The queue validates the decision: the decided order must keep the id
+    ///    it is stored under (an order re-keyed under a different id would
+    ///    split the map from the index). A mismatch returns
+    ///    [`PriceLevelError::InvalidOperation`] with `reserve` NEVER called, so
+    ///    no level counter was reserved and the queue is untouched.
+    /// 3. `reserve(plan)` takes the caller's reservations (level counters). On
+    ///    `Err` it must have undone its own partial work; the queue is
+    ///    untouched.
+    /// 4. The commit (`KeepInPlace` swap / `ReplaceAtTail` re-sequence) has no
+    ///    failure mode, so a reservation taken in step 3 is never left behind
+    ///    by a rejection.
     ///
     /// Both commits happen under the single entry lock this method already
     /// holds: `KeepInPlace` swaps the stored value; `ReplaceAtTail` swaps the
@@ -711,17 +772,28 @@ impl OrderQueue {
     /// here would deadlock on the same shard lock). Like
     /// [`OrderQueue::match_front`]'s closure, `decide` may call
     /// [`OrderQueue::try_reserve_seq`] (sequence atomic only) but nothing else
-    /// on this queue; it must reserve the sequence before it reserves any
-    /// level counter, so an exhausted sequence is rejected with nothing to
-    /// roll back (issue #165).
+    /// on this queue; it reserves the sequence in step 1, before the id
+    /// validation and before `reserve` touches any level counter, so an
+    /// exhausted sequence is rejected with nothing to roll back (issue #165).
+    /// A sequence reserved for a decision the id validation then rejects is
+    /// skipped, never reissued (FIFO order and uniqueness are preserved).
+    ///
+    /// Returns:
+    /// - `None` if the id is not present (concurrently removed / never existed);
+    ///   neither closure runs;
+    /// - `Some(Err(_))` if `decide`, the id validation, or `reserve` rejected
+    ///   the update (queue untouched);
+    /// - `Some(Ok(new_order))` with the committed order on success.
     #[must_use = "the caller must handle committed / rejected / absent outcomes"]
-    pub(crate) fn update_entry<F>(
+    pub(crate) fn update_entry_with<F, R, P>(
         &self,
         order_id: Id,
         decide: F,
+        reserve: R,
     ) -> Option<Result<Arc<OrderType<()>>, PriceLevelError>>
     where
-        F: FnOnce(&OrderType<()>) -> Result<UpdateDecision, PriceLevelError>,
+        F: FnOnce(&OrderType<()>) -> Result<(UpdateDecision, P), PriceLevelError>,
+        R: FnOnce(P) -> Result<(), PriceLevelError>,
     {
         match self.orders.entry(order_id) {
             Entry::Vacant(_) => None,
@@ -729,18 +801,26 @@ impl OrderQueue {
                 // Derive + decide against the LIVE stored order under the lock.
                 // The borrow ends with the `decide` call (it returns owned data),
                 // so `get_mut()` below is free to commit.
-                let decision = match decide(occupied.get().1.as_ref()) {
-                    Ok(decision) => decision,
+                let (decision, plan) = match decide(occupied.get().1.as_ref()) {
+                    Ok(decided) => decided,
                     Err(err) => return Some(Err(err)),
                 };
-                debug_assert_eq!(
-                    match &decision {
-                        UpdateDecision::KeepInPlace(o) | UpdateDecision::ReplaceAtTail(o, _) =>
-                            o.id(),
-                    },
-                    order_id,
-                    "update_entry: the decided order must keep the id it is stored under"
-                );
+                // Typed validation BEFORE any reservation or commit (issue
+                // #163; replaces a debug-only assertion that ran after the
+                // caller had already reserved its counters).
+                let decided_id = match &decision {
+                    UpdateDecision::KeepInPlace(o) | UpdateDecision::ReplaceAtTail(o, _) => o.id(),
+                };
+                if decided_id != order_id {
+                    // Release the entry lock before building the error.
+                    drop(occupied);
+                    return Some(Err(update_id_mismatch(order_id, decided_id)));
+                }
+                // Reserve (caller side effects); a failure leaves the queue
+                // untouched and the caller has undone its own partial work.
+                if let Err(err) = reserve(plan) {
+                    return Some(Err(err));
+                }
                 // Each arm swaps the new order into the slot with `mem::replace`,
                 // capturing the OLD `Arc` in `evicted` (issue #128). The old Arc
                 // is dropped only AFTER the entry lock is released below, so if
@@ -819,6 +899,51 @@ impl OrderQueue {
         fire_remove_gap_hook(order_id);
         self.index.remove(&seq);
         Some(order)
+    }
+
+    /// Remove `order_id` only if `check` accepts it, with the check and the
+    /// removal inside ONE per-entry critical section (issue #163).
+    ///
+    /// The occupied entry is selected and its shard write lock held while
+    /// `check` runs against the resident order and, on acceptance, while the
+    /// entry is removed. So `check` observes a state in which this order is
+    /// resident and cannot be removed or replaced by anyone else until the
+    /// decision commits — there is no gap between "the order is here" and
+    /// "remove it" for a concurrent admission, cancellation or match step to
+    /// fall into. The removal is still the single per-entry removal of issue
+    /// #119: a concurrent cancel and match of the same id resolve to exactly
+    /// one winner, and the other observes `Absent`.
+    ///
+    /// `check` runs under the shard write lock: it must be short, must not
+    /// touch this queue, must not emit events and should not allocate. It
+    /// returns a plain `bool` so the caller builds any error after the lock
+    /// is released.
+    ///
+    /// The index entry is removed after the map entry (as in
+    /// [`OrderQueue::remove`]); a front scan that meets the transient stale
+    /// index key self-heals on its `Vacant` branch.
+    pub(crate) fn remove_if<C>(&self, order_id: Id, check: C) -> RemoveOutcome
+    where
+        C: FnOnce(&OrderType<()>) -> bool,
+    {
+        let (seq, order) = match self.orders.entry(order_id) {
+            Entry::Vacant(_) => return RemoveOutcome::Absent,
+            Entry::Occupied(occupied) => {
+                if !check(occupied.get().1.as_ref()) {
+                    return RemoveOutcome::Refused;
+                }
+                // `remove_entry` consumes the guard: the entry lock is
+                // released when this arm ends, so the index is cleaned
+                // outside the shard critical section.
+                let (_, slot) = occupied.remove_entry();
+                slot
+            }
+        };
+        // Same map-then-index gap as `remove` (issue #155 test seam).
+        #[cfg(test)]
+        fire_remove_gap_hook(order_id);
+        self.index.remove(&seq);
+        RemoveOutcome::Removed(order)
     }
 
     /// Test-only invariant check: the id-keyed map and the ordered index are
@@ -919,7 +1044,7 @@ impl OrderQueue {
     /// duplicate id is impossible by construction, and because each
     /// `(seq, order)` pair is swapped atomically under the `DashMap` per-entry
     /// lock (both the [`FrontAction::ReplaceAtTail`] sweep step and
-    /// [`OrderQueue::update_entry`] mutate value and sequence together under
+    /// [`OrderQueue::update_entry_with`] mutate value and sequence together under
     /// it), every emitted pair is a real committed state — an order caught
     /// mid-re-sequencing appears at either its old or its new sequence, never
     /// both and never as a mixed `(old_seq, new_order)` pair. Walking the
