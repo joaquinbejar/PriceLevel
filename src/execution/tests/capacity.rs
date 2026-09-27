@@ -2,6 +2,11 @@
 //! `MatchResult` error slot (serde / bincode / legacy decoding).
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): raw arithmetic is
+// permitted inside `mod tests` per the Testing section of
+// `rules/global_rules.md`. Production code outside this module keeps the
+// full deny list.
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use crate::errors::{CapacityResource, PriceLevelError};
     use crate::execution::list::TradeList;

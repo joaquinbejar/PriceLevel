@@ -6,6 +6,11 @@
 //! installs no panic hook and catches nothing.
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): raw arithmetic
+// and a deliberate `panic!` in a `Result`-returning helper are permitted
+// inside `mod tests` per the Testing section of `rules/global_rules.md`.
+// Production code outside this module keeps the full deny list.
+#[allow(clippy::arithmetic_side_effects, clippy::panic_in_result_fn)]
 mod tests {
     use crate::UuidGenerator;
     use crate::execution::{MatchOutcome, TakerKind};

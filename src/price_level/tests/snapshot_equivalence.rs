@@ -11,6 +11,12 @@
 //! wide / degraded statistics, and over every pinned legacy fixture.
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): the deterministic
+// PRNG fixture generator below does raw arithmetic and a sign-changing
+// `u64`-to-`i64` cast on generated offsets, permitted inside `mod tests` per
+// the Testing section of `rules/global_rules.md`. Production code outside
+// this module keeps the full deny list.
+#[allow(clippy::arithmetic_side_effects, clippy::cast_possible_wrap)]
 mod tests {
     use crate::errors::PriceLevelError;
     use crate::orders::{Hash32, Id, OrderType, PegReferenceType, Side, TimeInForce};

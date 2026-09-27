@@ -413,6 +413,11 @@ impl Id {
 }
 
 #[cfg(test)]
+// Scoped to this co-located test module only (issue #173): the deterministic
+// entropy-source test doubles below do raw counter arithmetic, permitted
+// inside `mod tests` per the Testing section of `rules/global_rules.md`.
+// Production code outside this module keeps the full deny list.
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use super::Id;
     use crate::Side;
