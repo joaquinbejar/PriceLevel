@@ -2,6 +2,7 @@ use crate::errors::PriceLevelError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Domain value type representing a price.
 #[derive(
@@ -209,6 +210,32 @@ impl TimestampMs {
         Ok(Self(value))
     }
 
+    /// Converts an already-read [`SystemTime`] into milliseconds since the
+    /// Unix epoch, truncating any sub-millisecond part.
+    ///
+    /// This does **not** read the clock; the caller supplies `time` (for
+    /// example from its own [`UnixClock`](crate::UnixClock) implementation).
+    /// No value is clamped or defaulted.
+    ///
+    /// # Errors
+    ///
+    /// - [`PriceLevelError::InvalidOperation`] if `time` is before the epoch.
+    /// - [`PriceLevelError::InvalidFieldValue`] (field `timestamp_ms`) if the
+    ///   millisecond count does not fit in `u64`.
+    pub fn try_from_system_time(time: SystemTime) -> Result<Self, PriceLevelError> {
+        let since_epoch =
+            time.duration_since(UNIX_EPOCH)
+                .map_err(|error| PriceLevelError::InvalidOperation {
+                    message: format!("time is before the unix epoch: {error}"),
+                })?;
+        let millis = since_epoch.as_millis();
+        let millis = u64::try_from(millis).map_err(|_| PriceLevelError::InvalidFieldValue {
+            field: "timestamp_ms".to_string(),
+            value: millis.to_string(),
+        })?;
+        Ok(Self(millis))
+    }
+
     /// Returns the inner raw milliseconds value.
     #[must_use]
     pub const fn as_u64(self) -> u64 {
@@ -238,7 +265,50 @@ impl FromStr for TimestampMs {
 #[cfg(test)]
 mod tests {
     use super::{Price, Quantity, TimestampMs};
+    use crate::errors::PriceLevelError;
     use std::str::FromStr;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn timestamp_from_system_time_epoch_is_zero() {
+        let ts = TimestampMs::try_from_system_time(UNIX_EPOCH).unwrap();
+        assert_eq!(ts, TimestampMs::ZERO);
+    }
+
+    #[test]
+    fn timestamp_from_system_time_truncates_sub_millisecond_part() {
+        let time = UNIX_EPOCH + Duration::from_micros(1_716_000_000_123_999);
+        let ts = TimestampMs::try_from_system_time(time).unwrap();
+        assert_eq!(ts.as_u64(), 1_716_000_000_123);
+    }
+
+    #[test]
+    fn timestamp_from_system_time_rejects_pre_epoch() {
+        let before = UNIX_EPOCH.checked_sub(Duration::from_millis(1)).unwrap();
+        let err = TimestampMs::try_from_system_time(before).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn timestamp_from_system_time_rejects_millis_beyond_u64() {
+        // u64::MAX ms + 1 ms, built from seconds + millis to avoid overflow.
+        let span =
+            Duration::from_secs(u64::MAX / 1_000) + Duration::from_millis(u64::MAX % 1_000 + 1);
+        // Only meaningful on platforms whose `SystemTime` can represent it.
+        if let Some(far_future) = UNIX_EPOCH.checked_add(span) {
+            match TimestampMs::try_from_system_time(far_future).unwrap_err() {
+                PriceLevelError::InvalidFieldValue { field, value } => {
+                    assert_eq!(field, "timestamp_ms");
+                    assert_eq!(value, (u128::from(u64::MAX) + 1).to_string());
+                }
+                other => panic!("unexpected error {other:?}"),
+            }
+        }
+        if let Some(max) = UNIX_EPOCH.checked_add(Duration::from_millis(u64::MAX)) {
+            let ts = TimestampMs::try_from_system_time(max).unwrap();
+            assert_eq!(ts.as_u64(), u64::MAX);
+        }
+    }
 
     #[test]
     fn price_roundtrip() {

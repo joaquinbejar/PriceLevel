@@ -50,6 +50,15 @@ mod tests {
     }
 
     #[test]
+    fn test_entropy_unavailable_display_and_debug() {
+        let error = PriceLevelError::EntropyUnavailable {
+            message: "getrandom failed".to_string(),
+        };
+        assert_eq!(error.to_string(), "Entropy unavailable: getrandom failed");
+        assert_eq!(format!("{error:?}"), error.to_string());
+    }
+
+    #[test]
     fn test_debug_implementation() {
         // Test that Debug produces the same output as Display for our cases
 

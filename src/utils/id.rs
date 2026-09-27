@@ -1,4 +1,6 @@
 use crate::errors::PriceLevelError;
+use crate::utils::TimestampMs;
+use crate::utils::entropy::{EntropySource, UnixClock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -73,29 +75,105 @@ impl<'de> Deserialize<'de> for Id {
     }
 }
 
-impl Default for Id {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Number of random bytes in a ULID (its 80-bit randomness field).
+const ULID_RANDOM_BYTES: usize = 10;
 
 impl Id {
-    /// Create a new random id (defaults to ULID for better sortability).
-    #[must_use]
-    pub fn new() -> Self {
-        Self::Ulid(Ulid::generate())
+    /// Largest timestamp a ULID can carry: its time field is 48 bits wide.
+    pub const ULID_MAX_TIMESTAMP_MS: u64 = (1_u64 << Ulid::TIME_BITS) - 1;
+
+    /// Creates a new random id, ULID-based for lexicographic sortability.
+    ///
+    /// Equivalent to [`Id::try_new_ulid`]. Replaces the infallible `Id::new()`
+    /// and the random `Default` impl, both removed in v0.10.
+    ///
+    /// # Errors
+    ///
+    /// See [`Id::try_new_ulid`].
+    pub fn try_new<C, E>(clock: &C, entropy: &mut E) -> Result<Self, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+        E: EntropySource + ?Sized,
+    {
+        Self::try_new_ulid(clock, entropy)
     }
 
-    /// Create a new UUID-based id.
-    #[must_use]
-    pub fn new_uuid() -> Self {
-        Self::Uuid(Uuid::new_v4())
+    /// Creates a new random version 4 UUID id.
+    ///
+    /// Sixteen bytes are drawn from `entropy`; the version (`4`) and variant
+    /// (RFC 4122 / RFC 9562) bits are then set exactly as `Uuid::new_v4` sets
+    /// them, so the wire format is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error reported by `entropy` unchanged (conventionally
+    /// [`PriceLevelError::EntropyUnavailable`]). No identifier is produced and
+    /// no fallback value is substituted.
+    pub fn try_new_uuid<E>(entropy: &mut E) -> Result<Self, PriceLevelError>
+    where
+        E: EntropySource + ?Sized,
+    {
+        let mut bytes = [0_u8; 16];
+        entropy.try_fill_bytes(&mut bytes)?;
+        Ok(Self::Uuid(
+            uuid::Builder::from_random_bytes(bytes).into_uuid(),
+        ))
     }
 
-    /// Create a new ULID-based id.
-    #[must_use]
-    pub fn new_ulid() -> Self {
-        Self::Ulid(Ulid::generate())
+    /// Creates a new random ULID id stamped with `clock`'s current time.
+    ///
+    /// The clock is read and validated **before** any entropy is drawn, so a
+    /// clock or range failure leaves the entropy source untouched.
+    ///
+    /// # Errors
+    ///
+    /// - The error reported by `clock`, unchanged.
+    /// - [`PriceLevelError::InvalidFieldValue`] (field `timestamp_ms`) if the
+    ///   time exceeds [`Id::ULID_MAX_TIMESTAMP_MS`].
+    /// - The error reported by `entropy`, unchanged.
+    pub fn try_new_ulid<C, E>(clock: &C, entropy: &mut E) -> Result<Self, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+        E: EntropySource + ?Sized,
+    {
+        let timestamp = clock.try_now_ms()?;
+        Self::try_new_ulid_at(timestamp, entropy)
+    }
+
+    /// Creates a new ULID id with an explicit timestamp and random bytes drawn
+    /// from `entropy`.
+    ///
+    /// The timestamp is validated against the 48-bit ULID time field before
+    /// any entropy is drawn; it is never masked or clamped.
+    ///
+    /// # Errors
+    ///
+    /// - [`PriceLevelError::InvalidFieldValue`] (field `timestamp_ms`) if
+    ///   `timestamp` exceeds [`Id::ULID_MAX_TIMESTAMP_MS`]. The entropy source
+    ///   is not consulted.
+    /// - The error reported by `entropy`, unchanged.
+    pub fn try_new_ulid_at<E>(
+        timestamp: TimestampMs,
+        entropy: &mut E,
+    ) -> Result<Self, PriceLevelError>
+    where
+        E: EntropySource + ?Sized,
+    {
+        let timestamp_ms = timestamp.as_u64();
+        if timestamp_ms > Self::ULID_MAX_TIMESTAMP_MS {
+            return Err(PriceLevelError::InvalidFieldValue {
+                field: "timestamp_ms".to_string(),
+                value: timestamp_ms.to_string(),
+            });
+        }
+        let mut random_bytes = [0_u8; ULID_RANDOM_BYTES];
+        entropy.try_fill_bytes(&mut random_bytes)?;
+        // 10 bytes = 80 bits, so the fold never shifts a set bit past bit 79
+        // and `from_parts` discards nothing.
+        let random = random_bytes
+            .iter()
+            .fold(0_u128, |acc, byte| (acc << 8) | u128::from(*byte));
+        Ok(Self::Ulid(Ulid::from_parts(timestamp_ms, random)))
     }
 
     /// Create a nil UUID id.
@@ -197,17 +275,265 @@ impl Id {
 mod tests {
     use super::Id;
     use crate::Side;
+    use crate::errors::PriceLevelError;
+    use crate::utils::{EntropySource, TimestampMs, UnixClock};
     use std::str::FromStr;
-    use uuid::Uuid;
+    use uuid::{Uuid, Variant};
+
+    /// Deterministic entropy: emits `next, next+1, ...` (wrapping) and counts
+    /// calls / bytes drawn.
+    struct CountingEntropy {
+        next: u8,
+        calls: usize,
+        bytes_drawn: usize,
+    }
+
+    impl CountingEntropy {
+        fn starting_at(next: u8) -> Self {
+            Self {
+                next,
+                calls: 0,
+                bytes_drawn: 0,
+            }
+        }
+    }
+
+    impl EntropySource for CountingEntropy {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), PriceLevelError> {
+            self.calls += 1;
+            for byte in dest.iter_mut() {
+                *byte = self.next;
+                self.next = self.next.wrapping_add(1);
+            }
+            self.bytes_drawn += dest.len();
+            Ok(())
+        }
+    }
+
+    /// Fills every byte with one constant value.
+    struct ConstEntropy(u8);
+
+    impl EntropySource for ConstEntropy {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), PriceLevelError> {
+            dest.fill(self.0);
+            Ok(())
+        }
+    }
+
+    /// Simulates an OS entropy / RNG (re)seed failure.
+    struct FailingEntropy {
+        calls: usize,
+    }
+
+    impl EntropySource for FailingEntropy {
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), PriceLevelError> {
+            self.calls += 1;
+            // Scribble on the buffer to prove partial output is discarded.
+            dest.fill(0xAB);
+            Err(PriceLevelError::EntropyUnavailable {
+                message: "injected getrandom failure".to_string(),
+            })
+        }
+    }
+
+    struct FixedClock(u64);
+
+    impl UnixClock for FixedClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            Ok(TimestampMs::new(self.0))
+        }
+    }
+
+    struct FailingClock;
+
+    impl UnixClock for FailingClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            Err(PriceLevelError::InvalidOperation {
+                message: "injected clock failure".to_string(),
+            })
+        }
+    }
+
+    fn expect_uuid(id: Id) -> Uuid {
+        match id {
+            Id::Uuid(uuid) => uuid,
+            other => panic!("expected a UUID id, got {other:?}"),
+        }
+    }
+
+    fn expect_ulid(id: Id) -> ulid::Ulid {
+        match id {
+            Id::Ulid(ulid) => ulid,
+            other => panic!("expected a ULID id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_try_new_uuid_sets_v4_version_and_variant_bits() {
+        for fill in [0x00_u8, 0xFF, 0x5A, 0xA5] {
+            let uuid = expect_uuid(Id::try_new_uuid(&mut ConstEntropy(fill)).unwrap());
+            assert_eq!(uuid.get_version_num(), 4, "fill {fill:#04x}");
+            assert_eq!(uuid.get_variant(), Variant::RFC4122, "fill {fill:#04x}");
+        }
+    }
+
+    #[test]
+    fn test_try_new_uuid_preserves_random_bits() {
+        let mut entropy = CountingEntropy::starting_at(0);
+        let uuid = expect_uuid(Id::try_new_uuid(&mut entropy).unwrap());
+        assert_eq!(entropy.calls, 1);
+        assert_eq!(entropy.bytes_drawn, 16);
+
+        let expected: [u8; 16] = std::array::from_fn(|i| u8::try_from(i).unwrap());
+        let bytes = uuid.as_bytes();
+        for (index, (got, want)) in bytes.iter().zip(expected.iter()).enumerate() {
+            match index {
+                // Version nibble lives in the high half of byte 6.
+                6 => assert_eq!(*got, (want & 0x0F) | 0x40),
+                // Variant bits `10` live in the top of byte 8.
+                8 => assert_eq!(*got, (want & 0x3F) | 0x80),
+                _ => assert_eq!(got, want, "byte {index}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_new_uuid_propagates_entropy_failure() {
+        let mut entropy = FailingEntropy { calls: 0 };
+        let err = Id::try_new_uuid(&mut entropy).unwrap_err();
+        assert!(matches!(
+            err,
+            PriceLevelError::EntropyUnavailable { ref message } if message == "injected getrandom failure"
+        ));
+        assert_eq!(entropy.calls, 1);
+    }
+
+    #[test]
+    fn test_try_new_ulid_at_encodes_timestamp_and_random_fields() {
+        let mut entropy = CountingEntropy::starting_at(1);
+        let timestamp = TimestampMs::new(1_716_000_000_123);
+        let ulid = expect_ulid(Id::try_new_ulid_at(timestamp, &mut entropy).unwrap());
+        assert_eq!(entropy.calls, 1);
+        assert_eq!(entropy.bytes_drawn, 10);
+        assert_eq!(ulid.timestamp_ms(), 1_716_000_000_123);
+        assert_eq!(ulid.random(), 0x0102_0304_0506_0708_090A_u128);
+    }
+
+    #[test]
+    fn test_try_new_ulid_at_accepts_timestamp_boundaries() {
+        for ts in [
+            0,
+            1,
+            Id::ULID_MAX_TIMESTAMP_MS - 1,
+            Id::ULID_MAX_TIMESTAMP_MS,
+        ] {
+            let ulid = expect_ulid(
+                Id::try_new_ulid_at(TimestampMs::new(ts), &mut ConstEntropy(0xFF)).unwrap(),
+            );
+            assert_eq!(ulid.timestamp_ms(), ts);
+            assert_eq!(ulid.random(), (1_u128 << 80) - 1);
+        }
+        assert_eq!(Id::ULID_MAX_TIMESTAMP_MS, (1_u64 << 48) - 1);
+    }
+
+    #[test]
+    fn test_try_new_ulid_at_rejects_out_of_range_timestamp_without_drawing_entropy() {
+        for ts in [Id::ULID_MAX_TIMESTAMP_MS + 1, u64::MAX] {
+            let mut entropy = CountingEntropy::starting_at(0);
+            let err = Id::try_new_ulid_at(TimestampMs::new(ts), &mut entropy).unwrap_err();
+            match err {
+                PriceLevelError::InvalidFieldValue { field, value } => {
+                    assert_eq!(field, "timestamp_ms");
+                    assert_eq!(value, ts.to_string());
+                }
+                other => panic!("unexpected error {other:?}"),
+            }
+            assert_eq!(entropy.calls, 0);
+            assert_eq!(entropy.next, 0);
+        }
+    }
+
+    #[test]
+    fn test_try_new_ulid_propagates_entropy_failure() {
+        let mut entropy = FailingEntropy { calls: 0 };
+        let err = Id::try_new_ulid(&FixedClock(42), &mut entropy).unwrap_err();
+        assert!(matches!(err, PriceLevelError::EntropyUnavailable { .. }));
+        assert_eq!(entropy.calls, 1);
+    }
+
+    #[test]
+    fn test_try_new_ulid_propagates_clock_failure_without_drawing_entropy() {
+        let mut entropy = CountingEntropy::starting_at(0);
+        let err = Id::try_new_ulid(&FailingClock, &mut entropy).unwrap_err();
+        assert!(matches!(
+            err,
+            PriceLevelError::InvalidOperation { ref message } if message == "injected clock failure"
+        ));
+        assert_eq!(entropy.calls, 0);
+
+        let err = Id::try_new(&FixedClock(u64::MAX), &mut entropy).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidFieldValue { .. }));
+        assert_eq!(entropy.calls, 0);
+    }
+
+    #[test]
+    fn test_try_new_is_ulid_and_matches_try_new_ulid() {
+        let clock = FixedClock(7);
+        let a = Id::try_new(&clock, &mut CountingEntropy::starting_at(9)).unwrap();
+        let b = Id::try_new_ulid(&clock, &mut CountingEntropy::starting_at(9)).unwrap();
+        assert!(a.is_ulid());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_random_constructors_accept_trait_objects() {
+        let mut source = CountingEntropy::starting_at(0);
+        let entropy: &mut dyn EntropySource = &mut source;
+        let clock: &dyn UnixClock = &FixedClock(1_716_000_000_000);
+        let first = Id::try_new(clock, entropy).unwrap();
+        let second = Id::try_new_uuid(entropy).unwrap();
+        assert!(first.is_ulid());
+        assert!(second.is_uuid());
+        assert_ne!(first.as_bytes(), second.as_bytes());
+        assert_eq!(source.calls, 2);
+    }
+
+    #[test]
+    fn test_distinct_entropy_yields_distinct_ids() {
+        let mut entropy = CountingEntropy::starting_at(0);
+        let clock = FixedClock(1_000);
+        let a = Id::try_new(&clock, &mut entropy).unwrap();
+        let b = Id::try_new(&clock, &mut entropy).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_random_ids_round_trip_through_serde_and_from_str() {
+        let mut entropy = CountingEntropy::starting_at(0x10);
+        let ids = [
+            Id::try_new_uuid(&mut entropy).unwrap(),
+            Id::try_new_ulid(&FixedClock(1_716_000_000_000), &mut entropy).unwrap(),
+            Id::try_new_ulid_at(
+                TimestampMs::new(Id::ULID_MAX_TIMESTAMP_MS),
+                &mut ConstEntropy(0xFF),
+            )
+            .unwrap(),
+            // Not an all-zero ULID: its text form is all digits and `Id::from_str`
+            // tries `u64` first, so it would parse back as `Sequential(0)`.
+            Id::try_new_ulid_at(TimestampMs::ZERO, &mut ConstEntropy(0xFF)).unwrap(),
+        ];
+        for id in ids {
+            let json = serde_json::to_string(&id).unwrap();
+            let back: Id = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, id, "serde round-trip of {json}");
+            assert_eq!(Id::from_str(&id.to_string()).unwrap(), id);
+        }
+    }
 
     #[test]
     fn test_id_creation() {
         let id = Id::from_u64(12345);
         assert_eq!(id, Id::from_u64(12345));
-
-        let id1 = Id::new();
-        let id2 = Id::new();
-        assert_ne!(id1, id2);
 
         let uuid = Uuid::new_v4();
         let id = Id::from_uuid(uuid);

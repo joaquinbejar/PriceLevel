@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Random `Id` constructors are fallible (#167).** `Id::new()`,
+  `Id::new_uuid()`, `Id::new_ulid()` and the random `impl Default for Id` are
+  removed: they could panic inside `uuid` / `ulid` / `rand` on an OS entropy or
+  RNG (re)seed failure. They are replaced by `Id::try_new(&clock, &mut entropy)`
+  (ULID), `Id::try_new_ulid(&clock, &mut entropy)`,
+  `Id::try_new_ulid_at(timestamp, &mut entropy)` and
+  `Id::try_new_uuid(&mut entropy)`, all returning
+  `Result<Id, PriceLevelError>`. Entropy comes from a caller-supplied
+  `EntropySource` (new trait; implementations must not panic) and ULID time
+  from a caller-supplied `UnixClock` (new trait; implementations must not
+  panic) or an explicit `TimestampMs`. The crate provides no clock reader,
+  because `SystemTime::now` can panic inside `std`. No dependency was added. A
+  timestamp above `Id::ULID_MAX_TIMESTAMP_MS` (48 bits) is a typed error
+  instead of being masked. UUID v4 version/variant bits and the ULID layout
+  are unchanged.
+
+- **New `PriceLevelError::EntropyUnavailable { message }` variant (#167)**,
+  the conventional error for a failing `EntropySource`. Exhaustive matches on
+  `PriceLevelError` need a new arm.
 - **Per-level `value_executed` statistic widened to `u128` (#140).**
   `PriceLevelStatistics::value_executed()` returns `u128` (was `u64`),
   matching `MatchResult::executed_value` and `Trade::total_value`. With both
@@ -26,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not.
   v2, v3 and v4 packages all restore; legacy packages keep their original
   checksum. Pinned by v2 (0.8.4) and v3 (0.9.2) fixtures stored verbatim.
+
+### Added
+
+- `TimestampMs::try_from_system_time(SystemTime)` (#167): checked conversion
+  of an already-read `SystemTime` (pre-epoch and `u64` millisecond overflow
+  are typed errors; no clamping). It does not read the clock.
 
 ### Documentation
 
