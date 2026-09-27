@@ -5,6 +5,7 @@ mod id_exhaustion;
 mod level;
 mod order_math_failures;
 mod order_queue;
+mod parked_prefix;
 mod result_failures;
 mod snapshot;
 mod snapshot_coherence;

@@ -14,6 +14,31 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// Test-only front-scan visit counter (issue #155). Counts every index entry
+// the `match_front` front selection inspects, parked or not, on the calling
+// thread. It documents the bound on repeated scans of parked makers; release
+// and bench builds compile none of it.
+#[cfg(test)]
+thread_local! {
+    static FRONT_SCAN_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_front_scan_visit() {
+    FRONT_SCAN_VISITS.with(|visits| {
+        if let Some(next) = visits.get().checked_add(1) {
+            visits.set(next);
+        }
+    });
+}
+
+/// Test-only: return and reset this thread's `match_front` index-entry visit
+/// count (issue #155).
+#[cfg(test)]
+pub(crate) fn test_take_front_scan_visits() -> u64 {
+    FRONT_SCAN_VISITS.with(|visits| visits.replace(0))
+}
+
 /// A thread-safe queue of orders with specialized operations.
 ///
 /// Time priority (price-time / FIFO within the level) is maintained by an
@@ -446,7 +471,11 @@ impl OrderQueue {
             let Some((seq, order_id)) = self
                 .index
                 .iter()
-                .find(|e| !set_aside.contains(e.key()))
+                .find(|e| {
+                    #[cfg(test)]
+                    record_front_scan_visit();
+                    !set_aside.contains(e.key())
+                })
                 .map(|e| (*e.key(), *e.value()))
             else {
                 return FrontOutcome::Empty;
