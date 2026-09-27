@@ -55,6 +55,22 @@ pub fn prepare(
     config: &Config,
     reports: &[ScenarioReport],
 ) -> io::Result<RunArtifacts> {
+    // One `<name>.csv` per report: a repeated name would silently overwrite
+    // another report's observations and leave its manifest entry pointing at
+    // the wrong data (issue #149 review). Reject it before writing anything.
+    let mut seen = std::collections::HashSet::with_capacity(reports.len());
+    for report in reports {
+        if !seen.insert(report.name.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "duplicate scenario name {:?}: artifacts would collide",
+                    report.name
+                ),
+            ));
+        }
+    }
+
     let dir = PathBuf::from("target/latency").join(run_id());
     fs::create_dir_all(&dir)?;
 
@@ -65,6 +81,18 @@ pub fn prepare(
 
     for report in reports {
         persist_scenario(&dir, report)?;
+    }
+
+    // Post-run check: exactly one distinct observations file per report.
+    let csv_files = fs::read_dir(&dir)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "csv"))
+        .count();
+    if csv_files != reports.len() {
+        return Err(io::Error::other(format!(
+            "persisted {csv_files} observation files for {} reports",
+            reports.len()
+        )));
     }
 
     Ok(RunArtifacts { dir })

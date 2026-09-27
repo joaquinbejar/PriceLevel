@@ -471,6 +471,12 @@ impl PriceLevelSnapshotPackage {
 
     /// Serializes the package to JSON.
     ///
+    /// This is a full serialization pass of the snapshot, separate from the
+    /// hashing pass [`Self::new`] already made: building a package and then
+    /// calling this (as [`crate::PriceLevel::snapshot_to_json`] does) encodes
+    /// the snapshot twice (issue #149). Only this pass writes bytes to a
+    /// buffer; the hashing pass streams into SHA-256.
+    ///
     /// The output buffer grows through `try_reserve` (issue #164): a refused
     /// reservation stops the encoding and is reported as the fixed-size
     /// [`PriceLevelError::CapacityExceeded`], not as an allocation abort.
@@ -578,8 +584,11 @@ impl PriceLevelSnapshotPackage {
     fn compute_checksum(snapshot: &PriceLevelSnapshot) -> Result<String, PriceLevelError> {
         use std::fmt::Write as _;
 
-        // Stream the JSON payload straight into the hasher (issue #164): no
-        // payload buffer is materialized, so there is no growth to fail.
+        // Stream the JSON payload straight into the hasher (issues #149 /
+        // #164): no payload buffer is materialized, so there is no growth to
+        // fail, and the orders go through `BorrowedOrders` (no reference
+        // vector). Byte equivalence with the former buffered encoding is
+        // pinned by `tests/snapshot_equivalence.rs`.
         // `serde_json::to_vec` is `to_writer` into a `Vec` with the same
         // compact formatter, so the hashed bytes, and therefore the checksum,
         // are identical to the former buffered encoding.

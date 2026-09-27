@@ -334,6 +334,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Snapshot encoding buffers measured and pinned (#149).** The borrowed
+  order serializer and the streamed SHA-256 checksum (both from #164) are
+  now covered by equivalence tests against a test-only copy of the old
+  buffered path (random snapshots over every order variant, id kind and
+  wide / degraded statistics), and every pinned fixture, including a new
+  v4 fixture written by 0.10.0 (`snapshot_v4_pricelevel_0_10_0.json`),
+  re-encodes byte-identically. `PriceLevel::snapshot_to_json` documents
+  that it still serializes the snapshot twice (hash pass, then package
+  JSON). The latency harness gains a `snapshot_sizes` group (100 / 10,000
+  / 100,000 orders, allocations and peak live bytes); results in
+  `BENCH.md`. No production code or output bytes changed.
 - **Concurrency and performance claims corrected (#156).** The crate docs,
   README, rustdoc and package description no longer call the `Gtc` / `Ioc` /
   `Day` match path lock-free: each fill is committed under the maker's

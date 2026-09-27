@@ -29,7 +29,7 @@
 //! #142's "measure allocation... separately from latency runs".
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 /// Delegates every call to [`System`], counting bytes and call counts only
 /// while [`COUNTING_ENABLED`] is set.
@@ -40,6 +40,26 @@ static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
 static DEALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+/// Bytes allocated minus bytes released since the last [`reset`], counted
+/// only while counting is enabled (issue #149). Signed: freeing a block that
+/// was allocated before counting started drives it below zero.
+static LIVE_BYTES: AtomicI64 = AtomicI64::new(0);
+/// High-water mark of [`LIVE_BYTES`] since the last [`reset`] (issue #149):
+/// the peak memory, retained output included, one measured window held.
+static PEAK_LIVE_BYTES: AtomicI64 = AtomicI64::new(0);
+
+/// Records a live-bytes change of `delta` and raises the high-water mark.
+#[inline]
+fn track_live(delta: i64) {
+    let now = LIVE_BYTES.fetch_add(delta, Ordering::Relaxed) + delta;
+    PEAK_LIVE_BYTES.fetch_max(now, Ordering::Relaxed);
+}
+
+/// A byte count as a signed live-bytes delta (allocation sizes fit `i64`).
+#[inline]
+fn signed(size: usize) -> i64 {
+    i64::try_from(size).unwrap_or(i64::MAX)
+}
 
 // SAFETY: every method delegates to `System`, which already satisfies
 // `GlobalAlloc`'s contract; this wrapper adds only non-mutating counter
@@ -50,6 +70,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         if COUNTING_ENABLED.load(Ordering::Relaxed) {
             ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
             ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            track_live(signed(layout.size()));
         }
         // SAFETY: `layout` is exactly the caller's layout, forwarded
         // unchanged, and the caller of this method already upholds
@@ -61,6 +82,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
         if COUNTING_ENABLED.load(Ordering::Relaxed) {
             DEALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
             DEALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            track_live(-signed(layout.size()));
         }
         // SAFETY: `ptr` / `layout` are exactly the caller's arguments,
         // forwarded unchanged, under the same precondition as above.
@@ -76,6 +98,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
             DEALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
             ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
             ALLOC_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+            track_live(signed(new_size) - signed(layout.size()));
         }
         // SAFETY: same forwarding argument as `alloc` / `dealloc`, with
         // `new_size` forwarded unchanged from the caller.
@@ -134,6 +157,8 @@ pub fn reset() {
     ALLOC_BYTES.store(0, Ordering::Relaxed);
     DEALLOC_COUNT.store(0, Ordering::Relaxed);
     DEALLOC_BYTES.store(0, Ordering::Relaxed);
+    LIVE_BYTES.store(0, Ordering::Relaxed);
+    PEAK_LIVE_BYTES.store(0, Ordering::Relaxed);
 }
 
 /// Enables counter bookkeeping on every subsequent `alloc` / `dealloc` /
@@ -146,4 +171,12 @@ pub fn enable() {
 /// disabled; see the module docs.
 pub fn disable() {
     COUNTING_ENABLED.store(false, Ordering::Relaxed);
+}
+
+/// High-water mark of live counted bytes since the last [`reset`] (issue
+/// #149): the peak memory, retained output included, one measured window
+/// held. Counted only while counting is enabled.
+#[must_use]
+pub fn peak_live_bytes() -> i64 {
+    PEAK_LIVE_BYTES.load(Ordering::Relaxed)
 }
