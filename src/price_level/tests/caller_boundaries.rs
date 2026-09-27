@@ -233,4 +233,113 @@ mod tests {
             .expect("cancel succeeds");
         assert_eq!(level.order_count(), 0);
     }
+
+    /// Records, for every event it sees, whether the level's fill-or-kill
+    /// guard was unheld at that moment.
+    struct GuardProbe {
+        level: std::sync::Arc<PriceLevel>,
+        seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        held: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl<S: tracing::Subscriber> Layer<S> for GuardProbe {
+        fn on_event(&self, _event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            use std::sync::atomic::Ordering;
+            self.seen.fetch_add(1, Ordering::SeqCst);
+            if !self.level.test_fok_unheld() {
+                self.held.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Runs `op` on fresh levels (built by `setup`) under a [`GuardProbe`]
+    /// until at least one event reaches the probe, and returns how many of
+    /// the observed events ran while the fill-or-kill guard was held.
+    /// Retrying covers `tracing`'s process-wide interest cache, which a
+    /// concurrent test can transiently reset (see the FOK test above).
+    fn events_under_guard(setup: fn() -> PriceLevel, op: fn(&PriceLevel)) -> usize {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for _ in 0..1_000 {
+            let level = Arc::new(setup());
+            let seen = Arc::new(AtomicUsize::new(0));
+            let held = Arc::new(AtomicUsize::new(0));
+            let subscriber = registry().with(GuardProbe {
+                level: Arc::clone(&level),
+                seen: Arc::clone(&seen),
+                held: Arc::clone(&held),
+            });
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::callsite::rebuild_interest_cache();
+                op(&level);
+            });
+            if seen.load(Ordering::SeqCst) > 0 {
+                return held.load(Ordering::SeqCst);
+            }
+        }
+        panic!("no event reached the probe subscriber");
+    }
+
+    /// Pre-release hardening: `add_order`'s statistics-drop `WARN` is emitted
+    /// after the fill-or-kill shared guard is released.
+    #[test]
+    fn add_order_stats_drop_event_runs_outside_fok_guard() {
+        let held = events_under_guard(
+            || {
+                let level = PriceLevel::new(PRICE);
+                level.stats().test_seed_order_events(usize::MAX, 0);
+                level
+            },
+            |level| {
+                level.add_order(maker(1, 5)).expect("admission stands");
+            },
+        );
+        assert_eq!(held, 0);
+    }
+
+    /// Pre-release hardening: `update_order`'s statistics-drop `WARN` is
+    /// emitted after the fill-or-kill shared guard is released.
+    #[test]
+    fn update_order_stats_drop_event_runs_outside_fok_guard() {
+        let held = events_under_guard(
+            || {
+                let level = PriceLevel::new(PRICE);
+                level.add_order(maker(1, 5)).expect("admit");
+                level.stats().test_seed_order_events(1, usize::MAX);
+                level
+            },
+            |level| {
+                level
+                    .update_order(OrderUpdate::Cancel {
+                        order_id: Id::from_u64(1),
+                    })
+                    .expect("cancel stands");
+            },
+        );
+        assert_eq!(held, 0);
+    }
+
+    /// Pre-release hardening: `update_order`'s removal-refusal `WARN` is
+    /// emitted after the fill-or-kill shared guard is released.
+    #[test]
+    fn update_order_removal_refusal_event_runs_outside_fok_guard() {
+        let held = events_under_guard(
+            || {
+                let level = PriceLevel::new(PRICE);
+                level.add_order(maker(1, 5)).expect("admit");
+                level.test_force_topology(Some(Side::Sell), 0);
+                level
+            },
+            |level| {
+                assert!(
+                    level
+                        .update_order(OrderUpdate::Cancel {
+                            order_id: Id::from_u64(1),
+                        })
+                        .is_err()
+                );
+            },
+        );
+        assert_eq!(held, 0);
+    }
 }

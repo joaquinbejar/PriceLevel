@@ -1,5 +1,6 @@
 mod bounded_fok;
 mod caller_boundaries;
+mod checked_rollbacks;
 mod counter_exhaustion;
 mod entry;
 mod fallible_growth;

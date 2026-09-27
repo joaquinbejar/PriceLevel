@@ -264,6 +264,15 @@ impl FokGuard {
     pub(crate) fn test_waiting_mutators(&self) -> usize {
         self.waiting_mutators.load(Ordering::SeqCst)
     }
+
+    /// Whether no shared or exclusive holder exists right now (test seam): a
+    /// non-blocking `try_write` that is released at once. `false` too when
+    /// the lock is poisoned.
+    #[cfg(all(test, not(loom)))]
+    #[must_use]
+    pub(crate) fn test_is_unheld(&self) -> bool {
+        self.lock.try_write().is_ok()
+    }
 }
 
 /// One announced mutator; withdrawn on drop, including on unwind.
