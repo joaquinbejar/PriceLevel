@@ -561,6 +561,18 @@ impl OrderQueue {
         self.orders.get(&order_id).map(|slot| slot.value().0)
     }
 
+    /// Test-only: the true FIFO front `(sequence, id)` — the lowest index key
+    /// whose id still rests under that same sequence, skipping stale keys
+    /// (issue #206).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_front(&self) -> Option<(u64, Id)> {
+        self.index.iter().find_map(|entry| {
+            let (seq, id) = (*entry.key(), *entry.value());
+            (self.test_seq_of(id) == Some(seq)).then_some((seq, id))
+        })
+    }
+
     /// Add an order to the tail of the queue (newest time priority),
     /// **unconditionally overwriting** any existing entry for the same id.
     ///

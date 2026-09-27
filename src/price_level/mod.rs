@@ -52,6 +52,20 @@ mod snapshot;
 
 mod entry;
 
+mod fok_guard;
+
+/// The synchronization primitives behind `fok_guard` (issue #206). The loom
+/// model `tests/loom/fok_handoff.rs` compiles `fok_guard.rs` against its own
+/// `fok_sync` with loom's instrumented equivalents.
+mod fok_sync {
+    pub(crate) use std::hint::spin_loop;
+    pub(crate) use std::sync::atomic::{AtomicUsize, Ordering};
+    pub(crate) use std::sync::{
+        LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
+    };
+    pub(crate) use std::thread::yield_now;
+}
+
 mod order_queue;
 
 mod statistics;
