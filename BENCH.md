@@ -51,7 +51,7 @@ below.
 | Category     | Scenarios |
 |--------------|-----------|
 | `isolated`   | `add_order` (GTC), `update_order(Cancel)` (found / missing), `update_order(UpdateQuantity)` (increase / decrease), `update_order(Replace)` |
-| `match`      | empty book, full fill, partial fill, partial fill of one large front maker on a 1,000-deep level (#148), a many-fill sweep (20 makers in one call), iceberg replenish, reserve replenish |
+| `match`      | empty book, full fill, partial fill, partial fill of one large front maker on a 1,000-deep level (#148), a many-fill sweep (20 makers in one call), iceberg replenish, reserve replenish, repeated partial fills of one large maker with no / an admission / a per-fill view `Arc` retained (#147) |
 | `tif`        | GTC / IOC / DAY / GTD full match, FOK success, FOK rejection (killed), post-only rejection |
 | `iteration`  | one full `iter_orders` traversal |
 | `snapshot`   | `snapshot()` capture, checksum `validate()`, `from_snapshot_json` restore |
@@ -1044,3 +1044,124 @@ queue grows). It would also move the duplicate check after partial queue
 construction and make the precedence against the queue's own failures
 depend on insertion progress. Not done here; the precedence contract above
 would have to be restated and retested first.
+## Residual allocation reuse (issue #147)
+
+A partial fill (`FrontAction::KeepInPlace`) or an iceberg / reserve
+replenishment (`FrontAction::ReplaceAtTail`) commits a new `Arc` for the
+maker: the decision closure calls `Arc::new(updated)` under the maker's
+`DashMap` shard write lock, and the evicted `Arc` is dropped after the lock
+(#128, #144). This section records the evaluation of reusing that
+allocation when it is provably unshared.
+
+### Ownership and commit design evaluated
+
+- The decision returns the residual / refreshed order **by value**
+  (`OrderType<()>` is `Copy`, 144 bytes on the measurement host).
+- The commit, still under the entry lock and after every stop-cause check
+  (#169, #163, #168, #165, #124; all of them return `SetAside` before any
+  action is built, so none of them reaches the commit), calls
+  `Arc::get_mut` on the stored `Arc`. Success means strong count 1 and no
+  weak reference: no handle exists outside the map, and the held shard write
+  lock stops anyone from cloning a new one, so the value is overwritten in
+  place (no allocation, no deallocation, no drop code). Otherwise it
+  allocates a fresh `Arc` exactly as today and the old one keeps its value
+  for its holders.
+- Nothing moves outside the lock: the fallback allocation stays in the same
+  critical section as today's, the cancel / update decisions still
+  serialize on the entry lock, and the replenish path keeps its sequence
+  reservation, the in-closure counter RMW and the tail re-keying unchanged.
+  No `unsafe`, no dependency.
+
+Who shares the stored `Arc`: the handle returned by `add_order` (only until
+the first fill, which stores a new allocation), and any live
+`iter_orders` / `snapshot_orders` / `snapshot` / checksum package view. A
+retained admission handle therefore costs one fallback per maker, not one
+per fill.
+
+### Allocations (2,000 reps, per op; deterministic)
+
+`single_partial*`: one 1e12-unit standard maker alone on the level, 10-unit
+takers, one trade and no filled id per call. `_adm` keeps the admission
+handle for the whole run; `_view` takes an `iter_orders().next()` handle
+before every fill and drops it after (outside the counted window).
+
+| Case | base allocs / bytes / deallocs | reuse allocs / bytes / deallocs |
+|---|---|---|
+| single_partial | 3.00 / 336 / 1.00 | 2.00 / 176 / 0.00 |
+| single_partial_adm | 3.00 / 336 / 1.00 | 2.00 / 176 / 0.00 (1 fallback in 2,000) |
+| single_partial_view | 3.00 / 336 / 0 (view holder frees) | 3.00 / 336 / 0 |
+| match_maker_partial (deep 1,000) | 3.00 / 1,920 / 1.00 | 2.00 / 1,760 / 0.00 |
+| match_iceberg_1x | 4.02 / 437 | 3.02 / 277 |
+| match_iceberg_5x | 14.08 / 3,208 | 9.08 / 2,408 |
+| match_reserve_1x | 4.02 / 437 | 3.02 / 277 |
+| match_fok_partial | 134.00 / 27,568 | 133.00 / 27,408 |
+
+The remaining two allocations are the result's trade and filled-id vectors
+(#148).
+
+`get_mut` success rate, measured with a `#[cfg(test)]` commit counter in the
+prototype, release test build, 2,000 one-unit fills of one maker while
+reader threads loop `iter_orders().next()` and hold each handle for 16
+spins (an adversarial, always-reading flow): 1 reader 66% / 84% / 90%,
+2 readers 82% / 85% / 95%, 4 readers 92% / 88% / 91% (three runs each).
+With no concurrent reader it is 100%, or 100% minus the first fill per
+maker when the admission handle is kept.
+
+### Latency
+
+Apple M5 Max (18 logical cores), macOS 27.0, rustc 1.98.1, release bench
+profile, system allocator (the latency harness's counting wrapper is
+disabled while timing). The host was shared: load average 4.9 to 24 during
+the runs. Every comparison is interleaved, base then reuse, five rounds.
+
+Criterion (`Residual allocation reuse (#147)` and three `#148` cases;
+1 s warm-up, 5 s measurement; median of the five point estimates):
+
+| Case | base | reuse | change | reuse faster |
+|---|---|---|---|---|
+| partial_unique | 180.4 ns | 178.9 ns | -0.8% | 3/5 |
+| partial_retained_view | 186.7 ns | 189.5 ns | +1.5% | 2/5 |
+| replenish_unique | 243.4 ns | 244.4 ns | +0.4% | 2/5 |
+| replenish_retained_view | 243.9 ns | 248.4 ns | +1.8% | 1/5 |
+| maker_partial_deep1000 | 235.0 ns | 248.1 ns | +5.6% | 1/5 |
+| iceberg_1x | 241.6 ns | 243.6 ns | +0.8% | 2/5 |
+| reserve_1x | 242.2 ns | 244.3 ns | +0.9% | 2/5 |
+
+Latency harness (`PL_LATENCY_ONLY=match`, 20,000 samples, median of five
+runs; the clock ticks every ~41.7 ns):
+
+| Scenario | base p50 / p99 / p99.9 (ns) | reuse p50 / p99 / p99.9 (ns) |
+|---|---|---|
+| single_partial | 208 / 250 / 333 | 208 / 250 / 333 |
+| single_partial_adm | 208 / 292 / 417 | 208 / 250 / 292 |
+| single_partial_view | 208 / 291 / 375 | 209 / 292 / 458 |
+| match_maker_partial | 250 / 1,375 / 6,875 | 291 / 1,541 / 8,959 |
+| iceberg_replenish | 250 / 875 / 1,875 | 250 / 959 / 1,500 |
+| reserve_replenish | 250 / 667 / 750 | 250 / 667 / 750 |
+| match_full | 250 / 1,041 / 1,667 | 250 / 1,000 / 1,625 |
+
+### Decision: keep the current commit
+
+The reuse path removes one allocation and one deallocation per unique-owner
+fill, but that doesn't show up as latency on this host. The Criterion means
+move by -0.8% to +5.6%, reuse is faster in at most 3 of 5 rounds, and the
+one consistent difference (`maker_partial_deep1000`, 4 of 5 rounds slower)
+goes the wrong way. The harness p50s are identical to the clock tick, and
+the p99 / p99.9 changes go both ways within run-to-run noise. The
+`get_mut` check (a weak-count compare-exchange, a strong-count load and a
+release store) and the 144-byte by-value action cost about what the
+system allocator's fast path saves (a 160-byte `ArcInner` alloc and free).
+Without a measured latency benefit the change fails this issue's adoption
+bar, so it is not adopted.
+
+Revisit if an allocator with a slower small-object path or allocator
+contention between the matcher and other threads makes the in-lock
+`Arc::new` visible, or if the result vectors (#148) stop allocating so the
+residual becomes the dominant per-fill allocation. The design above is the
+one to reuse. The ownership contract it must keep is pinned by
+`src/price_level/tests/residual_reuse.rs`: retained admission handles,
+`snapshot_orders` / `snapshot` views and checksum packages never change
+after a fill or replenishment, replenishment still demotes to the tail, and
+a racing cancel either fully wins or fully loses. The scenarios stay in the
+allocation pass, the latency harness and Criterion
+(`benches/price_level/residual_reuse.rs`) as a regression tripwire.
