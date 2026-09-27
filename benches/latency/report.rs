@@ -27,22 +27,31 @@ pub struct ScenarioReport {
     /// Outcome-accounting note (e.g. "20000/20000 Filled"), computed after
     /// the timed loop from the operations' own return values.
     pub outcome_note: String,
+    /// The raw, unsorted, per-sample nanosecond observations behind
+    /// [`Self::percentiles`], retained so `persistence.rs` can write them
+    /// alongside the run manifest (issue #142 review finding 5: "#142
+    /// requires retaining raw observations or histogram artifacts with the
+    /// manifest").
+    pub observations_ns: Vec<u64>,
 }
 
 impl ScenarioReport {
     /// Builds a report from raw nanosecond samples, computing percentiles
-    /// here (sorting `durations_ns` in place) so every scenario module calls
-    /// exactly one function to go from samples to a reportable row.
+    /// from a sorted copy (sorting is required for `stats::compute`, but the
+    /// original call-order sequence is worth keeping for later analysis —
+    /// e.g. checking whether latency drifts across the run — so this clones
+    /// rather than sorting `durations_ns` in place).
     #[must_use]
     pub fn from_samples(
         name: impl Into<String>,
         category: &'static str,
         depth: u64,
         measured_call: &'static str,
-        mut durations_ns: Vec<u64>,
+        durations_ns: Vec<u64>,
         outcome_note: impl Into<String>,
     ) -> Self {
-        let percentiles = stats::compute(&mut durations_ns);
+        let mut sorted = durations_ns.clone();
+        let percentiles = stats::compute(&mut sorted);
         Self {
             name: name.into(),
             category,
@@ -50,6 +59,7 @@ impl ScenarioReport {
             measured_call,
             percentiles,
             outcome_note: outcome_note.into(),
+            observations_ns: durations_ns,
         }
     }
 }
@@ -70,12 +80,14 @@ impl std::fmt::Display for ScenarioReport {
 }
 
 /// Renders every report as a Markdown table, in the shape `BENCH.md`
-/// expects (issue #142: "write results/docs to a new BENCH.md").
+/// expects (issue #142: "write results/docs to a new BENCH.md"). The
+/// `p99.99 (ns)` column header itself carries the exploratory-estimate
+/// caveat (see `stats::P9999_CAVEAT`) rather than repeating it in every row.
 #[must_use]
 pub fn to_markdown_table(reports: &[ScenarioReport]) -> String {
     let mut out = String::new();
     out.push_str(
-        "| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns) | max (ns) | Outcomes |\n",
+        "| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |\n",
     );
     out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
     for r in reports {
@@ -83,7 +95,7 @@ pub fn to_markdown_table(reports: &[ScenarioReport]) -> String {
             .percentiles
             .p9999_ns
             .map(|v| v.to_string())
-            .unwrap_or_else(|| "insufficient samples".to_string());
+            .unwrap_or_else(|| "n/a (0 samples)".to_string());
         out.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.name,

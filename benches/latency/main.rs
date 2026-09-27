@@ -27,6 +27,7 @@ mod alloc_measurements;
 mod config;
 mod fixtures;
 mod manifest;
+mod persistence;
 mod report;
 mod scenarios;
 mod stats;
@@ -56,6 +57,16 @@ fn main() {
     println!();
     println!("== Markdown table (paste into BENCH.md) ==");
     println!("{}", report::to_markdown_table(&reports));
+
+    let artifacts = persistence::prepare(&run_manifest, &config, &reports).expect(
+        "persistence::prepare: failed to write target/latency/<run-id>/ — check that target/ is \
+         writable",
+    );
+    println!(
+        "== Raw observations + manifest persisted to {} ==",
+        artifacts.dir.display()
+    );
+    println!();
 
     println!("== Allocation measurements (separate pass, not timed) ==");
     let alloc_reports = alloc_measurements::run_all(&config);

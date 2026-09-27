@@ -137,9 +137,16 @@ zip:
 check-cargo-criterion:
 	@command -v cargo-criterion > /dev/null || (echo "Installing cargo-criterion..."; cargo install cargo-criterion)
 
+## NOTE: every `cargo criterion` target below pins `--bench benches` explicitly.
+## Registering the separate `latency` bench target (issue #142, `[[bench]] name
+## = "latency"` in Cargo.toml) means an unfiltered `cargo criterion` with no
+## `--bench` argument would pick up BOTH bench targets and run the latency
+## harness too — slowing down every Criterion invocation and mixing its
+## `#[global_allocator]` process into the same run. `make bench-latency` below
+## is the only entrypoint for the latency harness (issue #142 review finding 9).
 .PHONY: bench
 bench: check-cargo-criterion
-	cargo criterion --output-format=quiet
+	cargo criterion --bench benches --output-format=quiet
 
 .PHONY: bench-show
 bench-show:
@@ -147,15 +154,15 @@ bench-show:
 
 .PHONY: bench-save
 bench-save: check-cargo-criterion
-	cargo criterion --output-format quiet --history-id v0.3.2 --history-description "Version 0.3.2 baseline"
+	cargo criterion --bench benches --output-format quiet --history-id v0.3.2 --history-description "Version 0.3.2 baseline"
 
 .PHONY: bench-compare
 bench-compare: check-cargo-criterion
-	cargo criterion --output-format verbose
+	cargo criterion --bench benches --output-format verbose
 
 .PHONY: bench-json
 bench-json: check-cargo-criterion
-	cargo criterion --message-format json
+	cargo criterion --bench benches --message-format json
 
 .PHONY: bench-clean
 bench-clean:

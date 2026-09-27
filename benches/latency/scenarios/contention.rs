@@ -11,16 +11,39 @@
 //! the FOK-guard's blocking effect on matcher-observed latency is visible as
 //! a side-by-side comparison against the same writer-thread load, rather
 //! than conflated with it (issue #142: "measure FOK blocking effects
-//! separately from uncontended service time"). Compare either matcher's
-//! contended p50/p99 here against the uncontended `tif_gtc_full_match` /
-//! `tif_fok_success` scenarios in `tif.rs` for the "separately from
-//! uncontended service time" half of that requirement.
+//! separately from uncontended service time").
+//!
+//! # Fixture parity with the uncontended baseline (issue #142 review finding 7)
+//!
+//! An earlier version of this scenario pre-seeded `matcher_ops` dedicated
+//! resting makers up front (thousands, at the default sample count) while
+//! the uncontended `tif_fok_success` / `tif_gtc_full_match` baselines in
+//! `tif.rs` keep exactly ONE dedicated maker in flight at any instant. That
+//! made "contended vs. its own uncontended baseline" an apples-to-oranges
+//! comparison: some of the gap could have come from the much larger
+//! matcher-target depth itself, not from contention or the FOK guard. This
+//! version instead adds ONE fresh dedicated target maker per matcher
+//! iteration, untimed, immediately before the timed `match_order` call —
+//! the same shape `tif.rs::full_match_with_tif` uses — so the matcher-owned
+//! depth is `1` here too. The fixed [`CHURN_POOL_SIZE`]-order churn pool
+//! (shared, identical, across the GTC and FOK runs) is the actual
+//! contention variable under test, not a depth mismatch against the
+//! baseline.
+//!
+//! This still does not make "contended vs. uncontended" a fully controlled
+//! comparison (the churn pool and writer threads are real differences by
+//! design — that IS contention). `BENCH.md` restricts its causal claim to
+//! GTC-vs-FOK **under the same load**, which is controlled, and reports
+//! writer throughput as a rate (completed / elapsed wall time) rather than
+//! a raw count, because the matcher's fixed op count means the GTC and FOK
+//! runs cover different wall-clock windows (finding 7's second half) — a
+//! raw count comparison would conflate "less work" with "less time".
 //!
 //! This is still a CLOSED-LOOP measurement per thread — see
 //! `manifest::COORDINATED_OMISSION_DISCLOSURE`.
 
 use crate::config::Config;
-use crate::fixtures;
+use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS};
 use crate::report::ScenarioReport;
 use pricelevel::prelude::*;
 use std::io::Write as _;
@@ -33,6 +56,8 @@ use std::time::Instant;
 const CHURN_ID_BASE: u64 = 10_000_000;
 /// Fixed size of the writer threads' recycled id pool.
 const CHURN_POOL_SIZE: u64 = 2_000;
+/// Id range for the matcher's own dedicated per-iteration target makers.
+const MATCHER_TARGET_ID_BASE: u64 = 500_000_000;
 /// Id range for the matcher's own taker ids.
 const TAKER_ID_BASE: u64 = 900_000_000;
 
@@ -49,12 +74,11 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
     let writer_threads = config.contention_threads.saturating_sub(1).max(1);
     let matcher_ops = config.contention_ops;
 
-    // Matcher-target depth: one resting maker per matcher operation, so the
-    // matcher never runs dry (each op consumes exactly one).
-    let level = fixtures::seeded_standard_level(matcher_ops as u64, Side::Sell, 1);
-    // Churn pool, seeded strictly AFTER the matcher-target block above, so
-    // every churn order sits behind every matcher-target order in FIFO
-    // order and can never be the one the matcher consumes.
+    // Churn pool only — the matcher's own dedicated target makers are added
+    // one at a time inside the matcher loop below (untimed), not pre-seeded
+    // here, so the matcher-owned depth matches the uncontended baseline's
+    // "one dedicated maker in flight" shape (see the module docs).
+    let level = PriceLevel::new(fixtures::LEVEL_PRICE);
     for i in 0..CHURN_POOL_SIZE {
         level
             .add_order(fixtures::standard_order(
@@ -89,20 +113,34 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
     let mut outcomes: Vec<MatchOutcome> = Vec::with_capacity(matcher_ops);
     go.store(true, Ordering::Release);
 
+    let matcher_window_start = Instant::now();
     for i in 0..matcher_ops {
+        // Untimed: add this iteration's own dedicated 1-quantity target
+        // maker, at a fresh id disjoint from the churn pool and every other
+        // matcher iteration's target, immediately before the timed call.
+        level
+            .add_order(fixtures::standard_order(
+                MATCHER_TARGET_ID_BASE + i as u64,
+                Side::Sell,
+                1,
+                TimeInForce::Gtc,
+            ))
+            .expect("contention: matcher target seeding must succeed");
+
         let t0 = Instant::now();
         let result = level.match_order(
             1,
             Id::from_u64(TAKER_ID_BASE + i as u64),
             matcher_tif,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         );
         let elapsed = t0.elapsed();
         outcomes.push(result.outcome());
         durations_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
     }
+    let matcher_window = matcher_window_start.elapsed();
     stop.store(true, Ordering::Relaxed);
 
     let mut writer_outcome = WriterOutcome::default();
@@ -133,16 +171,25 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
         "contention({name}): every matcher op targets its own dedicated 1-quantity maker and must \
          fill; {killed} were killed instead"
     );
+    fixtures::assert_stats_healthy(&level, matcher_ops as u64, &format!("contention({name})"));
+
+    // Rate, not raw count: the matcher's fixed op count means the GTC and
+    // FOK runs cover different wall-clock windows (finding 7), so only a
+    // per-second rate is comparable between the two variants.
+    let window_secs = matcher_window.as_secs_f64().max(f64::EPSILON);
+    let writer_ops_per_sec = writer_outcome.completed as f64 / window_secs;
+    let matcher_ops_per_sec = matcher_ops as f64 / window_secs;
 
     ScenarioReport::from_samples(
         name,
         "contention",
-        matcher_ops as u64,
+        1,
         "PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads",
         durations_ns,
         format!(
-            "matcher: {filled}/{matcher_ops} Filled; writers: {} completed ({} successful, {} \
-             missing, {} rejected) across {writer_threads} threads",
+            "matcher: {filled}/{matcher_ops} Filled ({matcher_ops_per_sec:.0} ops/s over \
+             {window_secs:.6}s); writers: {} completed ({} successful, {} missing, {} rejected) \
+             across {writer_threads} threads = {writer_ops_per_sec:.0} ops/s",
             writer_outcome.completed,
             writer_outcome.successful,
             writer_outcome.missing,

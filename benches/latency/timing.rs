@@ -68,6 +68,71 @@ where
     (durations_ns, outcomes)
 }
 
+/// Like [`measure`], but runs an untimed `teardown` closure immediately
+/// after each timed `op` call, given a reference to that call's own return
+/// value.
+///
+/// Some scenarios must undo what `op` just did before the next sample runs,
+/// or a quantity the report labels as constant (e.g. a swept resting depth)
+/// silently drifts across the run — for example, an isolated `add_order`
+/// scenario that never cancels what it just added grows the level by one
+/// order per sample, so by the last sample the level no longer holds the
+/// depth the report claims (issue #142 review finding 2). `teardown` runs
+/// strictly after `Instant::elapsed()` is read, so none of its cost is
+/// attributed to the timed sample.
+pub fn measure_with_teardown<F, T, O>(
+    count: usize,
+    mut op: F,
+    mut teardown: T,
+) -> (Vec<u64>, Vec<O>)
+where
+    F: FnMut(usize) -> O,
+    T: FnMut(usize, &O),
+{
+    let mut durations_ns = Vec::with_capacity(count);
+    let mut outcomes = Vec::with_capacity(count);
+    for i in 0..count {
+        let t0 = Instant::now();
+        let outcome = op(i);
+        let elapsed = t0.elapsed();
+        teardown(i, &outcome);
+        outcomes.push(outcome);
+        durations_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+    }
+    (durations_ns, outcomes)
+}
+
+/// Like [`measure`], but folds each sample's return value into an
+/// accumulator instead of collecting every one into a `Vec<O>`.
+///
+/// Some operations return a value that is expensive to retain across the
+/// whole run — `PriceLevel::snapshot()` materializes every resting order,
+/// so collecting `config.samples` of them for a depth-1,000 level keeps
+/// millions of order handles alive simultaneously for no reason (issue #142
+/// review finding 4). `fold` receives ownership of the sample's return value
+/// and is expected to validate/summarize it and let it drop at the end of
+/// the call, strictly after `Instant::elapsed()` is read.
+pub fn measure_fold<F, O, A>(
+    count: usize,
+    init: A,
+    mut op: F,
+    mut fold: impl FnMut(A, usize, O) -> A,
+) -> (Vec<u64>, A)
+where
+    F: FnMut(usize) -> O,
+{
+    let mut durations_ns = Vec::with_capacity(count);
+    let mut acc = init;
+    for i in 0..count {
+        let t0 = Instant::now();
+        let outcome = op(i);
+        let elapsed = t0.elapsed();
+        acc = fold(acc, i, outcome);
+        durations_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+    }
+    (durations_ns, acc)
+}
+
 /// Runs `op` `count` times purely to warm up caches / branch predictors /
 /// allocator arenas, discarding every result and every timing. Always call
 /// this with fresh fixtures distinct from the measured run's fixtures (e.g.

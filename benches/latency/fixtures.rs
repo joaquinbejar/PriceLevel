@@ -21,6 +21,28 @@ pub const BASE_TIMESTAMP_MS: u64 = 1_700_000_000_000;
 /// collide with — and self-match-reject against — one of its own makers.
 pub const TAKER_ID_BASE: u64 = 1_000_000_000;
 
+/// Execution timestamp every scenario in this harness passes to
+/// `PriceLevel::match_order`.
+///
+/// Every maker built by this module stamps its own `timestamp` field as
+/// `BASE_TIMESTAMP_MS + id`. `PriceLevelStatistics::record_execution`
+/// rejects a fill whose maker `order_timestamp` is strictly greater than the
+/// match's `execution_timestamp` (a maker "arriving in the future" of the
+/// execution) — see its `# Errors` doc. Passing `TimestampMs::new(0)` as the
+/// execution timestamp, as an earlier version of this harness did, made
+/// EVERY fill in EVERY scenario fail that check: the trade itself still
+/// happened (statistics recording cannot retroactively fail an
+/// already-committed trade), but `PriceLevelStatistics::stats_degraded()`
+/// silently flipped `true` and `quantity_executed()` never advanced, so the
+/// harness was measuring the degraded/error-accounting path instead of the
+/// intended one on every single sample (issue #142 review finding 1).
+///
+/// No maker id constructed anywhere in this harness exceeds a few hundred
+/// thousand; this constant carries a two-billion-millisecond margin over
+/// [`BASE_TIMESTAMP_MS`] so it is unambiguously past every eligible maker's
+/// own timestamp, however ids are combined across scenarios.
+pub const EXECUTION_TIMESTAMP_MS: u64 = BASE_TIMESTAMP_MS + 2_000_000_000;
+
 /// Builds the deterministic trade-id generator every scenario shares. A
 /// fixed namespace UUID (same convention as the existing Criterion benches
 /// under `benches/price_level/`) keeps trade ids reproducible across runs.
@@ -125,6 +147,32 @@ pub fn seeded_standard_level(depth: u64, side: Side, quantity_each: u64) -> Pric
             .expect("fixture seeding: add_order must succeed for a fresh sequential id");
     }
     level
+}
+
+/// Asserts, outside any timed window, that every fill `level` has recorded
+/// since it was created (or since its statistics were last reset) landed in
+/// `PriceLevelStatistics` cleanly: never dropped into the sticky degraded
+/// path, and with the accumulated executed quantity equal to exactly
+/// `expected_quantity_executed`.
+///
+/// Every matching scenario that expects trades to occur calls this once
+/// after its measured loop — see [`EXECUTION_TIMESTAMP_MS`]'s docs for why
+/// this check exists (issue #142 review finding 1).
+pub fn assert_stats_healthy(level: &PriceLevel, expected_quantity_executed: u64, context: &str) {
+    let stats = level.stats();
+    assert!(
+        !stats.stats_degraded(),
+        "{context}: PriceLevelStatistics reports stats_degraded() == true — a maker's own \
+         timestamp was not <= the match's execution timestamp (or another record_execution \
+         failure), so this run measured the degraded/error-accounting path instead of the \
+         intended fill path"
+    );
+    assert_eq!(
+        stats.quantity_executed(),
+        expected_quantity_executed,
+        "{context}: PriceLevelStatistics::quantity_executed() must equal exactly the expected \
+         executed total for this scenario"
+    );
 }
 
 /// Builds a level pre-seeded with `depth` iceberg resting orders on `side`.

@@ -12,9 +12,10 @@
 
 use crate::alloc::{self, AllocStats};
 use crate::config::Config;
-use crate::fixtures::{self, LEVEL_PRICE, TAKER_ID_BASE};
+use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS, LEVEL_PRICE, TAKER_ID_BASE};
 use pricelevel::PriceLevelSnapshotPackage;
 use pricelevel::prelude::*;
+use std::sync::Arc;
 
 /// One operation's allocation-measurement result.
 #[derive(Debug, Clone)]
@@ -67,20 +68,32 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
 }
 
 /// Measures `add_order` of a fresh order into a level with fixed resting
-/// depth. Result / fixture destruction happens after counting is disabled,
-/// so it is excluded from the totals below.
+/// depth. Every harness-owned buffer (`orders`, `handles`) is allocated
+/// BEFORE counting starts and dropped AFTER counting stops, so only
+/// `add_order`'s own allocations land inside `[before, after)`.
+///
+/// An earlier version of this function allocated `handles` (a
+/// `Vec::with_capacity`, hence one real allocation) AFTER `alloc::enable()`
+/// and consumed `orders` with `for order in orders` — since `OrderType<()>`
+/// is `Copy`, that consumed the whole `Vec<OrderType<()>>` via
+/// `IntoIterator`, and the now-empty `orders` buffer's own deallocation ran
+/// at the end of the `for` loop, still inside the counted window, before
+/// `after` was read. Both counted the harness's own bookkeeping as if it
+/// were part of `add_order`'s cost (issue #142 review finding 3). Iterating
+/// `&orders` by reference and copying each element (`OrderType<()>` is
+/// `Copy`) avoids consuming `orders` at all during the counted window.
 fn measure_add_order(config: &Config) -> AllocReport {
     let reps = config.alloc_reps;
     let level = fixtures::seeded_standard_level(1_000, Side::Buy, 10);
     let orders: Vec<OrderType<()>> = (0..reps as u64)
         .map(|i| fixtures::standard_order(1_000 + i, Side::Buy, 10, TimeInForce::Gtc))
         .collect();
+    let mut handles: Vec<Arc<OrderType<()>>> = Vec::with_capacity(reps);
 
     alloc::reset();
     alloc::enable();
     let before = AllocStats::read();
-    let mut handles = Vec::with_capacity(reps);
-    for order in orders {
+    for &order in &orders {
         handles.push(
             level
                 .add_order(order)
@@ -89,8 +102,10 @@ fn measure_add_order(config: &Config) -> AllocReport {
     }
     let after = AllocStats::read();
     alloc::disable();
-    // Drop the returned handles and the level outside the counted window.
+    // Drop the returned handles, the input orders and the level outside the
+    // counted window.
     drop(handles);
+    drop(orders);
     drop(level);
 
     AllocReport {
@@ -101,7 +116,10 @@ fn measure_add_order(config: &Config) -> AllocReport {
 }
 
 /// Measures a full-fill `match_order` call against a dedicated fresh maker
-/// per repetition (same shape as `scenarios::matching::match_full`).
+/// per repetition (same shape as `scenarios::matching::match_full`). Also
+/// asserts, after counting is disabled, that every fill was recorded
+/// cleanly (issue #142 review finding 1 — see
+/// [`fixtures::EXECUTION_TIMESTAMP_MS`]'s docs).
 fn measure_match_full(config: &Config) -> AllocReport {
     const QTY: u64 = 10;
     let reps = config.alloc_reps;
@@ -117,23 +135,34 @@ fn measure_match_full(config: &Config) -> AllocReport {
             .expect("alloc measurement: seeding a fresh maker id must succeed");
     }
     let generator = fixtures::trade_id_generator();
+    let mut results = Vec::with_capacity(reps);
 
     alloc::reset();
     alloc::enable();
     let before = AllocStats::read();
-    let mut results = Vec::with_capacity(reps);
     for i in 0..reps {
         results.push(level.match_order(
             QTY,
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         ));
     }
     let after = AllocStats::read();
     alloc::disable();
+
+    let filled = results
+        .iter()
+        .filter(|r| r.outcome() == MatchOutcome::Filled)
+        .count();
+    assert_eq!(
+        filled, reps,
+        "alloc measurement (match_full): every call must fully fill against its dedicated maker"
+    );
+    fixtures::assert_stats_healthy(&level, reps as u64 * QTY, "alloc measurement (match_full)");
+
     drop(results);
     drop(level);
 
@@ -148,11 +177,11 @@ fn measure_match_full(config: &Config) -> AllocReport {
 fn measure_snapshot_capture(config: &Config) -> AllocReport {
     let reps = config.alloc_reps;
     let level = fixtures::seeded_standard_level(1_000, Side::Buy, 10);
+    let mut snapshots = Vec::with_capacity(reps);
 
     alloc::reset();
     alloc::enable();
     let before = AllocStats::read();
-    let mut snapshots = Vec::with_capacity(reps);
     for _ in 0..reps {
         snapshots.push(level.snapshot());
     }
@@ -208,11 +237,11 @@ fn measure_restore(config: &Config) -> AllocReport {
         .snapshot_to_json()
         .expect("alloc measurement: snapshot_to_json must succeed");
     drop(level);
+    let mut restored = Vec::with_capacity(reps);
 
     alloc::reset();
     alloc::enable();
     let before = AllocStats::read();
-    let mut restored = Vec::with_capacity(reps);
     for _ in 0..reps {
         restored.push(
             PriceLevel::from_snapshot_json(&json)

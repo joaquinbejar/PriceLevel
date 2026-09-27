@@ -4,7 +4,10 @@ This document covers `benches/latency/` — the isolated-operation, tail-latency
 harness added for issue [#142]. It is a **separate bench target** from the
 Criterion suite under `benches/{price_level,concurrent,simple}/`
 (`benches/mod.rs`, `[[bench]] name = "benches"`); running one never runs, or
-slows down, the other.
+slows down, the other. `make bench` / `bench-save` / `bench-compare` /
+`bench-json` all pin `--bench benches` explicitly so they never pick up the
+latency target by accident; `make bench-latency` is the only entrypoint for
+this harness.
 
 [#142]: https://github.com/joaquinbejar/PriceLevel/issues/142
 
@@ -26,9 +29,10 @@ call for a dedicated per-operation recorder instead.
 `rules/global_rules.md`'s dependency list). This harness therefore implements
 percentile computation itself: every scenario records one
 `std::time::Instant` pair per operation into a pre-allocated `Vec<u64>`
-(nanoseconds), and `benches/latency/stats.rs` sorts that vector once, after
-the loop, to compute p50 / p99 / p99.9 / (p99.99 when justified). See
-`stats::MIN_SAMPLES_FOR_P9999` for the refusal rule.
+(nanoseconds), and `benches/latency/stats.rs` sorts a copy of that vector to
+compute p50 / p99 / p99.9 / p99.99 (see "The p99.99 caveat" below) — the
+original, unsorted vector is retained and persisted alongside the run
+manifest (see "Persisted artifacts").
 
 ## What is measured
 
@@ -37,7 +41,12 @@ Fixture construction (seeding a level, building the JSON to restore from,
 etc.) and result destruction happen outside the timed window; where a
 scenario legitimately needs fresh per-sample state (e.g. a fresh maker order
 before each partial-fill match, so the level does not run dry), that setup
-also runs outside the `Instant` pair — see `timing::measure_with_setup`.
+also runs outside the `Instant` pair — see `timing::measure_with_setup`. Where
+a scenario's own operation would otherwise leave the level in a different
+state than it started in (e.g. `add_order` growing the resting depth by one
+per sample), an untimed teardown restores it before the next sample — see
+`timing::measure_with_teardown` and "Depth is restored after every sample"
+below.
 
 | Category     | Scenarios |
 |--------------|-----------|
@@ -52,7 +61,55 @@ also runs outside the `Instant` pair — see `timing::measure_with_setup`.
 Every scenario asserts its own exact outcome counts (fills, rejections,
 "missing" cancels, etc.) **after** the timed loop, from the operations' own
 return values — never inside the timed window. A wrong count panics the
-harness rather than reporting a silently-wrong number.
+harness rather than reporting a silently-wrong number. Every scenario that
+expects a trade to occur additionally asserts, after its loop,
+`!PriceLevelStatistics::stats_degraded()` and an exact
+`quantity_executed()` — see "Execution timestamps" below for why that
+assertion exists.
+
+### Execution timestamps
+
+`PriceLevelStatistics::record_execution` rejects a fill whose maker
+`order_timestamp` is strictly greater than the match's `execution_timestamp`
+(a maker "arriving in the future" of the execution). Every maker this harness
+builds stamps its own timestamp as `BASE_TIMESTAMP_MS + id`
+(`fixtures::standard_order` and friends), so every scenario that expects
+trades passes `fixtures::EXECUTION_TIMESTAMP_MS` — a fixed constant with a
+two-billion-millisecond margin over every constructed maker id — as the
+match's execution timestamp. An earlier version of this harness passed
+`TimestampMs::new(0)` instead: the trade itself still happened (statistics
+recording cannot retroactively fail an already-committed trade), but
+`stats_degraded()` silently flipped `true` and `quantity_executed()` never
+advanced on **every single sample in every scenario**, so that version was
+actually measuring the degraded/error-accounting path inside
+`record_execution`, not the intended fill path, without any visible signal
+in its output. Every scenario now asserts `!stats_degraded()` and an exact
+`quantity_executed()` after its loop specifically to catch a regression of
+this kind — see `fixtures::assert_stats_healthy` and
+`fixtures::EXECUTION_TIMESTAMP_MS`'s docs.
+
+### Depth is restored after every sample
+
+Every `add_order`-only scenario (`isolated_add_gtc`, `depth_sweep_add@*`,
+`scaled_quantity@*`, `scaled_price@*`) adds one order at a fixed extra id and
+then, in an untimed teardown, cancels that exact order before the next
+sample — so `order_count()` is asserted equal to the scenario's declared
+depth both immediately before and immediately after the whole measured loop,
+not merely at fixture setup. An earlier version of this harness never
+cancelled what it added: the level grew by one order per warmup and measured
+sample, so a scenario labelled e.g. `depth_sweep_add@100` was, by the last
+sample of a 20,000-sample default run, actually measuring `add_order` against
+a level holding roughly 22,100 orders, not 100. Scenarios where the timed
+operation cannot grow the level this way (`update_order` resizes/replaces in
+place; matching only ever shrinks or removes a maker) do not need this
+teardown and are unaffected.
+
+Two "full match" fixtures (`match_full`, `match_partial` and every
+`tif_*_full_match` variant) add exactly one fresh dedicated maker immediately
+before the timed call and that maker is fully consumed by it, so the reported
+depth for those is `1` (there is exactly one resting order in flight at any
+instant) rather than the cumulative warmup-plus-sample count an earlier
+version of this harness reported there.
 
 ### TIF coverage and what it actually shows
 
@@ -64,43 +121,90 @@ path inside `match_order` — only the `TimeInForce` discriminant passed in
 differs. `tif.rs` measures this directly instead of assuming a difference;
 the example run below shows exactly that (GTC/IOC/DAY/GTD full-match numbers
 are the same distribution within noise). FOK is the one taker TIF that
-branches differently (it takes the level-wide fill-or-kill guard), and that
-shows up clearly both in the uncontended `tif_fok_success` /
-`tif_fok_reject` numbers and, much more dramatically, in the contention
-comparison below.
+branches differently (it takes the level-wide fill-or-kill guard), which
+shows up in the uncontended `tif_fok_success` / `tif_fok_reject` numbers and,
+far more dramatically, in the contention comparison below.
 
-### The contention scenario
+### The contention scenario, and its fixture-parity fix
 
-`contention_gtc_matcher` and `contention_fok_matcher` seed a level with one
-resting maker per matcher operation (so the matcher never runs dry) plus a
-disjoint "churn" id pool that `N-1` writer threads continuously
-add/cancel/read against, using a `Barrier` + `AtomicBool` start protocol so
-every thread begins at (as close as possible to) the same instant. The
-matcher's own per-operation latency is what is recorded; the writer threads'
-op counts are reported for outcome accounting only, not for their own
-latency. Comparing `contention_fok_matcher` against `contention_gtc_matcher`
-under the *same* writer load isolates the fill-or-kill guard's blocking
-effect; comparing either against the equivalent uncontended `tif.rs` scenario
-(`tif_gtc_full_match` / `tif_fok_success`) isolates the writer-thread
-contention's effect on top of that. The example run below shows both: FOK
-under this contention load is roughly two orders of magnitude slower than
-GTC under the same load, and the FOK contended number is itself far above
-its own uncontended `tif_fok_success` baseline.
+`contention_gtc_matcher` and `contention_fok_matcher` run one matcher thread
+against `N-1` writer threads that continuously add/cancel/read against a
+disjoint "churn" id pool, using a `Barrier` + `AtomicBool` start protocol so
+every thread begins at (as close as possible to) the same instant.
+
+An earlier version of this scenario pre-seeded `matcher_ops` dedicated
+resting makers up front (thousands, at the default sample count) while the
+uncontended `tif_fok_success` / `tif_gtc_full_match` baselines keep exactly
+**one** dedicated maker in flight at any instant. That made "contended vs.
+its own uncontended baseline" an apples-to-oranges comparison — some of the
+gap could have come from the much larger matcher-target depth itself, not
+from contention or the FOK guard. This version instead adds one fresh
+dedicated target maker per matcher iteration, untimed, immediately before the
+timed `match_order` call (the same shape `tif.rs::full_match_with_tif` uses),
+so the matcher-owned depth here is `1` too. The fixed 2,000-order churn pool
+— identical between the GTC and FOK runs — is the actual contention variable
+under test, not a depth mismatch against the baseline.
+
+This still does not make "contended vs. uncontended" a fully controlled
+comparison (the churn pool and writer threads are real, by-design
+differences — that *is* contention). The claim below is restricted to
+**GTC-vs-FOK under the same load**, which is controlled. It also reports
+writer throughput as a **rate** (`completed / elapsed wall time`), not a raw
+count: the matcher's fixed op count means the GTC and FOK runs cover
+different wall-clock windows (the GTC matcher finishes in well under a
+millisecond; the FOK matcher takes tens of milliseconds at the same op
+count), so a raw writer-op count comparison would conflate "writers did less
+work" with "writers had less time" — see the example run's numbers below,
+where writer *throughput* (not count) drops by roughly two orders of
+magnitude under FOK.
+
+## The p99.99 caveat
+
+A sample count alone does not make p99.99 a validated tail quantile: it is a
+single order statistic from **one run**, and nothing in this harness repeats
+a run to check whether that one point is stable from run to run. Every
+p99.99 figure this harness prints or writes is therefore always labelled
+`unvalidated exploratory estimate` (`stats::P9999_CAVEAT`) — in the stdout
+table, the Markdown table's own column header, and `manifest.json`'s
+`p9999_caveat` field — rather than silently implied to be trustworthy once a
+sample-count floor is cleared. To actually check stability, rerun this
+harness (optionally with a different `PL_LATENCY_SEED`) and compare the
+persisted raw observations (see below) across runs; this document does not
+claim to have done that itself.
+
+## Persisted artifacts
+
+Every run writes `target/latency/<run-id>/manifest.json` (the run
+environment, the actual `Config` used, and every scenario's measured
+boundary and percentile summary) plus one `<scenario name>.csv` per scenario
+— its raw, unsorted, per-sample nanosecond observations, one per line, in
+original call order. `target/` is already gitignored; these are ordinary
+local run artifacts, not something this repository commits. This exists so a
+percentile (especially the p99.99 above) can be independently reprocessed,
+diffed against another run, or checked for stability, rather than trusted as
+a single printed number.
 
 ## Allocation measurements
 
 `benches/latency/alloc.rs` installs a `#[global_allocator]` wrapper around
 `std::alloc::System` for this binary only (`unsafe impl GlobalAlloc`,
 required by the trait; confined to this bench binary, never `src/` — see the
-module doc for the full justification). Counting is **disabled** during
-every latency scenario above, so those numbers are not inflated by counter
-bookkeeping; a separate, untimed pass in `alloc_measurements.rs` resets the
+module doc for the full justification). Counting is **disabled** during every
+latency scenario above, so those numbers are not inflated by counter
+bookkeeping; a separate, untimed pass in `alloc_measurements.rs` pre-builds
+every harness-owned buffer (input orders, result vectors), resets the
 counters, enables counting, runs `PL_LATENCY_ALLOC_REPS` repetitions of one
 representative operation, disables counting, and reports the per-operation
-average. `add_order` / `match_full` are cheap (a handful of allocations);
-`checksum_validate` and `restore` are not — see the example numbers below
-and treat them as a baseline to catch a regression against, not as an
-absolute performance claim (no comparable "before" run exists yet).
+average. Every harness-owned buffer is deliberately allocated **before**
+counting starts and dropped **after** it stops (an earlier version allocated
+one result buffer per measurement after enabling counting, and consumed its
+input-orders buffer — triggering that buffer's own deallocation — while
+still inside the counted window, both of which counted the harness's own
+bookkeeping as if it were the operation's cost). `add_order` / `match_full`
+are cheap (a handful of allocations); `checksum_validate` and `restore` are
+not — see the example numbers below and treat them as a baseline to catch a
+regression against, not as an absolute performance claim (no comparable
+"before" run exists yet).
 
 ## Coordinated omission disclosure
 
@@ -149,18 +253,17 @@ PL_LATENCY_SAMPLES=300 PL_LATENCY_WARMUP=50 PL_LATENCY_CONTENTION_OPS=300 \
 ## Example run
 
 **This is one example run for reproducibility and interpretation, not a
-performance claim.** No comparable "before" baseline exists yet (this is the
-first version of this harness), and 300 samples is below
-`stats::MIN_SAMPLES_FOR_P9999` (20,000), so every p99.99 column below
-correctly reads "insufficient samples" rather than showing a number. Run it
-yourself with the command above; do not cite these specific nanosecond
-figures as a crate performance guarantee.
+performance claim.** 300 samples is a deliberately small validation-run size
+(see "How to run"); every p99.99 figure below carries the exploratory caveat
+from "The p99.99 caveat" section regardless of sample count. Run it yourself
+with the command above; do not cite these specific nanosecond figures as a
+crate performance guarantee.
 
 ### Manifest
 
 ```
 == Run manifest ==
-commit             : 17374c39b10ed6f336199fe99d7bcec809f4260d (dirty)
+commit             : b1cc71d0cbc8bf0caefef3e449cce02fc7cabef8 (dirty)
 cpu                : Apple M5 Max
 logical cores      : 18
 os/arch            : macos/aarch64
@@ -172,76 +275,92 @@ samples/scenario   : 300
 warmup/scenario    : 50
 large depth sweeps : false
 LOGLEVEL           : unset
-timer overhead     : 14 ns (mean of 10,000 back-to-back Instant::now() calls)
+timer overhead     : 13 ns (mean of 10,000 back-to-back Instant::now() calls)
 loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
 ```
 
 `(dirty)` above reflects the worktree state at the moment this example was
 captured during development of this harness, not a property of the harness
-itself; a clean checkout on a tagged commit reports `(clean)`.
+itself; a clean checkout on a tagged commit reports `(clean)`. This same
+information, plus the `Config` used and every scenario's measured boundary
+and percentile summary, is written to
+`target/latency/1790504343099/manifest.json` for this particular run (see
+"Persisted artifacts" — the run id is a wall-clock millisecond timestamp, so
+yours will differ).
 
 ### Results
 
+Every `p99.99 (ns)` value below is the same [exploratory
+estimate](#the-p9999-caveat) `stats::P9999_CAVEAT` describes; it is not
+repeated per cell here for readability, matching the harness's own Markdown
+table output.
+
 | Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns) | max (ns) | Outcomes |
 |---|---|---|---|---|---|---|---|---|---|
-| isolated_add_gtc | isolated | 1000 | 300 | 84 | 1083 | 1208 | insufficient samples | 1208 | 300/300 succeeded |
-| isolated_cancel_success | isolated | 350 | 300 | 42 | 292 | 833 | insufficient samples | 833 | 300/300 found and cancelled |
-| isolated_cancel_missing | isolated | 1000 | 300 | 41 | 42 | 42 | insufficient samples | 42 | 300/300 reported missing (Ok(None)) |
-| isolated_quantity_decrease | isolated | 350 | 300 | 42 | 125 | 208 | insufficient samples | 208 | 300/300 resized (100 -> 40) |
-| isolated_quantity_increase | isolated | 350 | 300 | 125 | 833 | 1250 | insufficient samples | 1250 | 300/300 resized (40 -> 100) |
-| isolated_replace | isolated | 350 | 300 | 125 | 750 | 833 | insufficient samples | 833 | 300/300 replaced |
-| match_empty | match | 0 | 300 | 42 | 42 | 791 | insufficient samples | 791 | 300/300 NotFilled |
-| match_full | match | 350 | 300 | 250 | 1250 | 1333 | insufficient samples | 1333 | 300/300 Filled |
-| match_partial | match | 0 | 300 | 250 | 833 | 917 | insufficient samples | 917 | 300/300 PartiallyFilled |
-| many_fill_sweep | match | 7000 | 300 | 4667 | 6375 | 10500 | insufficient samples | 10500 | 300/300 Filled, 6000 total trades |
-| iceberg_replenish | match | 1 | 300 | 291 | 875 | 1042 | insufficient samples | 1042 | 300/300 Filled |
-| reserve_replenish | match | 1 | 300 | 291 | 875 | 917 | insufficient samples | 917 | 300/300 Filled |
-| tif_gtc_full_match | tif | 350 | 300 | 250 | 375 | 875 | insufficient samples | 875 | 300/300 Filled (taker_tif=Gtc) |
-| tif_ioc_full_match | tif | 350 | 300 | 250 | 792 | 4833 | insufficient samples | 4833 | 300/300 Filled (taker_tif=Ioc) |
-| tif_day_full_match | tif | 350 | 300 | 250 | 375 | 916 | insufficient samples | 916 | 300/300 Filled (taker_tif=Day) |
-| tif_gtd_full_match | tif | 350 | 300 | 250 | 334 | 833 | insufficient samples | 833 | 300/300 Filled (taker_tif=Gtd(9999999999999)) |
-| tif_fok_success | tif | 350 | 300 | 1459 | 2209 | 2833 | insufficient samples | 2833 | 300/300 Filled (taker_tif=Fok) |
-| tif_fok_reject | tif | 1 | 300 | 1209 | 1542 | 4792 | insufficient samples | 4792 | 300/300 Killed |
-| tif_post_only_reject | tif | 1 | 300 | 667 | 750 | 792 | insufficient samples | 792 | 300/300 Rejected |
-| iteration | iteration | 1000 | 300 | 6167 | 7667 | 7750 | insufficient samples | 7750 | 300/300 traversals visited exactly 1000 orders |
-| snapshot_capture | snapshot | 1000 | 300 | 12875 | 14333 | 18542 | insufficient samples | 18542 | 300/300 snapshots carried exactly 1000 orders |
-| checksum_validate | snapshot | 1000 | 300 | 831333 | 1012167 | 1043041 | insufficient samples | 1043041 | 300/300 validated OK |
-| restore | snapshot | 1000 | 300 | 1207667 | 1268292 | 1295750 | insufficient samples | 1295750 | 300/300 restored with exactly 1000 orders |
-| depth_sweep_add@100 | depth | 100 | 300 | 83 | 167 | 37625 | insufficient samples | 37625 | 300/300 succeeded |
-| depth_sweep_add@1000 | depth | 1000 | 300 | 83 | 958 | 2917 | insufficient samples | 2917 | 300/300 succeeded |
-| depth_sweep_small_taker@100 | depth | 100 | 300 | 208 | 292 | 334 | insufficient samples | 334 | 300/300 Filled |
-| depth_sweep_small_taker@1000 | depth | 1000 | 300 | 208 | 291 | 292 | insufficient samples | 292 | 300/300 Filled |
-| scaled_quantity@1 | depth | 100 | 300 | 83 | 208 | 750 | insufficient samples | 750 | 300/300 succeeded |
-| scaled_quantity@10000 | depth | 100 | 300 | 83 | 208 | 208 | insufficient samples | 208 | 300/300 succeeded |
-| scaled_quantity@1000000000 | depth | 100 | 300 | 84 | 167 | 208 | insufficient samples | 208 | 300/300 succeeded |
-| scaled_price@1 | depth | 100 | 300 | 84 | 250 | 375 | insufficient samples | 375 | 300/300 succeeded |
-| scaled_price@10000 | depth | 100 | 300 | 84 | 208 | 209 | insufficient samples | 209 | 300/300 succeeded |
-| scaled_price@18446744073709551615 | depth | 100 | 300 | 83 | 167 | 209 | insufficient samples | 209 | 300/300 succeeded |
-| contention_gtc_matcher | contention | 300 | 300 | 666 | 2041 | 2875 | insufficient samples | 2875 | matcher: 300/300 Filled; writers: 1448 completed (1108 successful, 0 missing, 340 rejected) across 3 threads |
-| contention_fok_matcher | contention | 300 | 300 | 66000 | 83709 | 105708 | insufficient samples | 105708 | matcher: 300/300 Filled; writers: 190 completed (154 successful, 0 missing, 36 rejected) across 3 threads |
+| isolated_add_gtc | isolated | 1000 | 300 | 83 | 792 | 1083 | 1083 | 1083 | 300/300 succeeded |
+| isolated_cancel_success | isolated | 350 | 300 | 42 | 584 | 750 | 750 | 750 | 300/300 found and cancelled |
+| isolated_cancel_missing | isolated | 1000 | 300 | 41 | 42 | 42 | 42 | 42 | 300/300 reported missing (Ok(None)) |
+| isolated_quantity_decrease | isolated | 350 | 300 | 42 | 167 | 833 | 833 | 833 | 300/300 resized (100 -> 40) |
+| isolated_quantity_increase | isolated | 350 | 300 | 125 | 666 | 792 | 792 | 792 | 300/300 resized (40 -> 100) |
+| isolated_replace | isolated | 350 | 300 | 125 | 708 | 875 | 875 | 875 | 300/300 replaced |
+| match_empty | match | 0 | 300 | 42 | 83 | 667 | 667 | 667 | 300/300 NotFilled |
+| match_full | match | 1 | 300 | 208 | 833 | 1333 | 1333 | 1333 | 300/300 Filled |
+| match_partial | match | 1 | 300 | 208 | 709 | 792 | 792 | 792 | 300/300 PartiallyFilled |
+| many_fill_sweep | match | 7000 | 300 | 4000 | 6583 | 10167 | 10167 | 10167 | 300/300 Filled, 6000 total trades |
+| iceberg_replenish | match | 1 | 300 | 250 | 750 | 875 | 875 | 875 | 300/300 Filled |
+| reserve_replenish | match | 1 | 300 | 250 | 750 | 833 | 833 | 833 | 300/300 Filled |
+| tif_gtc_full_match | tif | 1 | 300 | 208 | 750 | 875 | 875 | 875 | 300/300 Filled (taker_tif=Gtc) |
+| tif_ioc_full_match | tif | 1 | 300 | 208 | 750 | 833 | 833 | 833 | 300/300 Filled (taker_tif=Ioc) |
+| tif_day_full_match | tif | 1 | 300 | 208 | 750 | 792 | 792 | 792 | 300/300 Filled (taker_tif=Day) |
+| tif_gtd_full_match | tif | 1 | 300 | 208 | 750 | 792 | 792 | 792 | 300/300 Filled (taker_tif=Gtd(9999999999999)) |
+| tif_fok_success | tif | 1 | 300 | 1375 | 2167 | 3125 | 3125 | 3125 | 300/300 Filled (taker_tif=Fok) |
+| tif_fok_reject | tif | 1 | 300 | 1167 | 1250 | 1708 | 1708 | 1708 | 300/300 Killed |
+| tif_post_only_reject | tif | 1 | 300 | 667 | 750 | 750 | 750 | 750 | 300/300 Rejected |
+| iteration | iteration | 1000 | 300 | 5958 | 6917 | 39792 | 39792 | 39792 | 300/300 traversals visited exactly 1000 orders |
+| snapshot_capture | snapshot | 1000 | 300 | 12083 | 24084 | 30791 | 30791 | 30791 | 300/300 snapshots carried exactly 1000 orders |
+| checksum_validate | snapshot | 1000 | 300 | 906042 | 1302167 | 3039042 | 3039042 | 3039042 | 300/300 validated OK |
+| restore | snapshot | 1000 | 300 | 1270541 | 1605000 | 3792166 | 3792166 | 3792166 | 300/300 restored with exactly 1000 orders |
+| depth_sweep_add@100 | depth | 100 | 300 | 83 | 125 | 625 | 625 | 625 | 300/300 succeeded |
+| depth_sweep_add@1000 | depth | 1000 | 300 | 83 | 167 | 334 | 334 | 334 | 300/300 succeeded |
+| depth_sweep_small_taker@100 | depth | 100 | 300 | 167 | 250 | 292 | 292 | 292 | 300/300 Filled |
+| depth_sweep_small_taker@1000 | depth | 1000 | 300 | 167 | 209 | 250 | 250 | 250 | 300/300 Filled |
+| scaled_quantity@1 | depth | 100 | 300 | 83 | 166 | 708 | 708 | 708 | 300/300 succeeded |
+| scaled_quantity@10000 | depth | 100 | 300 | 83 | 125 | 500 | 500 | 500 | 300/300 succeeded |
+| scaled_quantity@1000000000 | depth | 100 | 300 | 83 | 84 | 125 | 125 | 125 | 300/300 succeeded |
+| scaled_price@1 | depth | 100 | 300 | 83 | 84 | 125 | 125 | 125 | 300/300 succeeded |
+| scaled_price@10000 | depth | 100 | 300 | 83 | 84 | 459 | 459 | 459 | 300/300 succeeded |
+| scaled_price@18446744073709551615 | depth | 100 | 300 | 83 | 125 | 542 | 542 | 542 | 300/300 succeeded |
+| contention_gtc_matcher | contention | 1 | 300 | 708 | 2000 | 6500 | 6500 | 6500 | matcher: 300/300 Filled (646030 ops/s over 0.000464s); writers: 2910 completed (2208 successful, 0 missing, 702 rejected) across 3 threads = 6266487 ops/s |
+| contention_fok_matcher | contention | 1 | 300 | 54667 | 61250 | 134750 | 134750 | 134750 | matcher: 300/300 Filled (18130 ops/s over 0.016547s); writers: 337 completed (272 successful, 2 missing, 63 rejected) across 3 threads = 20366 ops/s |
 
-**Reading the FOK contention row.** `contention_fok_matcher`'s p50 (66,000
-ns) is roughly 100x `contention_gtc_matcher`'s p50 (666 ns) under the
-identical writer-thread load, and roughly 45x `tif_fok_success`'s own
-uncontended p50 (1,459 ns). That gap is exactly what
-`doc/architecture.md`'s "Fill-or-kill excludes every mutator on the level"
-predicts: an FOK match holds the level-wide guard exclusively across its
-whole dry-run and sweep, so it now also waits behind the writer threads'
-admissions/cancels contending for that same guard's shared side — not the
-per-maker shard lock GTC pays alone. Writer-thread throughput during the FOK
-run also dropped (190 completed vs. 1,448 for GTC over the same wall-clock
-matcher-side window), which is the guard blocking the writers, not the
-writers blocking themselves. This is exactly the effect the issue asks this
-harness to make visible, separated from uncontended service time.
+**Reading the FOK contention row (GTC-vs-FOK under identical load only — see
+"The contention scenario" above for why this comparison, and not "vs.
+uncontended", is the controlled one).** `contention_fok_matcher`'s p50
+(54,667 ns) is roughly 77x `contention_gtc_matcher`'s p50 (708 ns) under the
+identical churn-pool / writer-thread load and the same matcher-owned depth
+(1). That gap is consistent with `doc/architecture.md`'s "Fill-or-kill
+excludes every mutator on the level": an FOK match holds the level-wide guard
+exclusively across its whole dry-run and sweep, so it now also waits behind
+the writer threads' admissions/cancels contending for that same guard's
+shared side — not the per-maker shard lock GTC pays alone. Writer
+*throughput* during the FOK run also dropped by roughly two orders of
+magnitude (20,366 ops/s vs. 6,266,487 ops/s for GTC) — reported as a rate,
+not a raw count, because the FOK run's matcher loop ran roughly 35x longer in
+wall-clock time (16.5 ms vs. 0.46 ms) at the same fixed op count, so a raw
+count comparison alone would not distinguish "writers did less work" from
+"writers had less time to work in". The rate is the guard blocking the
+writers, not the writers blocking themselves or each other. This is exactly
+the effect the issue asks this harness to make visible, separated from
+uncontended service time.
 
 ### Allocation measurements (same run)
 
 ```
-add_order            reps=200    alloc_count/op=2.17     alloc_bytes/op=378.28     dealloc_count_total=33       dealloc_bytes_total=42972
-match_full           reps=200    alloc_count/op=4.10     alloc_bytes/op=1981.93    dealloc_count_total=744      dealloc_bytes_total=81394
-snapshot_capture     reps=200    alloc_count/op=138.00   alloc_bytes/op=43936.00   dealloc_count_total=27400    dealloc_bytes_total=7155200
+add_order            reps=200    alloc_count/op=2.12     alloc_bytes/op=338.64     dealloc_count_total=25       dealloc_bytes_total=10980
+match_full           reps=200    alloc_count/op=3.08     alloc_bytes/op=1788.29    dealloc_count_total=604      dealloc_bytes_total=66858
+snapshot_capture     reps=200    alloc_count/op=138.00   alloc_bytes/op=43776.00   dealloc_count_total=27400    dealloc_bytes_total=7155200
 checksum_validate    reps=200    alloc_count/op=36014.00 alloc_bytes/op=936224.00  dealloc_count_total=7202800  dealloc_bytes_total=187244800
-restore              reps=200    alloc_count/op=41348.29 alloc_bytes/op=1790969.60 dealloc_count_total=7843670  dealloc_bytes_total=293425868
+restore              reps=200    alloc_count/op=41348.03 alloc_bytes/op=1790194.70 dealloc_count_total=7843615  dealloc_bytes_total=293424448
 ```
 
 `checksum_validate` and `restore` allocate far more than `add_order` /

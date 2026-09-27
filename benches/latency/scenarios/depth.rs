@@ -6,11 +6,20 @@
 //! long") — building and later dropping a 100,000-order level is itself
 //! non-trivial wall-clock and memory cost, and that cost is fixture
 //! construction, deliberately excluded from every timed sample here.
+//!
+//! Every `add_order` sweep below adds one order and then, in an untimed
+//! teardown, immediately cancels that exact order before the next sample —
+//! restoring the level to precisely its declared depth after every single
+//! sample, not just at fixture setup. An earlier version of this harness
+//! never canceled what it added, so the level grew by one order per warmup
+//! and measured sample and the depth a scenario reported (e.g.
+//! `depth_sweep_add@100`) no longer matched what `add_order` was actually
+//! measured against by the end of the run (issue #142 review finding 2).
 
 use crate::config::Config;
-use crate::fixtures::{self, TAKER_ID_BASE};
+use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS, TAKER_ID_BASE};
 use crate::report::ScenarioReport;
-use crate::timing::{measure, warmup};
+use crate::timing::{measure, measure_with_teardown, warmup};
 use pricelevel::prelude::*;
 
 /// Depth sweep points always run.
@@ -57,48 +66,86 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
     reports
 }
 
-/// Isolated `add_order` into a level already holding `depth` resting orders
-/// on the same side — same measured boundary as
-/// `scenarios::isolated::add_gtc`, swept across depth.
+/// Cancels the fixed extra id every `add_at_depth` / `scaled_quantity` /
+/// `scaled_price` sample uses, restoring the level to its declared resting
+/// count. Shared so every call site restores depth identically.
+fn cancel_extra(level: &PriceLevel, extra_id: u64, context: &str) {
+    level
+        .update_order(OrderUpdate::Cancel {
+            order_id: Id::from_u64(extra_id),
+        })
+        .expect(context)
+        .expect("teardown cancel must find the order this same iteration just added");
+}
+
+/// Isolated `add_order` into a level holding exactly `depth` resting orders
+/// on the same side, at every sample — not merely at setup. Each sample
+/// adds one order at a fixed id just past the seeded range, then an untimed
+/// teardown cancels that exact id before the next sample, so `order_count()`
+/// is `depth` both before and after the whole measured loop (issue #142
+/// review finding 2).
 fn add_at_depth(config: &Config, depth: u64) -> ScenarioReport {
     let samples = samples_for_depth(config, depth);
     let level = fixtures::seeded_standard_level(depth, Side::Buy, 10);
+    let extra_id = depth;
 
-    let mut orders: Vec<Option<OrderType<()>>> = (0..(config.warmup + samples) as u64)
-        .map(|i| {
-            Some(fixtures::standard_order(
-                depth + i,
+    warmup(config.warmup, |_| {
+        level
+            .add_order(fixtures::standard_order(
+                extra_id,
                 Side::Buy,
                 10,
                 TimeInForce::Gtc,
             ))
-        })
-        .collect();
-
-    warmup(config.warmup, |i| {
-        level
-            .add_order(orders[i].take().expect("warmup order slot must be present"))
-            .expect("depth sweep add: warmup add_order must succeed")
+            .expect("depth sweep add: warmup add_order must succeed");
+        cancel_extra(
+            &level,
+            extra_id,
+            "depth sweep add: warmup teardown cancel must succeed",
+        );
     });
+    assert_eq!(
+        level.order_count(),
+        depth as usize,
+        "add_at_depth({depth}): depth must already be restored before measurement starts"
+    );
 
-    let (durations_ns, results) = measure(samples, |i| {
-        let order = orders[config.warmup + i]
-            .take()
-            .expect("measured order slot must be present");
-        level.add_order(order)
-    });
+    let (durations_ns, results) = measure_with_teardown(
+        samples,
+        |_| {
+            level.add_order(fixtures::standard_order(
+                extra_id,
+                Side::Buy,
+                10,
+                TimeInForce::Gtc,
+            ))
+        },
+        |_, _outcome| {
+            cancel_extra(
+                &level,
+                extra_id,
+                "depth sweep add: teardown cancel must succeed",
+            )
+        },
+    );
 
     let succeeded = results.iter().filter(|r| r.is_ok()).count();
     assert_eq!(
         succeeded, samples,
         "add_at_depth({depth}): every add must succeed"
     );
+    assert_eq!(
+        level.order_count(),
+        depth as usize,
+        "add_at_depth({depth}): depth must be restored to exactly its declared value after \
+         every timed sample"
+    );
 
     ScenarioReport::from_samples(
         format!("depth_sweep_add@{depth}"),
         "depth",
         depth,
-        "PriceLevel::add_order — swept resting depth",
+        "PriceLevel::add_order — swept resting depth, restored after every sample",
         durations_ns,
         format!("{succeeded}/{samples} succeeded"),
     )
@@ -108,6 +155,9 @@ fn add_at_depth(config: &Config, depth: u64) -> ScenarioReport {
 /// each sized so the front maker alone can absorb every measured sample
 /// without running dry — isolates the cost of matching against a structure
 /// with a large number of ENTRIES, not the cost of walking many of them.
+/// Matching only ever shrinks the front maker's own quantity, never removes
+/// or adds an order, so `order_count()` stays exactly `depth` throughout
+/// without any teardown.
 fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
     let samples = samples_for_depth(config, depth);
     let total_calls = (config.warmup + samples) as u64;
@@ -124,10 +174,17 @@ fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    assert_eq!(
+        level.order_count(),
+        depth as usize,
+        "small_taker_at_depth({depth}): matching a front maker's quantity down must never \
+         change order_count()"
+    );
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure(samples, |i| {
         level.match_order(
@@ -135,7 +192,7 @@ fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -147,6 +204,16 @@ fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
     assert_eq!(
         filled, samples,
         "small_taker_at_depth({depth}): every 1-unit taker must fully fill against the front maker"
+    );
+    assert_eq!(
+        level.order_count(),
+        depth as usize,
+        "small_taker_at_depth({depth}): depth must be unchanged after the measured loop"
+    );
+    fixtures::assert_stats_healthy(
+        &level,
+        samples as u64,
+        &format!("small_taker_at_depth({depth})"),
     );
 
     ScenarioReport::from_samples(
@@ -163,46 +230,71 @@ fn small_taker_at_depth(config: &Config, depth: u64) -> ScenarioReport {
 /// isolated `add_order`, to check whether `u64` quantity magnitude itself
 /// affects admission cost (it should not — `Quantity` arithmetic is
 /// `O(1)` — but the issue asks for scaled-quantity coverage explicitly).
+/// Same add-then-cancel depth restoration as [`add_at_depth`].
 fn scaled_quantity(config: &Config) -> Vec<ScenarioReport> {
     const QUANTITIES: [u64; 3] = [1, 10_000, 1_000_000_000];
+    const SEED_DEPTH: u64 = 100;
+    let extra_id = SEED_DEPTH;
     let mut reports = Vec::new();
     for &qty in &QUANTITIES {
-        let level = fixtures::seeded_standard_level(100, Side::Buy, qty.max(1));
-        let mut orders: Vec<Option<OrderType<()>>> = (0..(config.warmup + config.samples) as u64)
-            .map(|i| {
-                Some(fixtures::standard_order(
-                    100 + i,
+        let level = fixtures::seeded_standard_level(SEED_DEPTH, Side::Buy, qty.max(1));
+
+        warmup(config.warmup, |_| {
+            level
+                .add_order(fixtures::standard_order(
+                    extra_id,
                     Side::Buy,
                     qty,
                     TimeInForce::Gtc,
                 ))
-            })
-            .collect();
-
-        warmup(config.warmup, |i| {
-            level
-                .add_order(orders[i].take().expect("warmup order slot must be present"))
-                .expect("scaled_quantity: warmup add_order must succeed")
+                .expect("scaled_quantity: warmup add_order must succeed");
+            cancel_extra(
+                &level,
+                extra_id,
+                "scaled_quantity: warmup teardown cancel must succeed",
+            );
         });
+        assert_eq!(
+            level.order_count(),
+            SEED_DEPTH as usize,
+            "scaled_quantity(qty={qty}): depth must already be restored before measurement starts"
+        );
 
-        let (durations_ns, results) = measure(config.samples, |i| {
-            let order = orders[config.warmup + i]
-                .take()
-                .expect("measured order slot must be present");
-            level.add_order(order)
-        });
+        let (durations_ns, results) = measure_with_teardown(
+            config.samples,
+            |_| {
+                level.add_order(fixtures::standard_order(
+                    extra_id,
+                    Side::Buy,
+                    qty,
+                    TimeInForce::Gtc,
+                ))
+            },
+            |_, _outcome| {
+                cancel_extra(
+                    &level,
+                    extra_id,
+                    "scaled_quantity: teardown cancel must succeed",
+                )
+            },
+        );
 
         let succeeded = results.iter().filter(|r| r.is_ok()).count();
         assert_eq!(
             succeeded, config.samples,
             "scaled_quantity(qty={qty}): every add must succeed"
         );
+        assert_eq!(
+            level.order_count(),
+            SEED_DEPTH as usize,
+            "scaled_quantity(qty={qty}): depth must be restored after every timed sample"
+        );
 
         reports.push(ScenarioReport::from_samples(
             format!("scaled_quantity@{qty}"),
             "depth",
-            100,
-            "PriceLevel::add_order — swept order quantity magnitude",
+            SEED_DEPTH,
+            "PriceLevel::add_order — swept order quantity magnitude, restored after every sample",
             durations_ns,
             format!("{succeeded}/{} succeeded", config.samples),
         ));
@@ -214,13 +306,15 @@ fn scaled_quantity(config: &Config) -> Vec<ScenarioReport> {
 /// point — every resting order at a level must share the level's exact
 /// price, see `PriceLevel::add_order`'s admission check) for isolated
 /// `add_order`, to check whether `u128` price magnitude affects admission
-/// cost.
+/// cost. Same add-then-cancel depth restoration as [`add_at_depth`].
 fn scaled_price(config: &Config) -> Vec<ScenarioReport> {
     const PRICES: [u128; 3] = [1, 10_000, u64::MAX as u128];
+    const SEED_DEPTH: u64 = 100;
+    let extra_id = SEED_DEPTH;
     let mut reports = Vec::new();
     for &price in &PRICES {
         let level = PriceLevel::new(price);
-        for i in 0..100u64 {
+        for i in 0..SEED_DEPTH {
             level
                 .add_order(fixtures::standard_order_at_price(
                     i,
@@ -232,42 +326,64 @@ fn scaled_price(config: &Config) -> Vec<ScenarioReport> {
                 .expect("scaled_price: fixture seeding must succeed");
         }
 
-        let mut orders: Vec<Option<OrderType<()>>> = (0..(config.warmup + config.samples) as u64)
-            .map(|i| {
-                Some(fixtures::standard_order_at_price(
-                    100 + i,
+        warmup(config.warmup, |_| {
+            level
+                .add_order(fixtures::standard_order_at_price(
+                    extra_id,
                     price,
                     Side::Buy,
                     10,
                     TimeInForce::Gtc,
                 ))
-            })
-            .collect();
-
-        warmup(config.warmup, |i| {
-            level
-                .add_order(orders[i].take().expect("warmup order slot must be present"))
-                .expect("scaled_price: warmup add_order must succeed")
+                .expect("scaled_price: warmup add_order must succeed");
+            cancel_extra(
+                &level,
+                extra_id,
+                "scaled_price: warmup teardown cancel must succeed",
+            );
         });
+        assert_eq!(
+            level.order_count(),
+            SEED_DEPTH as usize,
+            "scaled_price(price={price}): depth must already be restored before measurement starts"
+        );
 
-        let (durations_ns, results) = measure(config.samples, |i| {
-            let order = orders[config.warmup + i]
-                .take()
-                .expect("measured order slot must be present");
-            level.add_order(order)
-        });
+        let (durations_ns, results) = measure_with_teardown(
+            config.samples,
+            |_| {
+                level.add_order(fixtures::standard_order_at_price(
+                    extra_id,
+                    price,
+                    Side::Buy,
+                    10,
+                    TimeInForce::Gtc,
+                ))
+            },
+            |_, _outcome| {
+                cancel_extra(
+                    &level,
+                    extra_id,
+                    "scaled_price: teardown cancel must succeed",
+                )
+            },
+        );
 
         let succeeded = results.iter().filter(|r| r.is_ok()).count();
         assert_eq!(
             succeeded, config.samples,
             "scaled_price(price={price}): every add must succeed"
         );
+        assert_eq!(
+            level.order_count(),
+            SEED_DEPTH as usize,
+            "scaled_price(price={price}): depth must be restored after every timed sample"
+        );
 
         reports.push(ScenarioReport::from_samples(
             format!("scaled_price@{price}"),
             "depth",
-            100,
-            "PriceLevel::add_order — swept level price magnitude",
+            SEED_DEPTH,
+            "PriceLevel::add_order — swept level price magnitude, restored after every sample",
             durations_ns,
             format!("{succeeded}/{} succeeded", config.samples),
         ));

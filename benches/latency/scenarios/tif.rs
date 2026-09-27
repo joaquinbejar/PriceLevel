@@ -15,7 +15,7 @@
 //! `BENCH.md` for the resulting (expected-to-be-flat) comparison.
 
 use crate::config::Config;
-use crate::fixtures::{self, LEVEL_PRICE, TAKER_ID_BASE};
+use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS, LEVEL_PRICE, TAKER_ID_BASE};
 use crate::report::ScenarioReport;
 use crate::timing::{measure, measure_with_setup, warmup};
 use pricelevel::prelude::*;
@@ -46,7 +46,9 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
 /// One `match_order` call per sample, taker TIF given by `tif`, each fully
 /// consuming a dedicated fresh maker of the same quantity
 /// (`MatchOutcome::Filled` regardless of `tif`, including `Fok`, since an
-/// exact-quantity match is a complete fill).
+/// exact-quantity match is a complete fill). Exactly one resting maker
+/// exists at any instant, so the reported depth is `1` (issue #142 review
+/// finding 2), not the cumulative warmup + sample count.
 fn full_match_with_tif(config: &Config, tif: TimeInForce, name: &'static str) -> ScenarioReport {
     const QTY: u64 = 10;
     let level = PriceLevel::new(LEVEL_PRICE);
@@ -71,10 +73,12 @@ fn full_match_with_tif(config: &Config, tif: TimeInForce, name: &'static str) ->
             Id::from_u64(TAKER_ID_BASE + i as u64),
             tif,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    // Reset so the health assertion below covers only the measured loop.
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,
@@ -85,7 +89,7 @@ fn full_match_with_tif(config: &Config, tif: TimeInForce, name: &'static str) ->
                 Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
                 tif,
                 TakerKind::Standard,
-                TimestampMs::new(0),
+                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
                 &generator,
             )
         },
@@ -99,11 +103,12 @@ fn full_match_with_tif(config: &Config, tif: TimeInForce, name: &'static str) ->
         filled, config.samples,
         "{name}: every call must fully fill against its dedicated fresh maker"
     );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * QTY, name);
 
     ScenarioReport::from_samples(
         name,
         "tif",
-        (config.warmup + config.samples) as u64,
+        1,
         "PriceLevel::match_order — full fill, taker TIF varies",
         durations_ns,
         format!("{filled}/{} Filled (taker_tif={tif:?})", config.samples),
@@ -136,7 +141,7 @@ fn fok_reject(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Fok,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -147,7 +152,7 @@ fn fok_reject(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Fok,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -162,6 +167,8 @@ fn fok_reject(config: &Config) -> ScenarioReport {
         1,
         "fok_reject: a killed FOK match must leave the resting queue completely untouched"
     );
+    // A kill emits zero trades, so no execution is ever recorded.
+    fixtures::assert_stats_healthy(&level, 0, "fok_reject");
 
     ScenarioReport::from_samples(
         "tif_fok_reject",
@@ -189,7 +196,7 @@ fn post_only_reject(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::PostOnly,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -200,7 +207,7 @@ fn post_only_reject(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::PostOnly,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -215,6 +222,8 @@ fn post_only_reject(config: &Config) -> ScenarioReport {
         1,
         "post_only_reject: a rejected post-only match must leave the resting queue untouched"
     );
+    // A rejection emits zero trades, so no execution is ever recorded.
+    fixtures::assert_stats_healthy(&level, 0, "post_only_reject");
 
     ScenarioReport::from_samples(
         "tif_post_only_reject",

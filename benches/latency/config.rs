@@ -25,7 +25,7 @@ use std::env;
 
 /// Deterministic default seed for every xorshift-driven workload in this
 /// harness. Overridable so a reviewer can rerun with a different seed to
-/// probe p99.99 stability (see `stats::MIN_SAMPLES_FOR_P9999`'s docs).
+/// probe p99.99 stability (see `stats::P9999_CAVEAT`'s docs).
 const DEFAULT_SEED: u64 = 0xA5A5_A5A5_A5A5_A5A5;
 
 /// Default per-scenario sample count for the single-threaded isolated /

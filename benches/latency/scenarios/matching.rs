@@ -3,9 +3,16 @@
 //! fill, a many-fill sweep in one call, and iceberg / reserve replenishment.
 //! All takers use `TimeInForce::Gtc` and `TakerKind::Standard`; TIF-specific
 //! and post-only behavior is covered separately in `tif.rs`.
+//!
+//! Every scenario that expects trades to occur uses
+//! [`fixtures::EXECUTION_TIMESTAMP_MS`] as the match's execution timestamp
+//! and asserts [`fixtures::assert_stats_healthy`] after its measured loop
+//! (issue #142 review finding 1) — see that constant's docs for why an
+//! earlier version of this harness silently measured the degraded/error
+//! path instead.
 
 use crate::config::Config;
-use crate::fixtures::{self, LEVEL_PRICE, TAKER_ID_BASE};
+use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS, LEVEL_PRICE, TAKER_ID_BASE};
 use crate::report::ScenarioReport;
 use crate::timing::{measure, measure_with_setup, warmup};
 use pricelevel::prelude::*;
@@ -24,7 +31,8 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
 }
 
 /// `match_order` against a level with no resting orders at all
-/// (`MatchOutcome::NotFilled`).
+/// (`MatchOutcome::NotFilled`). No trades are ever emitted, so there is
+/// nothing for `PriceLevelStatistics` to record.
 fn match_empty(config: &Config) -> ScenarioReport {
     let level = PriceLevel::new(LEVEL_PRICE);
     let generator = fixtures::trade_id_generator();
@@ -35,7 +43,7 @@ fn match_empty(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -46,7 +54,7 @@ fn match_empty(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -59,6 +67,7 @@ fn match_empty(config: &Config) -> ScenarioReport {
         not_filled, config.samples,
         "match_empty: every call against an empty level must be NotFilled"
     );
+    fixtures::assert_stats_healthy(&level, 0, "match_empty");
 
     ScenarioReport::from_samples(
         "match_empty",
@@ -71,12 +80,14 @@ fn match_empty(config: &Config) -> ScenarioReport {
 }
 
 /// `match_order` where each call fully consumes exactly one fresh maker of
-/// the same quantity as the taker (`MatchOutcome::Filled`).
+/// the same quantity as the taker (`MatchOutcome::Filled`). Exactly one
+/// resting maker exists at any instant (added just before the timed call,
+/// fully consumed by it), so the reported depth is `1`, not the cumulative
+/// warmup + sample count (issue #142 review finding 2).
 fn match_full(config: &Config) -> ScenarioReport {
     const QTY: u64 = 10;
     let level = PriceLevel::new(LEVEL_PRICE);
     let generator = fixtures::trade_id_generator();
-    let total = (config.warmup + config.samples) as u64;
 
     let seed = |i: usize| {
         level
@@ -97,10 +108,13 @@ fn match_full(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    // Reset so the assertion below covers only the measured loop, not the
+    // warmup fills that also executed against this same level.
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,
@@ -111,7 +125,7 @@ fn match_full(config: &Config) -> ScenarioReport {
                 Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
                 TimeInForce::Gtc,
                 TakerKind::Standard,
-                TimestampMs::new(0),
+                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
                 &generator,
             )
         },
@@ -130,11 +144,12 @@ fn match_full(config: &Config) -> ScenarioReport {
         0,
         "match_full: every seeded maker must have been fully consumed"
     );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * QTY, "match_full");
 
     ScenarioReport::from_samples(
         "match_full",
         "match",
-        total,
+        1,
         "PriceLevel::match_order — full fill of one dedicated maker",
         durations_ns,
         format!("{filled}/{} Filled", config.samples),
@@ -143,7 +158,8 @@ fn match_full(config: &Config) -> ScenarioReport {
 
 /// `match_order` where each call fully consumes a small fresh maker but the
 /// taker's own quantity is larger, so the taker's remainder is unfilled
-/// (`MatchOutcome::PartiallyFilled`).
+/// (`MatchOutcome::PartiallyFilled`). Same single-maker-in-flight reasoning
+/// as [`match_full`] — reported depth is `1`.
 fn match_partial(config: &Config) -> ScenarioReport {
     const MAKER_QTY: u64 = 5;
     const TAKER_QTY: u64 = 10;
@@ -167,10 +183,11 @@ fn match_partial(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         );
     }
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure_with_setup(
         config.samples,
@@ -181,7 +198,7 @@ fn match_partial(config: &Config) -> ScenarioReport {
                 Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
                 TimeInForce::Gtc,
                 TakerKind::Standard,
-                TimestampMs::new(0),
+                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
                 &generator,
             )
         },
@@ -200,11 +217,12 @@ fn match_partial(config: &Config) -> ScenarioReport {
         0,
         "match_partial: every seeded maker must have been fully consumed by the larger taker"
     );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * MAKER_QTY, "match_partial");
 
     ScenarioReport::from_samples(
         "match_partial",
         "match",
-        0,
+        1,
         "PriceLevel::match_order — taker larger than one dedicated maker",
         durations_ns,
         format!("{partial}/{} PartiallyFilled", config.samples),
@@ -249,10 +267,11 @@ fn many_fill_sweep(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure(samples, |i| {
         level.match_order(
@@ -260,7 +279,7 @@ fn many_fill_sweep(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + warmup_count as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -278,6 +297,11 @@ fn many_fill_sweep(config: &Config) -> ScenarioReport {
         total_trades as u64,
         samples as u64 * FILLS_PER_CALL,
         "many_fill_sweep: total trade count must equal samples * FILLS_PER_CALL exactly"
+    );
+    fixtures::assert_stats_healthy(
+        &level,
+        samples as u64 * FILLS_PER_CALL * MAKER_QTY,
+        "many_fill_sweep",
     );
 
     ScenarioReport::from_samples(
@@ -308,10 +332,11 @@ fn iceberg_replenish(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure(config.samples, |i| {
         level.match_order(
@@ -319,7 +344,7 @@ fn iceberg_replenish(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -332,6 +357,7 @@ fn iceberg_replenish(config: &Config) -> ScenarioReport {
         filled, config.samples,
         "iceberg_replenish: every call must fully consume the visible tranche and trigger a replenish"
     );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * VISIBLE, "iceberg_replenish");
 
     ScenarioReport::from_samples(
         "iceberg_replenish",
@@ -368,10 +394,11 @@ fn reserve_replenish(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
+    level.stats().reset_at(TimestampMs::new(0));
 
     let (durations_ns, results) = measure(config.samples, |i| {
         level.match_order(
@@ -379,7 +406,7 @@ fn reserve_replenish(config: &Config) -> ScenarioReport {
             Id::from_u64(TAKER_ID_BASE + config.warmup as u64 + i as u64),
             TimeInForce::Gtc,
             TakerKind::Standard,
-            TimestampMs::new(0),
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
             &generator,
         )
     });
@@ -392,6 +419,7 @@ fn reserve_replenish(config: &Config) -> ScenarioReport {
         filled, config.samples,
         "reserve_replenish: every call must fully consume the visible tranche and trigger a replenish"
     );
+    fixtures::assert_stats_healthy(&level, config.samples as u64 * VISIBLE, "reserve_replenish");
 
     ScenarioReport::from_samples(
         "reserve_replenish",

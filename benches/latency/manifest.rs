@@ -44,14 +44,27 @@ pub struct RunManifest {
     pub timer_overhead_ns: u64,
 }
 
-fn run_capture(cmd: &str, args: &[&str]) -> Option<String> {
+/// Runs `cmd`, returning its trimmed stdout **only when the process ran and
+/// exited successfully**, regardless of whether that stdout is empty. A
+/// clean `git status --porcelain` legitimately succeeds with empty stdout —
+/// callers that need to tell "succeeded with nothing to report" apart from
+/// "the command could not be run at all" must use this, not [`run_capture`]
+/// (issue #142 review finding 8).
+fn run_capture_raw(cmd: &str, args: &[&str]) -> Option<String> {
     Command::new(cmd)
         .args(args)
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+}
+
+/// Like [`run_capture_raw`], but additionally treats an empty (trimmed)
+/// stdout as "not available" — appropriate for `git rev-parse HEAD` /
+/// `rustc -V` / `sysctl`, where a successful-but-empty result is not a
+/// meaningful answer, unlike `git status --porcelain`'s "clean" case.
+fn run_capture(cmd: &str, args: &[&str]) -> Option<String> {
+    run_capture_raw(cmd, args).filter(|s| !s.is_empty())
 }
 
 fn detect_commit() -> String {
@@ -59,9 +72,12 @@ fn detect_commit() -> String {
 }
 
 fn detect_dirty() -> String {
-    match run_capture("git", &["status", "--porcelain"]) {
+    match run_capture_raw("git", &["status", "--porcelain"]) {
         Some(s) if s.is_empty() => "clean".to_string(),
         Some(_) => "dirty".to_string(),
+        // The command failed to run or exited non-zero (e.g. not a git
+        // worktree, or `git` missing) — genuinely unknown, distinct from a
+        // successful empty result.
         None => "unknown".to_string(),
     }
 }

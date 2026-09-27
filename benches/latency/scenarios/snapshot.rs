@@ -10,7 +10,7 @@
 use crate::config::Config;
 use crate::fixtures;
 use crate::report::ScenarioReport;
-use crate::timing::measure;
+use crate::timing::{measure, measure_fold};
 use pricelevel::PriceLevelSnapshotPackage;
 use pricelevel::prelude::*;
 
@@ -80,6 +80,14 @@ fn iteration(config: &Config) -> ScenarioReport {
 /// One `PriceLevel::snapshot()` call per sample — materializes the orders
 /// and recomputes aggregates (`doc/architecture.md`'s "Data flow" step 4);
 /// this is the "capture" boundary, distinct from serialization.
+///
+/// Each sample's `PriceLevelSnapshot` is validated and dropped immediately
+/// (via [`measure_fold`]) rather than collected into a `Vec` that outlives
+/// the loop — retaining `config.samples` materialized 1,000-order snapshots
+/// simultaneously (20,000 x 1,000 = 20,000,000 order handles alive at once
+/// at the default sample count) was needless memory pressure with no
+/// benefit, since only a pass/fail count is needed (issue #142 review
+/// finding 4).
 fn snapshot_capture(config: &Config) -> ScenarioReport {
     let level = fixtures::seeded_standard_level(DEPTH, Side::Buy, 10);
 
@@ -87,15 +95,23 @@ fn snapshot_capture(config: &Config) -> ScenarioReport {
         std::hint::black_box(level.snapshot());
     }
 
-    let (durations_ns, snapshots) = measure(config.samples, |_| level.snapshot());
-
-    for snap in &snapshots {
-        assert_eq!(
-            snap.order_count(),
-            DEPTH as usize,
-            "snapshot_capture: every snapshot must carry exactly DEPTH orders"
-        );
-    }
+    let (durations_ns, valid_count) = measure_fold(
+        config.samples,
+        0usize,
+        |_| level.snapshot(),
+        |acc, _i, snap| {
+            assert_eq!(
+                snap.order_count(),
+                DEPTH as usize,
+                "snapshot_capture: every snapshot must carry exactly DEPTH orders"
+            );
+            acc + 1
+        },
+    );
+    assert_eq!(
+        valid_count, config.samples,
+        "snapshot_capture: every sample must produce a validated snapshot"
+    );
 
     ScenarioReport::from_samples(
         "snapshot_capture",
@@ -104,8 +120,7 @@ fn snapshot_capture(config: &Config) -> ScenarioReport {
         "PriceLevel::snapshot() — materialize + recompute aggregates",
         durations_ns,
         format!(
-            "{}/{} snapshots carried exactly {DEPTH} orders",
-            snapshots.len(),
+            "{valid_count}/{} snapshots carried exactly {DEPTH} orders",
             config.samples
         ),
     )
@@ -148,6 +163,11 @@ fn checksum_validate(config: &Config) -> ScenarioReport {
 /// One `PriceLevel::from_snapshot_json` call per sample — decode, checksum
 /// validation, and full level reconstruction from an already-encoded JSON
 /// string (encoding happens once, outside every timed call).
+///
+/// Each sample's restored `PriceLevel` is validated and dropped immediately
+/// (via [`measure_fold`]) rather than collected into a `Vec` that outlives
+/// the loop — the same unbounded-retention problem as
+/// [`snapshot_capture`], and the same fix (issue #142 review finding 4).
 fn restore(config: &Config) -> ScenarioReport {
     let level = fixtures::seeded_standard_level(DEPTH, Side::Buy, 10);
     let json = level
@@ -161,21 +181,21 @@ fn restore(config: &Config) -> ScenarioReport {
         );
     }
 
-    let (durations_ns, results) =
-        measure(config.samples, |_| PriceLevel::from_snapshot_json(&json));
-
-    let mut restored_ok = 0usize;
-    for result in &results {
-        let restored = result
-            .as_ref()
-            .expect("restore: every restore of a valid, untampered snapshot must succeed");
-        assert_eq!(
-            restored.order_count(),
-            DEPTH as usize,
-            "restore: every restored level must carry exactly DEPTH orders"
-        );
-        restored_ok += 1;
-    }
+    let (durations_ns, restored_ok) = measure_fold(
+        config.samples,
+        0usize,
+        |_| PriceLevel::from_snapshot_json(&json),
+        |acc, _i, result| {
+            let restored = result
+                .expect("restore: every restore of a valid, untampered snapshot must succeed");
+            assert_eq!(
+                restored.order_count(),
+                DEPTH as usize,
+                "restore: every restored level must carry exactly DEPTH orders"
+            );
+            acc + 1
+        },
+    );
     assert_eq!(restored_ok, config.samples);
 
     ScenarioReport::from_samples(

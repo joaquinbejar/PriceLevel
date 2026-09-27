@@ -5,18 +5,26 @@
 //! plain sort-and-index-lookup over the full sample `Vec<u64>`, computed
 //! *after* the timed loop, never inside it.
 
-/// Minimum sample count before p99.99 is reported.
+/// Label appended to every reported p99.99 figure, in every place this
+/// harness prints one, so it can never be quoted without its caveat
+/// (issue #142 review finding 6).
 ///
-/// p99.99 asks "what is the 1-in-10,000 worst sample". With fewer than
-/// roughly 10,000 samples that quantile is extrapolated from zero or one
-/// observed point, which is not a defensible tail claim (the issue asks to
-/// "refuse unsupported tail claims"). This harness requires **at least**
-/// `MIN_SAMPLES_FOR_P9999` samples (a 2x margin over the bare 1-in-10,000
-/// floor) before it prints a p99.99 number, and even then the value is a
-/// **single-run point estimate** — this harness does not repeat runs to
-/// check quantile stability, so `BENCH.md` must caveat any p99.99 figure
-/// accordingly.
-pub const MIN_SAMPLES_FOR_P9999: usize = 20_000;
+/// A sample count alone does not justify treating p99.99 as a validated
+/// tail quantile: the 1-in-10,000 rank is a single order statistic, and
+/// nothing here repeats a run to check whether that single point is stable
+/// from one run to the next. The review offered two ways to keep this
+/// honest: gate the figure behind a sample-count floor and refuse it below
+/// that floor, or always compute and report it labelled as exploratory
+/// while keeping the raw observations so a reader can judge stability
+/// themselves. This harness takes the second path, because the first still
+/// implied "enough samples make it valid", which sample count alone cannot
+/// establish — and because `persistence.rs` already writes every scenario's
+/// raw nanosecond observations to `target/latency/<run-id>/<scenario>.csv`
+/// alongside the manifest, so a reader who wants to check stability can
+/// rerun this harness and diff the raw files, or resample the same file,
+/// instead of trusting one number.
+pub const P9999_CAVEAT: &str = "unvalidated exploratory estimate — not confirmed across repeated \
+                                 runs; see stats::P9999_CAVEAT and BENCH.md Methodology";
 
 /// Percentile summary of one scenario's per-operation latency samples.
 #[derive(Debug, Clone)]
@@ -30,9 +38,13 @@ pub struct Percentiles {
     pub p99_ns: u64,
     /// 99.9th percentile, in nanoseconds.
     pub p999_ns: u64,
-    /// 99.99th percentile, in nanoseconds — `None` when `samples` is below
-    /// [`MIN_SAMPLES_FOR_P9999`]; a caller MUST print "insufficient samples"
-    /// rather than inventing a number in that case.
+    /// 99.99th percentile, in nanoseconds — `None` only when `samples ==
+    /// 0`. When `Some`, this is an [`P9999_CAVEAT`]: a single order
+    /// statistic from ONE run, not a quantity this harness has validated
+    /// for stability across repeated runs. Do not quote it without that
+    /// caveat; use the persisted raw observations
+    /// (`target/latency/<run-id>/<scenario>.csv`) to check stability
+    /// yourself before relying on it.
     pub p9999_ns: Option<u64>,
     /// Maximum observed sample, in nanoseconds.
     pub max_ns: u64,
@@ -68,7 +80,9 @@ fn nearest_rank_index(q: f64, n: usize) -> usize {
 /// `samples_ns` must contain only samples recorded by [`crate::timing`]
 /// (nanosecond durations of exactly one operation each). An empty slice
 /// returns all-zero percentiles with `samples == 0`; callers should treat
-/// that as "no data", not "operation took zero time".
+/// that as "no data", not "operation took zero time". `p9999_ns` is `Some`
+/// whenever `samples_ns` is non-empty — see its doc for the exploratory
+/// caveat that always accompanies it.
 #[must_use]
 pub fn compute(samples_ns: &mut [u64]) -> Percentiles {
     samples_ns.sort_unstable();
@@ -88,11 +102,7 @@ pub fn compute(samples_ns: &mut [u64]) -> Percentiles {
     let p50_ns = samples_ns[nearest_rank_index(0.50, n)];
     let p99_ns = samples_ns[nearest_rank_index(0.99, n)];
     let p999_ns = samples_ns[nearest_rank_index(0.999, n)];
-    let p9999_ns = if n >= MIN_SAMPLES_FOR_P9999 {
-        Some(samples_ns[nearest_rank_index(0.9999, n)])
-    } else {
-        None
-    };
+    let p9999_ns = Some(samples_ns[nearest_rank_index(0.9999, n)]);
     let max_ns = samples_ns[n - 1];
     let min_ns = samples_ns[0];
 
@@ -109,15 +119,24 @@ pub fn compute(samples_ns: &mut [u64]) -> Percentiles {
 
 impl std::fmt::Display for Percentiles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let p9999 = self
-            .p9999_ns
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "insufficient samples".to_string());
-        write!(
-            f,
-            "n={:<8} p50={:<8} p99={:<8} p99.9={:<8} p99.99={:<20} max={:<8} min={}",
-            self.samples, self.p50_ns, self.p99_ns, self.p999_ns, p9999, self.max_ns, self.min_ns
-        )
+        match self.p9999_ns {
+            Some(v) => write!(
+                f,
+                "n={:<8} p50={:<8} p99={:<8} p99.9={:<8} p99.99={v} ({}) max={:<8} min={}",
+                self.samples,
+                self.p50_ns,
+                self.p99_ns,
+                self.p999_ns,
+                P9999_CAVEAT,
+                self.max_ns,
+                self.min_ns
+            ),
+            None => write!(
+                f,
+                "n=0 (no samples) p50={:<8} p99={:<8} p99.9={:<8} p99.99=n/a max={:<8} min={}",
+                self.p50_ns, self.p99_ns, self.p999_ns, self.max_ns, self.min_ns
+            ),
+        }
     }
 }
 
@@ -146,12 +165,12 @@ pub fn self_check() {
         "self_check: empty input must not report p99.99"
     );
 
-    let mut below_threshold: Vec<u64> = (1..=1000).collect();
-    let p = compute(&mut below_threshold);
-    assert_eq!(p.samples, 1000);
-    assert_eq!(
-        p.p9999_ns, None,
-        "self_check: below MIN_SAMPLES_FOR_P9999 must refuse p99.99"
+    let mut small: Vec<u64> = (1..=100).collect();
+    let p = compute(&mut small);
+    assert_eq!(p.samples, 100);
+    assert!(
+        p.p9999_ns.is_some(),
+        "self_check: p99.99 must always be reported (labelled exploratory) for any non-empty input"
     );
 
     let mut plenty: Vec<u64> = (1..=50_000).collect();
@@ -164,7 +183,7 @@ pub fn self_check() {
     );
     let p9999 = p
         .p9999_ns
-        .expect("self_check: 50_000 samples meets MIN_SAMPLES_FOR_P9999");
+        .expect("self_check: p99.99 must be present for a non-empty input");
     assert!(
         p.p999_ns <= p9999,
         "self_check: p99.9 must not exceed p99.99"

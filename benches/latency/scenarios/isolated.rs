@@ -6,7 +6,7 @@
 use crate::config::Config;
 use crate::fixtures::{self, LEVEL_PRICE};
 use crate::report::ScenarioReport;
-use crate::timing::{measure, warmup};
+use crate::timing::{measure, measure_with_teardown, warmup};
 use pricelevel::prelude::*;
 
 /// Fixed resting depth every isolated scenario seeds before measuring, large
@@ -27,48 +27,76 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
 }
 
 /// Isolated `add_order` of a fresh standard GTC order into a level that
-/// already has [`SEED_DEPTH`] resting orders on the same side.
+/// holds exactly [`SEED_DEPTH`] resting orders on the same side, at every
+/// sample — not merely at setup. Each sample adds one order at a fixed id
+/// just past the seeded range, then an untimed teardown cancels that exact
+/// id before the next sample, so `order_count()` is `SEED_DEPTH` both before
+/// and after the whole measured loop. An earlier version of this harness
+/// never canceled what it added, so the level grew by one order per warmup
+/// and measured sample and no longer held the depth the report claimed by
+/// the end of the run (issue #142 review finding 2).
 fn add_gtc(config: &Config) -> ScenarioReport {
-    let total = config.warmup + config.samples;
     let level = fixtures::seeded_standard_level(SEED_DEPTH, Side::Buy, 10);
+    let extra_id = SEED_DEPTH;
 
-    // Pre-build every order outside the timed loop; `measure` only ever
-    // calls `add_order` on an already-constructed value.
-    let mut orders: Vec<Option<OrderType<()>>> = (0..total)
-        .map(|i| {
-            Some(fixtures::standard_order(
-                SEED_DEPTH + i as u64,
+    warmup(config.warmup, |_| {
+        level
+            .add_order(fixtures::standard_order(
+                extra_id,
                 Side::Buy,
                 10,
                 TimeInForce::Gtc,
             ))
-        })
-        .collect();
-
-    warmup(config.warmup, |i| {
+            .expect("warmup add_order must succeed for the fixed extra id");
         level
-            .add_order(orders[i].take().expect("warmup order slot must be present"))
-            .expect("warmup add_order must succeed for a fresh sequential id")
+            .update_order(OrderUpdate::Cancel {
+                order_id: Id::from_u64(extra_id),
+            })
+            .expect("warmup teardown cancel must not error")
+            .expect("warmup teardown cancel must find the order this same iteration just added");
     });
+    assert_eq!(
+        level.order_count(),
+        SEED_DEPTH as usize,
+        "add_gtc: depth must already be restored before measurement starts"
+    );
 
-    let (durations_ns, results) = measure(config.samples, |i| {
-        let order = orders[config.warmup + i]
-            .take()
-            .expect("measured order slot must be present");
-        level.add_order(order)
-    });
+    let (durations_ns, results) = measure_with_teardown(
+        config.samples,
+        |_| {
+            level.add_order(fixtures::standard_order(
+                extra_id,
+                Side::Buy,
+                10,
+                TimeInForce::Gtc,
+            ))
+        },
+        |_, _outcome| {
+            level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: Id::from_u64(extra_id),
+                })
+                .expect("teardown cancel must not error")
+                .expect("teardown cancel must find the order this same iteration just added");
+        },
+    );
 
     let succeeded = results.iter().filter(|r| r.is_ok()).count();
     assert_eq!(
         succeeded, config.samples,
-        "add_gtc: every add_order call on a fresh sequential id must succeed"
+        "add_gtc: every add_order call on the fixed extra id must succeed"
+    );
+    assert_eq!(
+        level.order_count(),
+        SEED_DEPTH as usize,
+        "add_gtc: depth must be restored to exactly SEED_DEPTH after every timed sample"
     );
 
     ScenarioReport::from_samples(
         "isolated_add_gtc",
         "isolated",
         SEED_DEPTH,
-        "PriceLevel::add_order(Standard, Gtc)",
+        "PriceLevel::add_order(Standard, Gtc) — restored after every sample",
         durations_ns,
         format!("{succeeded}/{} succeeded", config.samples),
     )
