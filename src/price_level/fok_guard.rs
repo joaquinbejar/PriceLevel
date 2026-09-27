@@ -7,7 +7,8 @@
 //! wins the race against mutators it has just woken: they are runnable but not
 //! yet running when the matcher's next `write()` finds the lock free. Measured
 //! on the rejected-FOK loop at depth 10,000 (a ~170 µs exclusive section), a
-//! writer's p99 wait was about 1.2 s and single waits reached 9 s.
+//! writer's p99 wait was 1.2 to 4.5 s and single waits reached 14.5 s; with
+//! the hand-off, p99 is about one section (~190 µs). See `BENCH.md`.
 //!
 //! [`FokGuard`] adds one counter, `waiting_mutators`, to that lock:
 //!
