@@ -55,19 +55,69 @@ fn snapshot_attempts_exhausted(price: u128, last: Option<PriceLevelError>) -> Pr
     }
 }
 
+/// Pre-size hint for a non-fill-or-kill sweep's result vectors (issues #106,
+/// #163): the tighter of the taker quantity (each trade consumes at least one
+/// unit) and the resting-order count (each trade consumes one maker step).
+///
+/// Width policy: `incoming_quantity` is converted with a checked
+/// `usize::try_from`, never a truncating cast. A quantity that does not fit
+/// `usize` (only possible on targets narrower than 64 bits) is larger than
+/// any `usize`, so the minimum is exactly `order_count` — the result is the
+/// exact bound, not a clamped default. The hint is advisory: the sweep still
+/// reserves fallibly per step.
+#[inline]
+#[must_use]
+pub(crate) fn sweep_capacity_hint(incoming_quantity: u64, order_count: usize) -> usize {
+    match usize::try_from(incoming_quantity) {
+        Ok(quantity) => quantity.min(order_count),
+        // `incoming_quantity > usize::MAX >= order_count`.
+        Err(_) => order_count,
+    }
+}
+
+/// Error for a resting-order count that would underflow on release (issue
+/// #163): a removal found the level's count already at zero, i.e. the count
+/// disagrees with the queue.
+#[cold]
+#[inline(never)]
+fn topology_underflow(price: u128) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "price level {price} topology count underflow: a removal found a zero resting-order count"
+        ),
+    }
+}
+
 /// Bit layout of the [`PriceLevel::topology`] word (issue #126): the high two
 /// bits carry the pinned-side tag, the low bits the resting-order count. Packing
 /// both into one atomic makes the side pin and the count move together in a
 /// single compare-exchange, so a drain's un-pin can never race an admission's
 /// pin across two independent atomics.
 mod topology {
+    use crate::errors::PriceLevelError;
     use crate::orders::Side;
 
     /// Bits reserved for the resting-order count (the rest hold the side tag).
     /// `u64::MAX >> 2` orders is astronomically beyond any level's capacity, so
     /// nothing is lost by borrowing the top two bits for the tag.
+    ///
+    /// The shifts by this constant in [`pack`] / [`tag`] are valid by
+    /// construction (`62 < u64::BITS`); they are not a reachable shift overflow.
     pub(super) const COUNT_BITS: u32 = 62;
     pub(super) const COUNT_MASK: u64 = (1 << COUNT_BITS) - 1;
+
+    /// Largest resting-order count a level admits or restores (issue #163):
+    /// the 62-bit count field, further capped at `usize::MAX` on narrower
+    /// targets so [`super::PriceLevel::order_count`] converts it to `usize`
+    /// exactly. The caps are widening constants (`u32` / `u16` -> `u64`),
+    /// never a narrowing cast.
+    #[cfg(target_pointer_width = "64")]
+    pub(super) const MAX_COUNT: u64 = COUNT_MASK;
+    #[cfg(target_pointer_width = "32")]
+    pub(super) const MAX_COUNT: u64 = u32::MAX as u64;
+    #[cfg(target_pointer_width = "16")]
+    pub(super) const MAX_COUNT: u64 = u16::MAX as u64;
+
     pub(super) const TAG_UNPINNED: u64 = 0;
     pub(super) const TAG_BUY: u64 = 1;
     pub(super) const TAG_SELL: u64 = 2;
@@ -89,9 +139,47 @@ mod topology {
         }
     }
 
+    /// Pack a side tag and a count the caller has already bounded: `tag` is
+    /// one of the `TAG_*` constants (at most two bits) and `count <=
+    /// MAX_COUNT` (from a checked admission, a checked release, or a literal
+    /// `0` / `1`). A count derived from external input goes through
+    /// [`try_pack`] instead.
     #[inline]
     pub(super) fn pack(tag: u64, count: u64) -> u64 {
         (tag << COUNT_BITS) | count
+    }
+
+    /// Checked [`pack`] for a count derived from external input (issue #163):
+    /// a snapshot's order-vector length on restore. Validates the tag and the
+    /// count bound so an oversized count can never bleed into the tag bits.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if `tag` is not a `TAG_*` value
+    /// or `count` exceeds [`MAX_COUNT`].
+    pub(super) fn try_pack(tag: u64, count: usize) -> Result<u64, PriceLevelError> {
+        if tag > TAG_SELL {
+            return Err(PriceLevelError::InvalidOperation {
+                message: format!("price level topology tag {tag} is not a valid side tag"),
+            });
+        }
+        match u64::try_from(count) {
+            Ok(count) if count <= MAX_COUNT => Ok(pack(tag, count)),
+            _ => Err(PriceLevelError::InvalidOperation {
+                message: format!(
+                    "price level order count {count} exceeds the representable maximum {MAX_COUNT}"
+                ),
+            }),
+        }
+    }
+
+    /// `usize` view of a word's count half (issue #163). Every stored count is
+    /// `<= MAX_COUNT <= usize::MAX` (admission and restore enforce it), so the
+    /// checked conversion always succeeds; `None` would mean a count that
+    /// bypassed those checks.
+    #[inline]
+    pub(super) fn count_usize(word: u64) -> Option<usize> {
+        usize::try_from(count(word)).ok()
     }
 
     #[inline]
@@ -151,6 +239,199 @@ fn fire_post_only_decision_hook() {
                 *slot = Some(hook);
             }
         });
+    }
+}
+
+// Injection seam for the update decision (issue #163). `UpdateQuantity`
+// passes its decided order through `apply_update_decision_hook` just before
+// returning the decision to `OrderQueue::update_entry_with`, so a test can
+// substitute an order carrying a DIFFERENT id and assert that the queue
+// rejects it before any counter is reserved. Production builds compile none of
+// this — the call site is `#[cfg(test)]`.
+#[cfg(test)]
+type UpdateDecisionHook = Box<dyn FnMut(Arc<OrderType<()>>) -> Arc<OrderType<()>>>;
+
+#[cfg(test)]
+thread_local! {
+    static UPDATE_DECISION_HOOK: std::cell::RefCell<Option<UpdateDecisionHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install a hook that rewrites the order an `UpdateQuantity` decision commits
+/// (test seam, issue #163). Returns a guard that clears the hook on drop.
+#[cfg(test)]
+pub(crate) fn set_update_decision_hook(hook: UpdateDecisionHook) -> UpdateDecisionHookGuard {
+    UPDATE_DECISION_HOOK.with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut() {
+            *slot = Some(hook);
+        }
+    });
+    UpdateDecisionHookGuard
+}
+
+/// Clears the update decision hook when dropped (test seam, issue #163).
+#[cfg(test)]
+pub(crate) struct UpdateDecisionHookGuard;
+
+#[cfg(test)]
+impl Drop for UpdateDecisionHookGuard {
+    fn drop(&mut self) {
+        UPDATE_DECISION_HOOK.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                *slot = None;
+            }
+        });
+    }
+}
+
+/// Pass `order` through the update decision hook if one is installed (test
+/// seam, issue #163); identity otherwise. Never panics: a busy slot (a
+/// re-entrant update inside the hook) is treated as "no hook".
+#[cfg(test)]
+fn apply_update_decision_hook(order: Arc<OrderType<()>>) -> Arc<OrderType<()>> {
+    let hook =
+        UPDATE_DECISION_HOOK.with(|slot| slot.try_borrow_mut().ok().and_then(|mut s| s.take()));
+    match hook {
+        Some(mut hook) => {
+            let rewritten = hook(order);
+            UPDATE_DECISION_HOOK.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut()
+                    && slot.is_none()
+                {
+                    *slot = Some(hook);
+                }
+            });
+            rewritten
+        }
+        None => order,
+    }
+}
+
+/// Signed change of one level quantity counter for an update moving a
+/// component `old -> new` (issue #163). Built with `abs_diff`, which is exact
+/// and total, so no guarded ordinary subtraction is needed to derive it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CounterDelta {
+    /// The component grows by this many quantity units.
+    Increase(u64),
+    /// The component shrinks by this many quantity units.
+    Decrease(u64),
+}
+
+impl CounterDelta {
+    /// The delta taking a component from `old` to `new`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn between(old: u64, new: u64) -> Self {
+        if new >= old {
+            Self::Increase(new.abs_diff(old))
+        } else {
+            Self::Decrease(old.abs_diff(new))
+        }
+    }
+
+    /// The inverse delta (what undoes this one).
+    #[inline]
+    #[must_use]
+    pub(crate) fn inverse(self) -> Self {
+        match self {
+            Self::Increase(d) => Self::Decrease(d),
+            Self::Decrease(d) => Self::Increase(d),
+        }
+    }
+
+    /// Apply the delta to `counter` with a checked `fetch_update`: an increase
+    /// never overflows `u64`, a decrease never underflows. `Relaxed`: advisory
+    /// level counters (issue #68); the queue commit carries the happens-before.
+    ///
+    /// Returns `true` if applied, `false` if the checked step failed (the
+    /// counter is then unchanged).
+    #[inline]
+    #[must_use = "a failed checked step must be handled"]
+    pub(crate) fn apply(self, counter: &AtomicU64) -> bool {
+        let step = |c: u64| match self {
+            Self::Increase(d) => c.checked_add(d),
+            Self::Decrease(d) => c.checked_sub(d),
+        };
+        counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+            .is_ok()
+    }
+}
+
+/// Counter reservation plan for one `UpdateQuantity` (issue #163): computed as
+/// pure data by the update decision and applied only after the queue has
+/// validated that decision, so a rejected decision never leaves a reservation
+/// behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UpdatePlan {
+    visible: CounterDelta,
+    hidden: CounterDelta,
+}
+
+impl UpdatePlan {
+    /// Plan for a maker moving `visible: old -> new` and `hidden: old -> new`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(
+        old_visible: u64,
+        new_visible: u64,
+        old_hidden: u64,
+        new_hidden: u64,
+    ) -> Self {
+        Self {
+            visible: CounterDelta::between(old_visible, new_visible),
+            hidden: CounterDelta::between(old_hidden, new_hidden),
+        }
+    }
+
+    /// Reserve both counters, all or nothing.
+    ///
+    /// An increase is applied first when the components move in opposite
+    /// directions, so the rollback of the first reservation after a failed
+    /// second one only ever subtracts units this call added (still counted,
+    /// so provably in range). Only when both components shrink can the
+    /// rollback re-add units, and the second shrink failing already requires a
+    /// counter below its own live contribution. If a rollback still fails,
+    /// `rollback_failed` is set so the caller poisons the level (the counters
+    /// no longer describe the queue) instead of reporting a clean rejection.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if either reservation would
+    /// overflow / underflow its counter; the first reservation is rolled back.
+    pub(crate) fn reserve(
+        self,
+        visible_counter: &AtomicU64,
+        hidden_counter: &AtomicU64,
+        rollback_failed: &mut bool,
+    ) -> Result<(), PriceLevelError> {
+        let visible = (self.visible, visible_counter);
+        let hidden = (self.hidden, hidden_counter);
+        let (first, second) = match (self.visible, self.hidden) {
+            (CounterDelta::Decrease(_), CounterDelta::Increase(_)) => (hidden, visible),
+            _ => (visible, hidden),
+        };
+        if !first.0.apply(first.1) {
+            return Err(update_counter_overflow());
+        }
+        if !second.0.apply(second.1) {
+            if !first.0.inverse().apply(first.1) {
+                *rollback_failed = true;
+            }
+            return Err(update_counter_overflow());
+        }
+        Ok(())
+    }
+}
+
+/// Error for an update whose level-counter reservation would overflow or
+/// underflow a counter (issue #128 / #163).
+#[cold]
+#[inline(never)]
+fn update_counter_overflow() -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: "price level quantity counter overflow on update".to_string(),
     }
 }
 
@@ -270,6 +551,14 @@ pub struct PriceLevel {
     /// / reconstruction. The production match sweep has no unwind path (audited),
     /// so this is defense-in-depth; a poisoned level requires reconstruction from
     /// a snapshot. Never cleared once set.
+    ///
+    /// It is also set (issue #163) when an internal invariant is found broken
+    /// AFTER a committed queue removal (the topology count underflows on the
+    /// release that follows the removal, or an update's counter rollback
+    /// cannot be applied): the level's count or counters then no longer
+    /// describe its queue, so it fails fast the same way. Every such state is
+    /// validated before the removal / commit it follows, so it is reachable
+    /// only if the count or a counter already disagreed with the queue.
     level_poisoned: AtomicBool,
 
     /// Monotonic counter bumped by every committing `add_order` / `update_order`
@@ -392,10 +681,12 @@ impl PriceLevel {
 
         // Pin the restored side alongside the restored count in the topology word
         // (issue #126). An empty snapshot restores Unpinned; a non-empty one pins
-        // the single side the validation above proved coherent. `order_count` is
-        // bounded by the snapshot's own vector length, which fits `COUNT_MASK`.
+        // the single side the validation above proved coherent. The count is
+        // the snapshot's own vector length: validated against
+        // `topology::MAX_COUNT` with a checked conversion (issue #163) rather
+        // than assumed to fit, so an oversized count never reaches the tag bits.
         let side_tag = level_side.map_or(topology::TAG_UNPINNED, topology::tag_of);
-        let topology_word = topology::pack(side_tag, order_count as u64);
+        let topology_word = topology::try_pack(side_tag, order_count)?;
 
         Ok(Self {
             price,
@@ -538,11 +829,18 @@ impl PriceLevel {
     ///
     /// Advisory / eventually-consistent under concurrent mutation — see
     /// [`Self::visible_quantity`]; use [`Self::snapshot`] for a consistent view.
+    ///
+    /// Width policy (issue #163): admission and snapshot restore cap the count
+    /// at `usize::MAX` on every target (as well as at the 62-bit count field),
+    /// so the stored `u64` count converts to `usize` exactly with a checked
+    /// conversion — never a truncating cast. A count past that cap cannot be
+    /// stored; the checked conversion's failure arm reports the cap itself.
     #[must_use]
+    #[inline]
     pub fn order_count(&self) -> usize {
         // `Relaxed`: advisory read of the count half of the topology word, no
         // happens-before rides on it — see `visible_quantity` for the rationale.
-        topology::count(self.topology.load(Ordering::Relaxed)) as usize
+        topology::count_usize(self.topology.load(Ordering::Relaxed)).unwrap_or(usize::MAX)
     }
 
     /// The side currently pinned at this level, or `None` if the level is empty
@@ -571,7 +869,7 @@ impl PriceLevel {
     ///
     /// [`PriceLevelError::InvalidOperation`] if `side` is incompatible with the
     /// pinned side of a non-empty level, or if the count would exceed
-    /// [`topology::COUNT_MASK`].
+    /// [`topology::MAX_COUNT`] (the 62-bit field, capped at `usize::MAX`).
     fn topology_admit(&self, side: Side) -> Result<bool, PriceLevelError> {
         let my_tag = topology::tag_of(side);
         loop {
@@ -590,7 +888,7 @@ impl PriceLevel {
                 }
             } else if tag == my_tag {
                 // Same side: bump the count (checked — never wraps).
-                let Some(new_count) = count.checked_add(1).filter(|c| *c <= topology::COUNT_MASK)
+                let Some(new_count) = count.checked_add(1).filter(|c| *c <= topology::MAX_COUNT)
                 else {
                     return Err(PriceLevelError::InvalidOperation {
                         message: "price level order count overflow on admission".to_string(),
@@ -626,18 +924,24 @@ impl PriceLevel {
     /// rides the same CAS as the decrement, a concurrent admission either sees
     /// the still-pinned non-empty level (and joins / is rejected) or the drained
     /// Unpinned level (and establishes) — never an inconsistent in-between.
-    fn topology_release_one(&self) -> bool {
+    ///
+    /// The decrement is checked (issue #163). Callers validate with
+    /// [`Self::topology_check_releasable`] BEFORE their destructive queue
+    /// removal and commit this release through [`Self::release_after_removal`]
+    /// after it, so a zero count is rejected with nothing mutated in the
+    /// ordinary case.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if the count is already zero. The
+    /// topology word is left unchanged (never wrapped, never silently kept as
+    /// a no-op success).
+    fn topology_release_one(&self) -> Result<bool, PriceLevelError> {
         loop {
             let cur = self.topology.load(Ordering::Acquire);
-            let count = topology::count(cur);
-            if count == 0 {
-                // A removal only runs for an order this level held, so the count
-                // is >= 1; never wrap (crate rule). Treat an impossible underflow
-                // as a no-op rather than corrupt the word.
-                debug_assert!(false, "topology count underflow on release");
-                return false;
-            }
-            let new_count = count - 1;
+            let Some(new_count) = topology::count(cur).checked_sub(1) else {
+                return Err(topology_underflow(self.price));
+            };
             let next = if new_count == 0 {
                 topology::pack(topology::TAG_UNPINNED, 0)
             } else {
@@ -648,7 +952,61 @@ impl PriceLevel {
                 .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return new_count == 0;
+                return Ok(new_count == 0);
+            }
+        }
+    }
+
+    /// Validate, BEFORE a destructive queue removal, that the release which
+    /// follows it can commit (issue #163): the resting-order count must be at
+    /// least one.
+    ///
+    /// Every resting order was counted by [`Self::topology_admit`] before it
+    /// was published and is released only after its own removal, so the count
+    /// is at least the number of resident orders and concurrent removers of
+    /// OTHER orders cannot take it below one while this order rests. A zero
+    /// count here therefore means the count already disagrees with the queue;
+    /// the caller rejects the removal with nothing mutated.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if the count is zero.
+    #[inline]
+    fn topology_check_releasable(&self) -> Result<(), PriceLevelError> {
+        // `Acquire`: pairs with the `AcqRel` admission / release CAS, so the
+        // check observes every count change that happened-before this removal.
+        if topology::count(self.topology.load(Ordering::Acquire)) == 0 {
+            Err(topology_underflow(self.price))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Commit the topology release for an order this call already removed
+    /// from the queue (issue #163), bumping the topology epoch on an un-pin.
+    ///
+    /// The removal was preceded by [`Self::topology_check_releasable`], so a
+    /// failure here is reachable only if the count disagreed with the queue
+    /// before this call (see that method). The removal cannot be undone
+    /// without re-exposing a stale queue position, so the level is poisoned
+    /// (sticky fail-fast, reconstruct from a snapshot) and the typed error is
+    /// returned — never a silent no-op. No event is emitted here: the caller
+    /// logs after its bookkeeping (and after releasing the fill-or-kill guard,
+    /// issue #172).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] from [`Self::topology_release_one`].
+    fn release_after_removal(&self) -> Result<(), PriceLevelError> {
+        match self.topology_release_one() {
+            Ok(true) => {
+                self.bump_topology_epoch();
+                Ok(())
+            }
+            Ok(false) => Ok(()),
+            Err(err) => {
+                self.trip_poison();
+                Err(err)
             }
         }
     }
@@ -844,16 +1202,25 @@ impl PriceLevel {
     /// reported but not flooded.
     #[cold]
     fn mark_poisoned(&self) {
-        if self
-            .level_poisoned
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
+        if self.trip_poison() {
             tracing::error!(
                 price = self.price,
                 "price level poisoned by a panicked operation; matching and mutation are now refused — reconstruct the level from a snapshot"
             );
         }
+    }
+
+    /// Set the sticky poison flag WITHOUT emitting an event (issue #163), for
+    /// a broken internal invariant detected after a committed removal. Returns
+    /// `true` on the `false -> true` transition, so the caller can log once
+    /// after its bookkeeping and outside the fill-or-kill guard (issue #172).
+    /// `Relaxed`: the flag is advisory fail-fast state, like
+    /// [`Self::mark_poisoned`]; no other field's visibility rides on it.
+    #[cold]
+    fn trip_poison(&self) -> bool {
+        self.level_poisoned
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
 
     /// Returns `true` if the level has been poisoned by a panicked guard holder
@@ -870,7 +1237,7 @@ impl PriceLevel {
     fn poison_check(&self) -> Result<(), PriceLevelError> {
         if self.is_poisoned() {
             Err(PriceLevelError::InvalidOperation {
-                message: "price level poisoned by a panicked operation".to_string(),
+                message: "price level poisoned by a panicked operation or a broken internal invariant; reconstruct it from a snapshot".to_string(),
             })
         } else {
             Ok(())
@@ -891,9 +1258,59 @@ impl PriceLevel {
     #[cfg(test)]
     pub(crate) fn test_saturate_order_count(&self, side: Side) {
         self.topology.store(
-            topology::pack(topology::tag_of(side), topology::COUNT_MASK),
+            topology::pack(topology::tag_of(side), topology::MAX_COUNT),
             Ordering::Release,
         );
+    }
+
+    /// Overwrite the topology word with `side` pinned (or Unpinned for `None`)
+    /// and resting-order `count` (issue #163 test seam), so a test can make the
+    /// count disagree with the queue (e.g. zero while orders rest) and exercise
+    /// the checked release. Queue and quantity counters are left untouched.
+    #[cfg(test)]
+    pub(crate) fn test_force_topology(&self, side: Option<Side>, count: u64) {
+        let tag = side.map_or(topology::TAG_UNPINNED, topology::tag_of);
+        self.topology.store(
+            topology::pack(tag, count & topology::COUNT_MASK),
+            Ordering::Release,
+        );
+    }
+
+    /// Raw resting-order count from the topology word (issue #163 test seam).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_topology_count(&self) -> u64 {
+        topology::count(self.topology.load(Ordering::Acquire))
+    }
+
+    /// Whether the sticky poison flag is set (issue #163 test seam).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_is_poisoned(&self) -> bool {
+        self.is_poisoned()
+    }
+
+    /// `topology::MAX_COUNT` for boundary tests (issue #163 test seam).
+    #[cfg(test)]
+    pub(crate) const TEST_MAX_ORDER_COUNT: u64 = topology::MAX_COUNT;
+
+    /// `topology::try_pack` for helper-level width tests (issue #163 test seam).
+    #[cfg(test)]
+    pub(crate) fn test_try_pack(side: Option<Side>, count: usize) -> Result<u64, PriceLevelError> {
+        topology::try_pack(side.map_or(topology::TAG_UNPINNED, topology::tag_of), count)
+    }
+
+    /// Direct call of the checked release (issue #163 test seam).
+    #[cfg(test)]
+    pub(crate) fn test_topology_release_one(&self) -> Result<bool, PriceLevelError> {
+        self.topology_release_one()
+    }
+
+    /// Direct call of the post-removal release commit (issue #163 test seam),
+    /// standing in for a removal whose count was consumed after validation.
+    #[cfg(test)]
+    pub(crate) fn test_release_after_removal(&self) -> Result<(), PriceLevelError> {
+        self.release_after_removal()
     }
 
     /// Resting ids grouped by order-storage shard, in snapshot-walk order
@@ -1368,6 +1785,14 @@ impl PriceLevel {
         // than approving a taker the sweep would abort mid-fill (a partial fill).
         let mut projected_visible = self.visible_quantity();
 
+        // Track the resting-order count the same way (issue #163): the real
+        // sweep validates `count >= 1` under the entry lock before it removes a
+        // fully consumed maker and stops with a typed error (maker untouched)
+        // if it is not. Projecting the count lets the dry run stop at that same
+        // maker, so a fill-or-kill is killed before its first mutation instead
+        // of failing mid-sweep. Exact under the fill-or-kill exclusive guard.
+        let mut projected_count = topology::count(self.topology.load(Ordering::Acquire));
+
         while remaining > 0 {
             let Some(order) = pending.pop_front() else {
                 break;
@@ -1407,6 +1832,20 @@ impl PriceLevel {
                 && updated_order.is_some()
             {
                 continue;
+            }
+
+            // A full consume removes the maker and releases one count; the real
+            // sweep rejects that removal (typed error, maker untouched) when the
+            // count is already zero. Mirror it: stop here with the same error
+            // before counting this maker (issue #163).
+            if updated_order.is_none() {
+                match projected_count.checked_sub(1) {
+                    Some(next) => projected_count = next,
+                    None => {
+                        dry.error = Some(topology_underflow(self.price));
+                        break;
+                    }
+                }
             }
 
             // Evolve the projected visible counter exactly as the sweep will, and
@@ -1848,7 +2287,9 @@ impl PriceLevel {
             fok_trades = dry.trades;
             if let Some(err) = dry.error {
                 // The sweep would stop at a maker whose matching arithmetic
-                // fails (issue #169). The fill cannot be complete, so kill the
+                // fails (issue #169) or whose full consume would underflow
+                // the resting-order count (issue #163). The fill cannot be
+                // complete, so kill the
                 // taker BEFORE any mutation and report the typed error: level
                 // untouched (#164 contract). Guard released before logging,
                 // as below (issue #172).
@@ -1859,7 +2300,7 @@ impl PriceLevel {
                     available,
                     price = self.price,
                     error = %err,
-                    "fill-or-kill taker killed: maker matching arithmetic failed in dry run; level untouched"
+                    "fill-or-kill taker killed: dry run stopped at a failing maker step; level untouched"
                 );
                 let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
                 result.mark_killed(incoming_quantity);
@@ -1888,7 +2329,10 @@ impl PriceLevel {
             }
             // Fill-or-kill preflight order, all under the exclusive guard and
             // before any maker is touched: epoch headroom (above, #165),
-            // dry-run `match_against` error (#169), depth, FIFO sequence
+            // dry-run stop error — the per-maker `match_against` error (#169)
+            // or the projected resting-order count underflow on a full
+            // consume (#163), whichever maker the dry run reaches first in
+            // FIFO order — then depth, FIFO sequence
             // headroom for the dry run's replenishments (#165, here), exact
             // result storage (#170) and the trade-id block (#168, below).
             //
@@ -1991,9 +2435,7 @@ impl PriceLevel {
             }
             result
         } else {
-            let capacity = usize::try_from(incoming_quantity)
-                .unwrap_or(usize::MAX)
-                .min(self.order_count());
+            let capacity = sweep_capacity_hint(incoming_quantity, self.order_count());
             MatchResult::try_with_capacity(
                 taker_order_id,
                 Quantity::new(incoming_quantity),
@@ -2092,7 +2534,9 @@ impl PriceLevel {
                 maker_id: Id,
             },
             /// [`OrderType::match_against`] returned a typed arithmetic error
-            /// for the FIFO-front maker (issue #169). The queue action is
+            /// for the FIFO-front maker (issue #169), or its full consume
+            /// failed the pre-removal topology-count validation (issue #163).
+            /// The queue action is
             /// `SetAside` (a no-op that mutates nothing), so the maker rests
             /// unchanged; the sweep stops with the committed prefix and the
             /// error (#164 contract).
@@ -2228,27 +2672,45 @@ impl PriceLevel {
 
                 let fully_consumed = updated_order.is_none();
 
-                // Pre-mutation check order for one step (issues #169, #168,
-                // #165, #124). Every check below runs under the entry lock
-                // before this step commits anything, in this fixed order, so
-                // the reported stop cause for a given queue state is
+                // Pre-mutation check order for one step (issues #169, #163,
+                // #168, #165, #124). Every check below runs under the entry
+                // lock before this step commits anything, in this fixed order,
+                // so the reported stop cause for a given queue state is
                 // deterministic:
                 //
                 // 1. self-trade skip (parks, sweep continues);
                 // 2. `match_against` error (#169) -> `Failed`;
                 // 3. no-progress guard (parks, sweep continues);
-                // 4. trade-id reservation when `consumed > 0` (#168) ->
+                // 4. full-consume topology release validation: the
+                //    resting-order count must be >= 1 before the removal
+                //    (#163) -> `Failed`;
+                // 5. trade-id reservation when `consumed > 0` (#168) ->
                 //    `IdsExhausted`;
-                // 5. FIFO sequence reservation when the maker replenishes and
+                // 6. FIFO sequence reservation when the maker replenishes and
                 //    stays resident (#165) -> `SequenceExhausted`;
-                // 6. replenish visible-counter headroom (#124) -> `Abort`.
+                // 7. replenish visible-counter headroom (#124) -> `Abort`.
                 //
-                // Steps 2, 4, 5 and 6 each return `SetAside` (a no-op) and stop
-                // the sweep with the committed prefix (#164 contract). A value
-                // reserved by 4 or 5 for a step that a later check stops is
-                // skipped, never reissued. The pure checks come first; the two
-                // reservations then precede the only in-closure counter RMW (6),
-                // which is the first mutation of the step.
+                // Steps 2, 4, 5, 6 and 7 each return `SetAside` (a no-op) and
+                // stop the sweep with the committed prefix (#164 contract). A
+                // value reserved by 5 or 6 for a step that a later check stops
+                // is skipped, never reissued. The pure checks (1-4) come first,
+                // so a count failure consumes no trade id or sequence; the two
+                // reservations then precede the only in-closure counter RMW (7),
+                // which is the first mutation of the step. Steps 4 and 6 are
+                // mutually exclusive (a full consume never replenishes).
+                //
+                // Step 4: a full consume removes the maker and then releases one
+                // resting-order count. A zero count means the count already
+                // disagrees with the queue, so reject the step while it is still
+                // a pure decision. A fill-or-kill never reaches this: its dry run
+                // projects the same count and kills the taker before the first
+                // mutation.
+                if fully_consumed && let Err(error) = self.topology_check_releasable() {
+                    return (
+                        FrontAction::SetAside,
+                        StepResult::Failed { maker_id, error },
+                    );
+                }
 
                 // Reserve this step's trade id BEFORE anything of the step is
                 // committed (issue #168): the replenish branch below publishes
@@ -2410,7 +2872,7 @@ impl PriceLevel {
                                 price = self.price,
                                 remaining,
                                 order_id = %maker_id,
-                                "match sweep: front maker matching arithmetic failed; sweep stopped"
+                                "match sweep: front maker step failed before mutation; sweep stopped"
                             );
                             sweep_error = Some((error, None));
                             break;
@@ -2557,8 +3019,15 @@ impl PriceLevel {
                         // Maker fully consumed and removed inside `match_front`.
                         // Decrement the count and un-pin if this drained the level
                         // (issue #126); the removal already happened-before here.
-                        if self.topology_release_one() {
-                            self.bump_topology_epoch();
+                        // The release was validated before the removal (issue
+                        // #163); if it still fails, the count disagreed with the
+                        // queue beforehand: the level is poisoned and the sweep
+                        // stops after this step's bookkeeping with the committed
+                        // prefix (this fill included) and the typed error.
+                        if let Err(err) = self.release_after_removal()
+                            && sweep_error.is_none()
+                        {
+                            sweep_error = Some((err, None));
                         }
                         if data.hidden_stranded > 0 {
                             self.hidden_quantity
@@ -2938,6 +3407,71 @@ impl PriceLevel {
         result
     }
 
+    /// Remove a resting order for a cancel / price-moving update and release
+    /// its level accounting (issue #163).
+    ///
+    /// Protocol: the topology release is validated BEFORE the destructive
+    /// removal ([`Self::topology_check_releasable`]), so a count that already
+    /// disagrees with the queue rejects the update with the queue, priority,
+    /// counters and topology untouched. After the removal the quantity
+    /// counters move and the release commits through
+    /// [`Self::release_after_removal`]. The removal itself stays the single
+    /// per-entry `DashMap` removal of issue #119, so a concurrent match or
+    /// cancel of the same id still resolves to exactly one winner.
+    ///
+    /// Returns `Ok(None)` when the id is not resting here (nothing changes).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] when the count is zero while the
+    /// order rests (nothing mutated), or — reachable only if the count
+    /// disagreed with the queue before the call and a concurrent removal
+    /// consumed the last count after the validation — when the post-removal
+    /// release fails; the removal is then committed, the level is poisoned
+    /// (fail fast, reconstruct from a snapshot) and the error is returned
+    /// rather than a success.
+    fn remove_resting(&self, order_id: Id) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
+        if let Err(err) = self.topology_check_releasable() {
+            // An absent id is an ordinary "not found": nothing to release.
+            if self.orders.find(order_id).is_none() {
+                return Ok(None);
+            }
+            tracing::warn!(
+                price = self.price,
+                order_id = %order_id,
+                error = %err,
+                "removal rejected before mutation: resting-order count disagrees with the queue"
+            );
+            return Err(err);
+        }
+
+        let Some(order) = self.orders.remove(order_id) else {
+            return Ok(None);
+        };
+
+        // Update atomic counters from the order actually removed from the
+        // queue above. `Relaxed` on both: advisory counters (issue #68); the
+        // `OrderQueue::remove` carries the happens-before, not these counters.
+        self.visible_quantity
+            .fetch_sub(order.visible_quantity().as_u64(), Ordering::Relaxed);
+        self.hidden_quantity
+            .fetch_sub(order.hidden_quantity().as_u64(), Ordering::Relaxed);
+
+        // Decrement the count and un-pin if this drained the level (issue
+        // #126); the `remove` above happened-before.
+        if let Err(err) = self.release_after_removal() {
+            tracing::error!(
+                price = self.price,
+                order_id = %order_id,
+                error = %err,
+                "resting-order count underflow after a committed removal; level poisoned — reconstruct it from a snapshot"
+            );
+            return Err(err);
+        }
+
+        Ok(Some(order))
+    }
+
     /// Guard-free body of [`Self::update_order`].
     ///
     /// The caller MUST already hold the fill-or-kill shared guard
@@ -2961,26 +3495,10 @@ impl PriceLevel {
                 // If price changes, this order needs to be moved to a different price level
                 // So we remove it from this level and return it for re-insertion elsewhere
                 if new_price != Price::new(self.price) {
-                    let order = self.orders.remove(order_id);
+                    // Validated, removed and released as one unit (issue #163).
+                    let order = self.remove_resting(order_id)?;
 
-                    if let Some(ref order_arc) = order {
-                        // Update atomic counters from the order actually removed
-                        // from the queue above. `Relaxed` on all three: advisory
-                        // counters (issue #68); the `OrderQueue::remove` carries
-                        // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity().as_u64();
-                        let hidden_qty = order_arc.hidden_quantity().as_u64();
-
-                        self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::Relaxed);
-                        self.hidden_quantity
-                            .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        // Decrement the count and un-pin if this drained the
-                        // level (issue #126); the `remove` above happened-before.
-                        if self.topology_release_one() {
-                            self.bump_topology_epoch();
-                        }
-
+                    if order.is_some() {
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
                             *stats_drop = self.record_order_event(
@@ -3007,9 +3525,9 @@ impl PriceLevel {
                 order_id,
                 new_quantity,
             } => {
-                // Overflow-checked forward reservation of a level counter for a
-                // component moving `old -> new`. BOTH directions use a checked
-                // `fetch_update` and reject before any queue mutation: an
+                // Level-counter reservation is an `UpdatePlan` of checked
+                // `CounterDelta`s (issue #163): BOTH directions use a checked
+                // `fetch_update` and reject before any queue mutation — an
                 // increase must not overflow `u64`, and a decrease must not
                 // underflow it (issue #128 defense). `Relaxed`: advisory counters
                 // (issue #68).
@@ -3023,67 +3541,27 @@ impl PriceLevel {
                 // contribution, so `counter >= old >= old - new` and the subtract
                 // cannot go negative. The check simply refuses to wrap if that
                 // invariant were ever violated, leaving the level untouched.
-                fn reserve(
-                    counter: &std::sync::atomic::AtomicU64,
-                    old: u64,
-                    new: u64,
-                ) -> Result<(), PriceLevelError> {
-                    let result = if new >= old {
-                        let delta = new - old;
-                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                            c.checked_add(delta)
-                        })
-                    } else {
-                        let delta = old - new;
-                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                            c.checked_sub(delta)
-                        })
-                    };
-                    result
-                        .map(|_| ())
-                        .map_err(|_| PriceLevelError::InvalidOperation {
-                            message: "price level quantity counter overflow on update".to_string(),
-                        })
-                }
-                // Undo this call's own `old -> new` reservation (commutative with
-                // concurrent deltas — it reverses exactly what it added).
-                //
-                // Checked (issue #165). Undoing an INCREASE subtracts units this
-                // call added and that are still counted, so it cannot fail.
-                // Undoing a DECREASE re-adds freed units, which a concurrent
-                // admission may already have used; that re-add is not provably
-                // in range, so the caller orders the reservations to make it
-                // unreachable (increases first, see below), and the check
-                // refuses to wrap if it were ever reached.
-                fn unreserve(counter: &std::sync::atomic::AtomicU64, old: u64, new: u64) {
-                    let _ = if new >= old {
-                        let delta = new - old;
-                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                            c.checked_sub(delta)
-                        })
-                    } else {
-                        let delta = old - new;
-                        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-                            c.checked_add(delta)
-                        })
-                    };
-                }
-
                 let visible_counter = &self.visible_quantity;
                 let hidden_counter = &self.hidden_quantity;
+                let mut rollback_failed = false;
 
-                // Derive the resized order, choose the priority policy, and
-                // reserve the level counters ALL against the LIVE stored order,
-                // under the entry lock (issue #115). Nothing is read before the
-                // lock, so a concurrent match / replenish that committed first is
-                // fully reflected: the update can never resurrect executed or
-                // cancelled visible / hidden quantity, and the policy is chosen
-                // from the live total, not a stale pre-read. The counters are
-                // reserved with checked math BEFORE the queue commits, so an
-                // update that would overflow a level counter is rejected with the
-                // level (and queue) untouched.
+                // Two phases under the entry lock (issues #115, #163):
+                //
+                // 1. `decide` derives the resized order and the priority policy
+                //    against the LIVE stored order and returns the counter plan
+                //    as pure data. Nothing is read before the lock, so a
+                //    concurrent match / replenish that committed first is fully
+                //    reflected: the update can never resurrect executed or
+                //    cancelled visible / hidden quantity, and the policy is
+                //    chosen from the live total, not a stale pre-read.
+                // 2. After the queue has validated the decision (the decided
+                //    order keeps its stored id), `reserve` applies the plan with
+                //    checked math; the commit that follows cannot fail. So an
+                //    invalid decision is rejected with NO reservation taken, and
+                //    an update that would overflow a level counter is rejected
+                //    with the level (and queue) untouched.
                 let queue = &self.orders;
-                let outcome = self.orders.update_entry(order_id, |live| {
+                let decide = |live: &OrderType<()>| {
                     let old_visible = live.visible_quantity().as_u64();
                     let old_hidden = live.hidden_quantity().as_u64();
                     let live_total = old_visible.checked_add(old_hidden).ok_or_else(|| {
@@ -3104,43 +3582,54 @@ impl PriceLevel {
                         }
                     })?;
 
-                    // Priority policy from the LIVE total (cannot be stale). A
-                    // demotion needs a fresh tail sequence: reserve it FIRST
-                    // (checked, issue #165), before any level counter moves, so
-                    // an exhausted sequence rejects the update with nothing to
-                    // roll back and the maker keeps its place.
+                    // A demotion needs a fresh tail sequence: reserve it here,
+                    // inside the decision (checked, issue #165), before the
+                    // queue's id validation and before `reserve` moves any level
+                    // counter, so an exhausted sequence rejects the update with
+                    // nothing to roll back and the maker keeps its place. A
+                    // sequence reserved for a decision the id validation then
+                    // rejects is skipped, never reissued.
                     let demote = if new_total > live_total {
                         Some(queue.try_reserve_seq()?)
                     } else {
                         None
                     };
 
-                    // Validate + reserve the level counters before mutating the
-                    // queue. Increases go first (issue #165): if the second
-                    // reservation fails, the rollback of the first then only
-                    // ever subtracts units this call added, which is proven in
-                    // range. A decrease is only rolled back when both
-                    // components shrink, which needs a counter below its own
-                    // live contribution (unreachable, see `reserve`).
-                    let visible = (visible_counter, old_visible, new_visible);
-                    let hidden = (hidden_counter, old_hidden, new_hidden);
-                    let (first, second) = if new_visible < old_visible && new_hidden > old_hidden {
-                        (hidden, visible)
-                    } else {
-                        (visible, hidden)
-                    };
-                    reserve(first.0, first.1, first.2)?;
-                    if let Err(err) = reserve(second.0, second.1, second.2) {
-                        unreserve(first.0, first.1, first.2);
-                        return Err(err);
-                    }
+                    // The counter plan is data only; `reserve` applies it once the
+                    // queue has validated this decision.
+                    let plan = UpdatePlan::new(old_visible, new_visible, old_hidden, new_hidden);
 
                     let arc = Arc::new(new_order);
-                    Ok(match demote {
+                    // Test-only injection point (issue #163): may substitute an
+                    // order with a different id to exercise the queue's
+                    // pre-commit id validation.
+                    #[cfg(test)]
+                    let arc = apply_update_decision_hook(arc);
+                    let decision = match demote {
                         Some(reserved) => UpdateDecision::ReplaceAtTail(arc, reserved),
                         None => UpdateDecision::KeepInPlace(arc),
-                    })
-                });
+                    };
+                    Ok((decision, plan))
+                };
+                let reserve = |plan: UpdatePlan| {
+                    plan.reserve(visible_counter, hidden_counter, &mut rollback_failed)
+                };
+                let outcome = self.orders.update_entry_with(order_id, decide, reserve);
+
+                if rollback_failed {
+                    // The rollback of a partial reservation could not be applied:
+                    // the counters no longer describe the queue. Unreachable while
+                    // every counter covers its resting orders (see
+                    // `UpdatePlan::reserve`); fail fast rather than report a clean
+                    // rejection (issue #163). Logged here, after the entry lock.
+                    if self.trip_poison() {
+                        tracing::error!(
+                            price = self.price,
+                            order_id = %order_id,
+                            "update counter rollback failed; level poisoned — reconstruct it from a snapshot"
+                        );
+                    }
+                }
 
                 match outcome {
                     None => Ok(None), // Order not found / concurrently removed.
@@ -3155,26 +3644,10 @@ impl PriceLevel {
             } => {
                 // If price changes, remove the order and let the order book handle re-insertion
                 if new_price != Price::new(self.price) {
-                    let order = self.orders.remove(order_id);
+                    // Validated, removed and released as one unit (issue #163).
+                    let order = self.remove_resting(order_id)?;
 
-                    if let Some(ref order_arc) = order {
-                        // Update atomic counters from the order actually removed
-                        // from the queue above. `Relaxed` on all three: advisory
-                        // counters (issue #68); the `OrderQueue::remove` carries
-                        // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity().as_u64();
-                        let hidden_qty = order_arc.hidden_quantity().as_u64();
-
-                        self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::Relaxed);
-                        self.hidden_quantity
-                            .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        // Decrement the count and un-pin if this drained the
-                        // level (issue #126); the `remove` above happened-before.
-                        if self.topology_release_one() {
-                            self.bump_topology_epoch();
-                        }
-
+                    if order.is_some() {
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
                             *stats_drop = self.record_order_event(
@@ -3203,27 +3676,11 @@ impl PriceLevel {
             }
 
             OrderUpdate::Cancel { order_id } => {
-                // Remove the order
-                let order = self.orders.remove(order_id);
+                // Remove the order: validated, removed and released as one
+                // unit (issue #163).
+                let order = self.remove_resting(order_id)?;
 
-                if let Some(ref order_arc) = order {
-                    // Update atomic counters from the order actually removed from
-                    // the queue above. `Relaxed` on all three: advisory counters
-                    // (issue #68); the `OrderQueue::remove` carries the
-                    // happens-before, not these counters.
-                    let visible_qty = order_arc.visible_quantity().as_u64();
-                    let hidden_qty = order_arc.hidden_quantity().as_u64();
-
-                    self.visible_quantity
-                        .fetch_sub(visible_qty, Ordering::Relaxed);
-                    self.hidden_quantity
-                        .fetch_sub(hidden_qty, Ordering::Relaxed);
-                    // Decrement the count and un-pin if this drained the level
-                    // (issue #126); the `remove` above happened-before.
-                    if self.topology_release_one() {
-                        self.bump_topology_epoch();
-                    }
-
+                if order.is_some() {
                     // Update statistics (checked, issue #165).
                     if stats_drop.is_none() {
                         *stats_drop = self.record_order_event(
@@ -3248,26 +3705,10 @@ impl PriceLevel {
                 // For replacement, check if the price is changing
                 if price != Price::new(self.price) {
                     // If price is different, remove the order and let order book handle re-insertion
-                    let order = self.orders.remove(order_id);
+                    // Validated, removed and released as one unit (issue #163).
+                    let order = self.remove_resting(order_id)?;
 
-                    if let Some(ref order_arc) = order {
-                        // Update atomic counters from the order actually removed
-                        // from the queue above. `Relaxed` on all three: advisory
-                        // counters (issue #68); the `OrderQueue::remove` carries
-                        // the happens-before, not these counters.
-                        let visible_qty = order_arc.visible_quantity().as_u64();
-                        let hidden_qty = order_arc.hidden_quantity().as_u64();
-
-                        self.visible_quantity
-                            .fetch_sub(visible_qty, Ordering::Relaxed);
-                        self.hidden_quantity
-                            .fetch_sub(hidden_qty, Ordering::Relaxed);
-                        // Decrement the count and un-pin if this drained the
-                        // level (issue #126); the `remove` above happened-before.
-                        if self.topology_release_one() {
-                            self.bump_topology_epoch();
-                        }
-
+                    if order.is_some() {
                         // Update statistics (checked, issue #165).
                         if stats_drop.is_none() {
                             *stats_drop = self.record_order_event(

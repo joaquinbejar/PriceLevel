@@ -12,3 +12,4 @@ mod snapshot_coherence;
 mod statistics;
 mod text_parser_corpus;
 mod text_parsers;
+mod transactional_invariants;
