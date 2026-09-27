@@ -4,31 +4,33 @@
    Date: 28/3/25
 ******************************************************************************/
 
-//! Core price level module: order queue, matching, snapshots, and statistics,
-//! lock-free on the match path.
+//! Core price level module: order queue, matching, snapshots, and statistics.
 //!
 //! This module provides the central [`PriceLevel`] type that represents a single price
-//! point in a limit order book. It manages a queue of orders, performs matching (the
-//! `Gtc` / `Ioc` / `Day` match path is lock-free), tracks statistics, and supports
-//! snapshot persistence with checksum protection. Admissions and updates (cancel / resize)
-//! take the shared side of a per-level guard — normally uncontended, but they can block
-//! behind an `O(depth)` fill-or-kill match that holds the exclusive side across its
-//! feasibility check and sweep so it stays all-or-nothing against concurrent mutation
-//! (issue #112).
+//! point in a limit order book. It manages a queue of orders, performs matching, tracks
+//! statistics, and supports snapshot persistence with checksum protection.
+//!
+//! The ordered index and the atomic counters are lock-free; the complete public methods
+//! are not. Matching commits each fill under the maker's `DashMap` shard write lock (the
+//! serialization point with a cancel or resize of that order) and assumes one logical
+//! matcher per level. Admissions and updates take their target's shard write lock and the
+//! shared side of a per-level guard, which can block behind an `O(depth)` fill-or-kill
+//! match holding the exclusive side across its feasibility check and sweep (issue #112).
+//! See the crate-level "Concurrency Model" section for the full table.
 //!
 //! # Key Types
 //!
-//! - [`PriceLevel`] — the main price level implementation supporting concurrent add, match,
-//!   update, and cancel operations via atomic counters and crossbeam queues; the
-//!   `Gtc` / `Ioc` / `Day` match is lock-free, while admissions / updates take a
-//!   normally-uncontended shared lock that can block behind an `O(depth)` fill-or-kill.
+//! - [`PriceLevel`] — the main price level implementation supporting concurrent add,
+//!   update, and cancel alongside one logical matcher per level; built on atomic
+//!   counters, a lock-free ordered index and sharded `DashMap` storage.
 //! - [`PriceLevelData`] — a serializable representation for data transfer and storage.
 //! - [`PriceLevelSnapshot`] — a point-in-time snapshot of all orders at a price level.
 //! - [`PriceLevelSnapshotPackage`] — a checksum-protected wrapper around a snapshot for
 //!   safe persistence and recovery via JSON.
 //! - [`PriceLevelStatistics`] — real-time execution statistics (orders added/removed/executed,
 //!   quantity/value executed, average price, waiting times).
-//! - [`OrderQueue`] — the underlying lock-free order queue based on crossbeam.
+//! - [`OrderQueue`] — the underlying order queue: a lock-free `crossbeam-skiplist` ordered
+//!   index over sharded `DashMap` order storage.
 //!
 //! # Snapshot Persistence
 //!

@@ -113,12 +113,17 @@ fn fire_post_only_decision_hook() {
     }
 }
 
-/// A price level in a limit order book, lock-free on the match path.
+/// A price level in a limit order book.
 ///
-/// A `Gtc` / `Ioc` / `Day` match runs entirely on atomic counters and lock-free
-/// (sharded / skiplist) structures — no lock. The mutators [`Self::add_order`]
-/// and [`Self::update_order`] (cancel and resize included) are NOT lock-free:
-/// each takes the **shared** side of a per-level reader-writer guard. That
+/// The ordered index (`crossbeam-skiplist`) and the atomic counters are
+/// lock-free; the complete public methods are not. A `Gtc` / `Ioc` / `Gtd` /
+/// `Day` match commits each fill under the maker's `DashMap` shard write lock,
+/// the serialization point it shares with a cancel or resize of that order
+/// (see [`Self::match_order`]). It supports **one logical matcher per level**:
+/// concurrent `match_order` calls on the same level must be serialized by the
+/// caller. The mutators [`Self::add_order`] and [`Self::update_order`] (cancel
+/// and resize included) take their target's shard write lock and the
+/// **shared** side of a per-level reader-writer guard. That
 /// acquisition is normally uncontended (it only coordinates with a fill-or-kill
 /// match), but it can BLOCK behind a concurrent fill-or-kill: a `Fok` match
 /// takes the guard's **exclusive** side across its feasibility check and sweep —
@@ -202,7 +207,8 @@ pub struct PriceLevel {
     /// uncontended shared acquisition; a FOK (a cold, specific TIF) excludes
     /// mutators for the duration of its feasibility check and sweep — an
     /// `O(depth)` exclusive section, not a constant-time one. The non-FOK sweep
-    /// takes NO guard — it relies on the
+    /// takes NO fill-or-kill guard (it still takes each maker's `DashMap` shard
+    /// lock) — it relies on the
     /// single-matcher-per-level model and the existing per-entry cancel
     /// atomicity (issue #81). The guarded value is `()`, so a poisoned lock is
     /// recovered with `into_inner` — but a poison means a holder PANICKED
@@ -406,7 +412,7 @@ impl PriceLevel {
     pub fn visible_quantity(&self) -> u64 {
         // `Relaxed`: this counter is advisory / eventually-consistent (see the
         // doc above and issue #68). It carries NO happens-before relationship —
-        // the lock-free `SkipMap` / `DashMap` in `OrderQueue` carry the real
+        // the `SkipMap` index and `DashMap` storage in `OrderQueue` carry the real
         // ordering between producers and consumers, and `snapshot()` is the
         // mutually-consistent view. Nothing is published or synchronized through
         // this load, so `Acquire` would buy nothing.
@@ -1209,15 +1215,20 @@ impl PriceLevel {
     /// landing between the matcher's pop and its reinsert would no-op while the
     /// matcher re-rested the residual.
     ///
+    /// This method is **not lock-free**. Every maker it fills is committed
+    /// under that maker's `DashMap` shard write lock (the serialization point
+    /// above), which also blocks admissions and updates of other orders in the
+    /// same shard for that step; a `Fok` taker additionally holds the
+    /// level-wide fill-or-kill guard exclusively (below). Only the ordered
+    /// index and the atomic counters it touches are lock-free.
+    ///
     /// This method still assumes a **single logical matcher per level at a
     /// time**: two concurrent `match_order` calls on the *same* level are NOT
     /// made safe here and must be serialized by the caller (an order book
     /// typically matches a level from a single thread). Concurrent `add_order`
-    /// from other threads is safe **for counter / queue integrity**. The
-    /// single-side topology invariant carries an additional requirement beyond
-    /// that integrity: it holds only when a given level's admissions arrive from
-    /// one logical path (see the type-level note on [`PriceLevel`]), because the
-    /// side is derived from the live queue rather than stored.
+    /// / `update_order` from other threads is supported alongside that one
+    /// matcher, including the single-side topology invariant (the side is
+    /// pinned atomically; see the type-level note on [`PriceLevel`]).
     ///
     /// ## PostOnly and fill-or-kill are atomic with the sweep (issue #112)
     ///
@@ -1249,8 +1260,9 @@ impl PriceLevel {
     ///   queue the sweep consumes exactly what the dry-run predicted: a
     ///   fill-or-kill taker either fills in full or is killed with the queue and
     ///   counters untouched — never a partial fill. The guard is acquired only
-    ///   for fill-or-kill; the ordinary (`Gtc` / `Ioc` / `Day`) sweep is
-    ///   unguarded and pays nothing.
+    ///   for fill-or-kill; the ordinary (`Gtc` / `Ioc` / `Gtd` / `Day`) sweep
+    ///   does not take this level-wide guard, but it still takes the per-maker
+    ///   shard lock described above.
     ///
     /// # Statistics
     ///
@@ -1359,7 +1371,7 @@ impl PriceLevel {
         // an FOK either fills in full or (insufficient depth) is killed with the
         // queue and counters untouched — never a partial fill. `_fok_guard` is
         // `Some` only for a positive FOK taker; it drops at the end of the
-        // method (after the sweep). The non-FOK paths take no guard.
+        // method (after the sweep). The non-FOK paths take no fill-or-kill guard.
         let _fok_guard = if matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0 {
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
