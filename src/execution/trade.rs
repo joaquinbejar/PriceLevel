@@ -1,10 +1,9 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, Side};
-use crate::utils::{Price, Quantity, TimestampMs};
+use crate::utils::{Price, Quantity, TimestampMs, UnixClock};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a completed trade between two orders.
 ///
@@ -35,22 +34,37 @@ pub struct Trade {
 }
 
 impl Trade {
-    /// Create a new trade
-    #[must_use]
-    pub fn new(
+    /// Creates a trade stamped with the current time read from a
+    /// caller-supplied [`UnixClock`].
+    ///
+    /// The crate does not read the wall clock itself (issue #171): the clock
+    /// is read exactly once, before the trade is built, and its failure is
+    /// returned unchanged. No fallback timestamp (such as `0`) is ever
+    /// substituted. When the time is already known (replay, deserialization,
+    /// the matching engine's taker timestamp) use the infallible
+    /// [`Self::with_timestamp`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error reported by `clock` (for example a
+    /// [`PriceLevelError::InvalidOperation`] for a pre-epoch reading or a
+    /// [`PriceLevelError::InvalidFieldValue`] for a millisecond count that does
+    /// not fit in `u64`, as produced by
+    /// [`TimestampMs::try_from_system_time`]).
+    pub fn try_new<C>(
         trade_id: Id,
         taker_order_id: Id,
         maker_order_id: Id,
         price: Price,
         quantity: Quantity,
         taker_side: Side,
-    ) -> Self {
-        let timestamp_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0_u64, |duration| duration.as_millis() as u64);
-        let timestamp = TimestampMs::new(timestamp_ms);
-
-        Self {
+        clock: &C,
+    ) -> Result<Self, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+    {
+        let timestamp = clock.try_now_ms()?;
+        Ok(Self::with_timestamp(
             trade_id,
             taker_order_id,
             maker_order_id,
@@ -58,7 +72,7 @@ impl Trade {
             quantity,
             taker_side,
             timestamp,
-        }
+        ))
     }
 
     /// Returns the unique trade identifier.
