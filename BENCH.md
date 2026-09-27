@@ -776,7 +776,9 @@ estimates). The latency clock ticks every ~41.7 ns on this host.
 - **defer**: saves one allocation (32 bytes per estimated slot) on partial
   and replenish fills, about 3% faster there, but every first full fill
   pays a second locked front read: single full fill +13% in Criterion and
-  +1 clock tick at p50 on every full-fill latency scenario. That moves cost
+  +1 clock tick at p50 on the single-maker full-fill latency scenarios
+  outside fill-or-kill (the 20-maker sweep and FOK success did not show it:
+  3,833 → 3,834 ns and 1,333 → 1,250 ns). That moves cost
   onto the common path; rejected.
 - **eager**: no measurable latency change and no allocation change except
   one of 142 allocations on fill-or-kill (the dry run's resting-order
@@ -786,8 +788,11 @@ estimates). The latency clock ticks every ~41.7 ns on this host.
   replenishing levels): no bound on trades exists without walking the
   queue; `count + hidden` over-reserves by orders of magnitude for a large
   hidden tranche. Not pursued.
-- **Caller-owned buffers**: public API churn for a gain bounded by the
-  numbers above; rejected.
+- **Caller-owned buffers**: not evaluated. Reusing retained vectors could
+  avoid both result allocations on repeated fills without the first-fill
+  retry, so the measurements above do not bound its gain; it was left out
+  because it needs a public API and a reset contract, which is outside this
+  issue's scope.
 
 The cases stay in the allocation pass, the latency harness and Criterion as
 a regression tripwire for result sizing.
