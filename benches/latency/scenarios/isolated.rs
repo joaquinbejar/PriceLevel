@@ -23,7 +23,30 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
         quantity_decrease(config),
         quantity_increase(config),
         replace(config),
+        uuid_try_next(config),
     ]
+}
+
+/// Generator-only `UuidGenerator::try_next` (issue #146): one checked
+/// reservation, the counter-to-name encoding and the UUIDv5 hash per sample,
+/// with no price level involved.
+fn uuid_try_next(config: &Config) -> ScenarioReport {
+    let generator = fixtures::trade_id_generator();
+    warmup(config.warmup, |_| generator.try_next());
+    let (durations_ns, results) = measure(config.samples, |_| generator.try_next());
+    let succeeded = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(
+        succeeded, config.samples,
+        "uuid_try_next: a fresh generator must not exhaust"
+    );
+    ScenarioReport::from_samples(
+        "isolated_uuid_try_next",
+        "isolated",
+        0,
+        "UuidGenerator::try_next — generator only, no level",
+        durations_ns,
+        format!("{succeeded}/{} succeeded", config.samples),
+    )
 }
 
 /// Isolated `add_order` of a fresh standard GTC order into a level that
