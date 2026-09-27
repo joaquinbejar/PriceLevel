@@ -939,6 +939,9 @@ impl OrderQueue {
                 slot
             }
         };
+        // Same map-then-index gap as `remove` (issue #155 test seam).
+        #[cfg(test)]
+        fire_remove_gap_hook(order_id);
         self.index.remove(&seq);
         RemoveOutcome::Removed(order)
     }
