@@ -246,6 +246,13 @@ impl MatchResult {
     /// the per-fill reallocations on the match hot path without over-reserving
     /// for a small taker against a deep level.
     ///
+    /// The shared capacity is intentional (issue #148): independent
+    /// trade / filled-id estimates were measured and rejected, because the
+    /// matching engine only learns whether a step fully consumes its maker
+    /// under the entry lock, and deferring the filled-id reservation to that
+    /// point slows the common single-full-fill path more than it saves on
+    /// partial fills.
+    ///
     /// Allocation is fallible (`Vec::new` + `try_reserve_exact`): an
     /// unrepresentable `capacity` such as `usize::MAX` or an allocator refusal
     /// returns a typed error instead of panicking. `capacity == 0` never

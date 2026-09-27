@@ -2380,6 +2380,15 @@ impl PriceLevel {
         // `Relaxed` and both `Vec`s still grow if a concurrent `add_order` lands
         // mid-sweep — so it is a hint, not a cap.
         //
+        // Both vectors deliberately share the one estimate (issue #148). A
+        // partial fill or a replenishment emits a trade without a filled id,
+        // but whether a step fully consumes is only known under the entry
+        // lock, so a separate, smaller filled-id estimate would need a
+        // lock-release-and-retry on the first full fill. Measured (BENCH.md,
+        // "MatchResult capacity"): that saves one allocation on partial /
+        // replenish fills (about -3% there) but costs about +13% on every
+        // single full fill, the common path, so it was rejected.
+        //
         // Allocation is fallible (issue #170, #164 contract):
         //
         // * Fill-or-kill reserves EXACTLY the number of trades the dry run

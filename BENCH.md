@@ -51,7 +51,7 @@ below.
 | Category     | Scenarios |
 |--------------|-----------|
 | `isolated`   | `add_order` (GTC), `update_order(Cancel)` (found / missing), `update_order(UpdateQuantity)` (increase / decrease), `update_order(Replace)` |
-| `match`      | empty book, full fill, partial fill, a many-fill sweep (20 makers in one call), iceberg replenish, reserve replenish |
+| `match`      | empty book, full fill, partial fill, partial fill of one large front maker on a 1,000-deep level (#148), a many-fill sweep (20 makers in one call), iceberg replenish, reserve replenish |
 | `tif`        | GTC / IOC / DAY / GTD full match, FOK success, FOK rejection (killed), post-only rejection |
 | `iteration`  | one full `iter_orders` traversal |
 | `snapshot`   | `snapshot()` capture, checksum `validate()`, `from_snapshot_json` restore |
@@ -684,3 +684,110 @@ the bound: `K` fills with nothing parked visit exactly `K` entries, one
 parked self-trade maker gives `2K + 2`, a demoted parked maker never forms a
 two-entry prefix, and an 800-shape grid over every variant asserts the
 no-progress shape never occurs.
+
+## MatchResult capacity (issue #148)
+
+`match_order` pre-sizes both result vectors (trades and filled order ids) to
+`min(incoming quantity, resting order count)`. A partial fill of the front
+maker or an iceberg / reserve replenishment emits a trade without a filled
+id, so the filled-id buffer is reserved but unused on those paths. This
+section records the evaluation of changing that.
+
+### Cases
+
+Allocation pass (`PL_LATENCY_ONLY=alloc`, `alloc_measurements.rs`), latency
+scenario `match_maker_partial` (`scenarios/matching.rs`) and the Criterion
+group `MatchResult capacity (#148)` (`benches/price_level/result_capacity.rs`)
+cover: zero trades (empty level), a qty-10 partial fill of one huge front
+maker on a 1,000-deep level (1 trade, 0 filled ids), the same as
+fill-or-kill, a single full fill (1 trade, 1 filled id), a 100-maker sweep,
+and iceberg / reserve replenishment (1x and 5x the visible tranche; 5x emits
+5 trades from 1 resting order, above the order-count estimate).
+`Trade` is 144 bytes and `Id` 32 bytes on the measurement host (printed by
+the allocation pass).
+
+### Variants
+
+- **base**: current design (one shared estimate, joint per-step check).
+- **eager**: independent estimates. Trades reserved per step; the filled-id
+  slot checked inside the locked decision closure only when the step fully
+  consumes, returning a new non-parking `Retry` queue action when missing.
+  Filled estimate equals the trade estimate for non-fill-or-kill takers;
+  fill-or-kill reserves the dry run's exact removal count.
+- **defer**: as `eager`, but non-fill-or-kill takers start with no
+  filled-id capacity; the first full fill retries once after reserving.
+
+Caller-owned reusable buffers were not prototyped: they would add public
+API (a reset / reuse contract on `MatchResult`) for, at best, the savings
+below.
+
+### Allocations (2,000 reps, per op; deterministic)
+
+| Case | trades / filled | base allocs | base bytes | defer allocs | defer bytes |
+|---|---|---|---|---|---|
+| zero trade | 0 / 0 | 0.00 | 0 | 0.00 | 0 |
+| maker partial, deep 1,000 | 1 / 0 | 3.00 | 1,920 | 2.00 | 1,600 |
+| fill-or-kill maker partial | 1 / 0 | 142.00 | 44,272 | 141.00 | 44,240 |
+| single full | 1 / 1 | 2.02 | 1,800 | 2.02 | 1,799 |
+| sweep 100 | 100 / 100 | 8.22 | 22,744 | 8.17 | 22,723 |
+| iceberg 1x | 1 / 0 | 4.02 | 437 | 3.02 | 405 |
+| iceberg 5x | 5 / 0 | 14.08 | 3,208 | 13.08 | 3,176 |
+| reserve 1x | 1 / 0 | 4.02 | 437 | 3.02 | 405 |
+
+`eager` equals `base` except fill-or-kill (141.00 / 44,240). In `base` the
+filled-id vector never regrows in the 5x iceberg case (it keeps its one
+spare slot while only the trade vector grows 1, 4, 8), so decoupling the
+per-step check saves nothing there.
+
+### Latency
+
+Host load 2.4 to 5.0 during the runs (Apple silicon laptop, shared), so
+every comparison is interleaved: base, eager, defer, repeated three times
+(latency harness, 20,000 samples, medians of the three runs shown) and
+twice (Criterion, 1 s warm-up, 3 s measurement, mean of the two point
+estimates). The latency clock ticks every ~41.7 ns on this host.
+
+| Scenario | base p50 / p99 / p99.9 (ns) | defer p50 / p99 / p99.9 (ns) |
+|---|---|---|
+| match_empty | 208 / 250 / 333 | 208 / 292 / 334 |
+| match_full | 208 / 916 / 1,458 | 250 / 916 / 1,292 |
+| match_partial (taker > maker) | 375 / 791 / 875 | 416 / 833 / 958 |
+| match_maker_partial | 209 / 1,167 / 5,542 | 209 / 1,084 / 3,750 |
+| many_fill_sweep (20) | 3,833 / 5,709 / 11,500 | 3,834 / 5,833 / 10,792 |
+| iceberg_replenish | 209 / 750 / 1,083 | 208 / 708 / 1,041 |
+| reserve_replenish | 209 / 625 / 708 | 208 / 625 / 667 |
+| tif_gtc_full_match | 208 / 583 / 667 | 250 / 625 / 958 |
+| tif_fok_success | 1,333 / 1,750 / 2,042 | 1,250 / 1,709 / 2,042 |
+
+`eager` medians matched `base` within one clock tick on every row.
+
+| Criterion | base | eager | defer |
+|---|---|---|---|
+| zero_trade | 190 ns | 189 ns | 196 ns |
+| maker_partial_deep1000 | 198 ns | 203 ns | 191 ns |
+| iceberg_1x | 223 ns | 223 ns | 220 ns |
+| iceberg_5x | 1.369 µs | 1.431 µs | 1.359 µs |
+| reserve_1x | 226 ns | 227 ns | 219 ns |
+| single_full | 299 ns | 305 ns | 339 ns |
+| sweep_100 | 17.66 µs | 17.60 µs | 17.93 µs |
+
+### Decision: keep the current design
+
+- **defer**: saves one allocation (32 bytes per estimated slot) on partial
+  and replenish fills, about 3% faster there, but every first full fill
+  pays a second locked front read: single full fill +13% in Criterion and
+  +1 clock tick at p50 on every full-fill latency scenario. That moves cost
+  onto the common path; rejected.
+- **eager**: no measurable latency change and no allocation change except
+  one of 142 allocations on fill-or-kill (the dry run's resting-order
+  snapshot dominates that path). Not worth a new queue action and a retry
+  path in the match loop; rejected.
+- **Tighter trade estimate** (for example adding hidden quantity for
+  replenishing levels): no bound on trades exists without walking the
+  queue; `count + hidden` over-reserves by orders of magnitude for a large
+  hidden tranche. Not pursued.
+- **Caller-owned buffers**: public API churn for a gain bounded by the
+  numbers above; rejected.
+
+The cases stay in the allocation pass, the latency harness and Criterion as
+a regression tripwire for result sizing.
