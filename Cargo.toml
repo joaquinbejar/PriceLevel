@@ -13,7 +13,22 @@ categories = ["finance", "data-structures"]
 
 
 include = [
-    "benches/**/*",
+    # `benches/compare/` is a standalone comparison harness (its own
+    # `Cargo.toml` with an empty `[workspace]` table — see that file's own
+    # header comment) used to benchmark this crate against pricelevel 0.9.2
+    # from crates.io. It is deliberately NOT part of the published package:
+    # it depends on the published `pricelevel` crate itself (a circular
+    # packaging dependency `cargo package` would reject) and its own results
+    # live under version control already (`benches/compare/results/`), not
+    # inside the crate tarball. Every OTHER `benches/` subdirectory is listed
+    # explicitly instead of a `benches/**/*` glob so a new benches/compare/*
+    # file added later is excluded by construction, not by remembering to
+    # negate it.
+    "benches/mod.rs",
+    "benches/price_level/**/*",
+    "benches/concurrent/**/*",
+    "benches/simple/**/*",
+    "benches/latency/**/*",
     "src/**/*",
     "Cargo.toml",
     "README.md",
