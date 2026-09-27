@@ -3677,6 +3677,11 @@ impl PriceLevel {
 
     /// Serialize the current price level state into a checksum-protected snapshot package.
     ///
+    /// The checksum is computed by streaming the snapshot's canonical JSON
+    /// straight into SHA-256 (issues #149 / #164): no payload buffer and no
+    /// order-reference vector is built. The only order-sized allocation is the
+    /// snapshot's own `Arc` vector.
+    ///
     /// # Errors
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if [`Self::snapshot`]
@@ -3690,6 +3695,17 @@ impl PriceLevel {
     }
 
     /// Serialize the current price level state to JSON, including checksum metadata.
+    ///
+    /// # Serialization passes (issue #149)
+    ///
+    /// This still serializes the snapshot **twice**: once streamed into
+    /// SHA-256 to compute the checksum (no temporary buffer), then again into
+    /// the returned package JSON, because the checksum is a field of the
+    /// envelope that wraps the hashed payload. Streaming the hash removed the
+    /// temporary checksum buffer, not the second pass. A single-pass envelope
+    /// (for example, hashing while writing and appending the checksum last)
+    /// changes the package byte layout and needs a separate compatibility
+    /// review.
     ///
     /// # Errors
     ///
