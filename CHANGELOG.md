@@ -256,7 +256,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The timestamp-order view sorts in place (unstable sort on a unique key);
     no stable-sort scratch buffer.
   - The sweep's park set holds its first live key inline (no allocation;
-    the self-trade skip has at most one) and grows fallibly beyond it: a
+    the self-trade skip has at most one live key; the slot frees itself when
+    that key goes stale) and grows fallibly beyond it: a
     refusal stops a non-fill-or-kill sweep with the committed prefix and
     `MatchResult::error` carrying the original error; fill-or-kill reserves
     its dry-run copy and park set before the first mutation and is killed

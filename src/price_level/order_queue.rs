@@ -237,12 +237,19 @@ fn park_inline_disabled() -> bool {
 /// The first live park is held in an inline slot, which never allocates; only
 /// further live parks spill into a `HashSet`, growing fallibly. Orders are
 /// id-keyed, so the only park that fires today (the self-trade skip of the
-/// one order sharing the taker id) has at most one LIVE key at a time: a
-/// stale key left by a cancel / readmission race is pruned (#155) when the
-/// scan reaches it, which happens before the newer, higher sequence is
-/// reached. The spill, and with it the allocation-failure stop cause, is
-/// therefore not reached in practice; it remains the fallible path for any
-/// future multi-park shape.
+/// one order sharing the taker id) has at most one LIVE key at a time.
+///
+/// A parked key can go stale without the scan ever revisiting it: a cancel
+/// removes its index key, and a readmission or a quantity-increase demotion
+/// moves the id to a fresh, higher sequence. So when a new park arrives while
+/// the inline slot is occupied, [`OrderQueue::match_front`] first checks the
+/// inline key against the queue with the #155 rule (live iff the index still
+/// maps it to an id whose map entry stores that sequence) and frees the slot
+/// if it is dead. Sequences are never reused and a stored sequence only moves
+/// forward, so a dead key can never become live again and dropping it is
+/// safe. With that, a single live parked maker never allocates; the spill,
+/// and with it the allocation-failure stop cause, is reached only by two
+/// simultaneously live parks, which no current order shape produces.
 #[derive(Debug, Default)]
 pub(crate) struct ParkedSeqs {
     inline: Option<u64>,
@@ -285,6 +292,13 @@ impl ParkedSeqs {
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.inline.is_none() && self.spill.is_empty()
+    }
+
+    /// The sequence held in the inline slot, if any.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inline_seq(&self) -> Option<u64> {
+        self.inline
     }
 
     #[inline]
@@ -854,17 +868,42 @@ impl OrderQueue {
                     // original error and the step still a no-op. A set the
                     // caller pre-reserved (fill-or-kill) never reaches the
                     // reservation.
+                    //
+                    // Before a park that would spill, a dead inline key (its
+                    // maker cancelled, readmitted or demoted since it was
+                    // parked, so the scan may never revisit it) is dropped
+                    // with the #155 liveness rule; see `ParkedSeqs`.
                     drop(evicted);
-                    if let Some(seq) = park_seq
-                        && let Err(error) = set_aside.try_insert(seq)
-                    {
-                        return FrontOutcome::ParkRefused { result, error };
+                    if let Some(seq) = park_seq {
+                        if let Some(old) = set_aside.inline_seq()
+                            && old != seq
+                            && !self.seq_is_live(old)
+                        {
+                            set_aside.remove(old);
+                        }
+                        if let Err(error) = set_aside.try_insert(seq) {
+                            return FrontOutcome::ParkRefused { result, error };
+                        }
                     }
 
                     return FrontOutcome::Matched { result };
                 }
             }
         }
+    }
+
+    /// `true` iff `seq` is still the live sequence of a resting order: the
+    /// index maps it to an id whose map entry stores exactly `seq` (the #155
+    /// stale-key rule). Takes a `DashMap` shard read lock briefly; call it
+    /// with no queue lock held. A `false` is final: sequences are never
+    /// reused, an index key is removed only after its map entry is gone or
+    /// re-sequenced, and a stored sequence only moves forward.
+    fn seq_is_live(&self, seq: u64) -> bool {
+        self.index.get(&seq).is_some_and(|entry| {
+            self.orders
+                .get(entry.value())
+                .is_some_and(|slot| slot.value().0 == seq)
+        })
     }
 
     /// Single-closure [`OrderQueue::update_entry_with`] with no reservation

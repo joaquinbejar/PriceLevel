@@ -13,9 +13,12 @@ mod tests {
     use crate::errors::{CapacityResource, PriceLevelError};
     use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
-    use crate::price_level::level::{PriceLevel, count_park, set_sweep_start_hook};
+    use crate::price_level::level::{
+        PriceLevel, count_park, set_pre_fok_lock_hook, set_sweep_start_hook,
+    };
     use crate::price_level::order_queue::{
-        FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, disable_park_inline_slot, snapshot_hook,
+        FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, UpdateDecision,
+        disable_park_inline_slot, snapshot_hook,
     };
     use crate::price_level::{PriceLevelData, PriceLevelSnapshot, PriceLevelSnapshotPackage};
     use crate::utils::alloc::test_seam;
@@ -574,24 +577,45 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fill_or_kill_dry_run_refusal_is_logged_at_error() {
+    /// Runs `attempt` under a capturing subscriber until it emits an `ERROR`
+    /// event containing `want`, and returns that attempt's value.
+    ///
+    /// `tracing` caches callsite interest process-wide, so a concurrent test
+    /// thread that (re)registers dispatchers can transiently hide an event
+    /// from this thread's scoped subscriber (the same reason
+    /// `caller_boundaries.rs` retries). Each attempt must therefore build its
+    /// own fresh state.
+    fn with_error_event<R>(want: &str, mut attempt: impl FnMut() -> R) -> R {
         use tracing_subscriber::layer::SubscriberExt;
 
-        let level = sample_level();
-        let captured = Captured::default();
-        let subscriber = tracing_subscriber::registry().with(captured.clone());
-        let result = tracing::subscriber::with_default(subscriber, || {
+        for _ in 0..1_000 {
+            let captured = Captured::default();
+            let subscriber = tracing_subscriber::registry().with(captured.clone());
+            let value = tracing::subscriber::with_default(subscriber, || {
+                tracing::callsite::rebuild_interest_cache();
+                attempt()
+            });
+            let seen = captured
+                .0
+                .lock()
+                .expect("capture lock")
+                .iter()
+                .any(|(lvl, msg)| *lvl == tracing::Level::ERROR && msg.contains(want));
+            if seen {
+                return value;
+            }
+        }
+        panic!("no ERROR event containing {want:?} was observed");
+    }
+
+    #[test]
+    fn fill_or_kill_dry_run_refusal_is_logged_at_error() {
+        let result = with_error_event("dry-run working snapshot could not be reserved", || {
+            let level = sample_level();
             let _fail = test_seam::fail_after(CapacityResource::OrderSnapshot, 0);
             take(&level, 10, TimeInForce::Fok)
         });
         assert!(result.was_killed());
-        let events = captured.0.lock().expect("capture lock");
-        assert!(
-            events.iter().any(|(lvl, msg)| *lvl == tracing::Level::ERROR
-                && msg.contains("dry-run working snapshot could not be reserved")),
-            "{events:?}"
-        );
     }
 
     // ------------------------------------------------------------------
@@ -739,5 +763,172 @@ mod tests {
             &PriceLevel::from_str(&text).expect_err("refused"),
             CapacityResource::Text,
         );
+    }
+
+    // ------------------------------------------------------------------
+    // PR #199 review: a fill-or-kill dry run can predict a park, and a stale
+    // inline park key frees itself.
+    // ------------------------------------------------------------------
+
+    /// Admits a maker sharing the taker id, then maker 3, between the
+    /// self-match lookup and the fill-or-kill exclusive guard, on the matcher
+    /// thread (the window a concurrent mutator can use). The queue becomes
+    /// `[1, TAKER, 3]`, so the dry run must park the taker-id maker to reach
+    /// maker 3.
+    fn admit_taker_id_before_fok_lock(level: &Arc<PriceLevel>) -> impl Drop + use<> {
+        let admit = Arc::clone(level);
+        set_pre_fok_lock_hook(Box::new(move || {
+            admit.add_order(standard(TAKER, 4)).expect("admit taker id");
+            admit.add_order(standard(3, 7)).expect("admit maker");
+        }))
+    }
+
+    #[test]
+    fn fill_or_kill_park_set_refusal_kills_before_any_mutation_and_logs() {
+        let (result, level) = with_error_event("park set could not be reserved", || {
+            let level = Arc::new(level_with(vec![standard(1, 5)]));
+            let _hook = admit_taker_id_before_fok_lock(&level);
+            // The inline slot is disabled so the one predicted park needs a
+            // spill reservation, which is refused on the matcher thread.
+            let _spill = disable_park_inline_slot();
+            let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+            let r = take(&level, 10, TimeInForce::Fok);
+            assert_eq!(test_seam::injected(), 1, "the park set was reserved");
+            (r, level)
+        });
+
+        assert!(result.was_killed());
+        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert!(result.trades().is_empty());
+        assert!(result.filled_order_ids().is_empty());
+        assert_eq!(result.remaining_quantity().as_u64(), 10);
+        assert_capacity(
+            result.error().expect("error"),
+            CapacityResource::SweepScratch,
+        );
+        // Only the admissions happened: every order rests unchanged.
+        let s = state(&level);
+        assert_eq!(
+            s.ids,
+            vec![Id::from_u64(1), Id::from_u64(TAKER), Id::from_u64(3)]
+        );
+        assert_eq!(s.visible, vec![5, 4, 7]);
+        assert_counters_match_queue(&level);
+    }
+
+    #[test]
+    fn fill_or_kill_with_one_predicted_park_uses_the_inline_slot() {
+        let level = Arc::new(level_with(vec![standard(1, 5)]));
+        let _hook = admit_taker_id_before_fok_lock(&level);
+        let result = {
+            let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+            let r = take(&level, 10, TimeInForce::Fok);
+            assert_eq!(test_seam::injected(), 0, "no spill reservation");
+            r
+        };
+        assert!(result.error().is_none());
+        assert_eq!(result.outcome(), MatchOutcome::Filled);
+        let makers: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(makers, vec![Id::from_u64(1), Id::from_u64(3)]);
+        let s = state(&level);
+        assert_eq!(s.ids, vec![Id::from_u64(TAKER), Id::from_u64(3)]);
+        assert_eq!(s.visible, vec![4, 2]);
+        assert_counters_match_queue(&level);
+    }
+
+    /// One sweep step the way `match_order` drives it for taker `TAKER`:
+    /// park the maker sharing the taker id, fully consume any other.
+    fn self_skip_step(queue: &OrderQueue, set: &mut ParkedSeqs) -> FrontOutcome<bool> {
+        queue.match_front(set, |_seq, order| {
+            if order.id() == Id::from_u64(TAKER) {
+                (FrontAction::SetAside, false)
+            } else {
+                (FrontAction::Remove, true)
+            }
+        })
+    }
+
+    fn assert_parked_without_spill(outcome: &FrontOutcome<bool>, set: &ParkedSeqs) {
+        assert!(
+            matches!(outcome, FrontOutcome::Matched { result: false }),
+            "{outcome:?}"
+        );
+        assert_eq!(set.len(), 1, "one live park, held inline");
+        assert_eq!(test_seam::injected(), 0, "no spill reservation");
+    }
+
+    #[test]
+    fn a_stale_inline_park_frees_itself_after_cancel_and_readmit() {
+        let queue = OrderQueue::new();
+        queue.try_push(Arc::new(standard(TAKER, 4))).expect("push");
+        let mut set = ParkedSeqs::new();
+        let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+
+        let first = self_skip_step(&queue, &mut set);
+        assert_parked_without_spill(&first, &set);
+        let parked = set.inline_seq().expect("inline park");
+
+        // Cancel the parked maker, then readmit the same id: it rests under a
+        // fresh sequence and its old index key is gone, so the scan never
+        // revisits the parked key.
+        assert!(queue.remove(Id::from_u64(TAKER)).is_some());
+        queue
+            .try_push(Arc::new(standard(TAKER, 4)))
+            .expect("readmit");
+
+        let second = self_skip_step(&queue, &mut set);
+        assert_parked_without_spill(&second, &set);
+        assert_ne!(set.inline_seq(), Some(parked), "dead key replaced");
+        assert!(queue.debug_map_index_consistent());
+    }
+
+    #[test]
+    fn a_stale_inline_park_frees_itself_after_a_tail_demotion() {
+        let queue = OrderQueue::new();
+        queue.try_push(Arc::new(standard(TAKER, 4))).expect("push");
+        let mut set = ParkedSeqs::new();
+        let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+
+        let first = self_skip_step(&queue, &mut set);
+        assert_parked_without_spill(&first, &set);
+        let parked = set.inline_seq().expect("inline park");
+
+        // A quantity increase moves the maker to a fresh tail sequence and
+        // re-keys the index away from the parked key.
+        let committed = queue.update_entry(Id::from_u64(TAKER), |_live| {
+            Ok(UpdateDecision::ReplaceAtTail(
+                Arc::new(standard(TAKER, 9)),
+                queue.try_reserve_seq()?,
+            ))
+        });
+        assert!(matches!(committed, Some(Ok(_))));
+
+        let second = self_skip_step(&queue, &mut set);
+        assert_parked_without_spill(&second, &set);
+        assert_ne!(set.inline_seq(), Some(parked), "dead key replaced");
+        assert!(queue.debug_map_index_consistent());
+    }
+
+    #[test]
+    fn a_live_inline_park_is_kept_and_a_second_live_park_spills() {
+        // The self-clear must not drop a key that is still live: with the
+        // inline key live, a second live park spills (and is refused here).
+        let queue = OrderQueue::new();
+        queue.try_push(Arc::new(standard(1, 5))).expect("push");
+        queue.try_push(Arc::new(standard(2, 6))).expect("push");
+        let mut set = ParkedSeqs::new();
+        let _fail = test_seam::fail_after(CapacityResource::SweepScratch, 0);
+        let first = queue.match_front(&mut set, |_, _| (FrontAction::SetAside, ()));
+        assert!(matches!(first, FrontOutcome::Matched { .. }));
+        let parked = set.inline_seq().expect("inline park");
+        let second = queue.match_front(&mut set, |_, _| (FrontAction::SetAside, ()));
+        assert!(matches!(second, FrontOutcome::ParkRefused { .. }));
+        assert_eq!(set.inline_seq(), Some(parked), "live key kept");
+        assert_eq!(test_seam::injected(), 1);
     }
 }

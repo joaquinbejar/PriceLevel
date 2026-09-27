@@ -1260,7 +1260,11 @@ Behavior:
   stable-sort scratch buffer.
 - **Matching.** The sweep's parked-sequence set holds its first live key
   inline (no allocation; the self-trade skip, the only park that fires
-  today, has at most one live key) and grows fallibly beyond it. A park
+  today, has at most one live key, and the slot frees itself when that key
+  goes stale through a cancel, readmission or demotion) and grows fallibly
+  beyond it. A fill-or-kill dry run can predict a park (a maker sharing the
+  taker id admitted between the self-match lookup and the exclusive
+  guard). A park
   that cannot be recorded stops a non-fill-or-kill sweep with the
   committed prefix and [`MatchResult::error`] carrying the original
   `SweepScratch` error. A fill-or-kill taker reserves its dry-run working

@@ -297,6 +297,45 @@ fn fire_sweep_start_hook() {
     }
 }
 
+// Deterministic seam between the terminal self-match lookup and the
+// fill-or-kill exclusive-guard acquisition (issue #164 review): a test can
+// admit an order sharing the taker id in exactly the window a concurrent
+// mutator could, on the matcher thread and with no lock held, so the dry run
+// then sees (and parks) it. Production builds compile none of this.
+#[cfg(test)]
+thread_local! {
+    static PRE_FOK_LOCK_HOOK: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Clears the pre-fill-or-kill-lock hook when dropped (test seam).
+#[cfg(test)]
+pub(crate) struct PreFokLockHookGuard;
+
+#[cfg(test)]
+impl Drop for PreFokLockHookGuard {
+    fn drop(&mut self) {
+        PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// Install a one-shot hook fired after the self-match lookup and before a
+/// fill-or-kill taker acquires the exclusive guard (test seam, issue #164).
+#[cfg(test)]
+pub(crate) fn set_pre_fok_lock_hook(hook: Box<dyn FnMut()>) -> PreFokLockHookGuard {
+    PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    PreFokLockHookGuard
+}
+
+/// Fire (and consume) the pre-fill-or-kill-lock hook if one is installed.
+#[cfg(test)]
+fn fire_pre_fok_lock_hook() {
+    let hook = PRE_FOK_LOCK_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(mut hook) = hook {
+        hook();
+    }
+}
+
 /// Fire the post-only decision hook if one is installed (test seam, issue #130).
 #[cfg(test)]
 fn fire_post_only_decision_hook() {
@@ -2164,9 +2203,11 @@ impl PriceLevel {
     /// 5. no FIFO sequence left to re-sequence a replenished maker
     ///    ([`PriceLevelError::CounterExhausted`], #165);
     /// 6. recording a parked maker (self-trade skip): the parked-sequence set
-    ///    cannot grow (`CapacityExceeded`, resource `SweepScratch`, #164; the
-    ///    first live park uses an inline slot and never allocates, so this is
-    ///    not reached by the self-trade skip today);
+    ///    cannot grow (`CapacityExceeded`, resource `SweepScratch`, #164). A
+    ///    single live parked maker uses an inline slot that frees itself when
+    ///    its key goes stale (cancel, readmission, demotion), so this needs
+    ///    two simultaneously live parks, which no current order shape
+    ///    produces;
     /// 7. after a committed step, a resting-order count release that fails
     ///    (#163) or the defensive post-lock replenish counter transition being
     ///    refused (#128 fallback, #164; unreachable today): both
@@ -2467,6 +2508,8 @@ impl PriceLevel {
         // `HashSet::new` does not allocate.
         let mut set_aside = ParkedSeqs::new();
         let fok_guard = if is_fok {
+            #[cfg(test)]
+            fire_pre_fok_lock_hook();
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
             // to match a half-mutated level rather than sweep it (issue #130).
@@ -2571,14 +2614,16 @@ impl PriceLevel {
                 return result;
             }
             // Every maker the sweep parks (self-trade skip, no-progress guard)
-            // inserts one sequence into `set_aside` (issue #164). Under the
-            // exclusive guard the dry run's count is exact, so reserve it now
-            // (the first park uses the set's inline slot, so a single
-            // predicted park reserves nothing): the sweep's park then never
-            // has to grow the set, and a refusal
-            // kills the taker here with the level untouched instead of
-            // stopping the sweep part-way. With no park predicted (the normal
-            // case) this reserves nothing and does not allocate.
+            // inserts one sequence into `set_aside` (issue #164). The count
+            // can be nonzero: a concurrent mutator can admit a maker sharing
+            // the taker id after the self-match lookup above and before this
+            // guard was taken, and the dry run then parks it. Under the
+            // exclusive guard the count is exact, so reserve it now: the
+            // sweep's park then never has to grow the set, and a refusal kills
+            // the taker here with the level untouched instead of stopping the
+            // sweep part-way. The first park uses the set's inline slot, so
+            // zero or one predicted park (the only counts current order shapes
+            // produce) reserves nothing and does not allocate.
             if let Err(err) = set_aside.try_reserve(dry.parks) {
                 drop(guard);
                 tracing::error!(
