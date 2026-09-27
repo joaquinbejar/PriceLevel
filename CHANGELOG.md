@@ -349,6 +349,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialization, while `set_global_default` builds the dispatcher; calling
   `setup_logger` from them deadlocks and is documented as prohibited.
 
+### Performance
+
+- **Fill-or-kill feasibility is bounded by the depth it consumes (#143).**
+  The FOK dry run no longer materializes and sorts the whole level: it walks
+  the queue in sweep order and stops once the taker is covered, finishing
+  over one sorted collection of the remaining makers only when the walk
+  outlives `max(8, resting orders / 64)` makers. A qty-1 FOK filled by the
+  front maker at depth 10,000 drops from about 157 us to 0.3 us at p50, and
+  mutators waiting on the level no longer stall behind it. A FOK that must
+  visit every maker (a rejected FOK) is about 4 to 14% slower. The verdict,
+  the preflight order and `PriceLevel::matchable_quantity` are unchanged;
+  see `BENCH.md`, "Fill-or-kill feasibility depth".
+
 ### Documentation
 
 - **Snapshot encoding buffers measured and pinned (#149).** The borrowed

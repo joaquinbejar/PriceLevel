@@ -58,6 +58,7 @@ below.
 | `restore_sizes` | `from_snapshot` / `from_snapshot_json` at 100 / 10,000 / 100,000 orders, valid, failing at the last order, and failing the aggregate check at the second / last order, plus an untimed allocation / per-operation peak-memory pass (issue #150). See "Restore validation walks" below |
 | `depth`      | `add_order` and a 1-unit taker match, swept across resting depth 100 / 1,000 / (opt-in) 10,000 / 100,000; order-quantity and level-price magnitude sweeps |
 | `contention` | one matcher thread (`match_order`) under `N-1` concurrent admissions/cancels/reads, run once with a GTC matcher and once with an FOK matcher |
+| `fok_depth`  | fill-or-kill feasibility cost versus depth (issue #143): first-maker FOK / GTC fill, rejected FOK and replenishing-iceberg FOK at depths 1 / 100 / 10,000, and writer add / cancel latency concurrent with a FOK or GTC matcher. See "Fill-or-kill feasibility depth" below |
 | `stats_contention` | statistics cache contention (issue #154): matcher alone, with producers / readers on the same level, and with the same workers on an independent level; successful and overflow-rollback recording as separate cases; bare `PriceLevelStatistics` bounds. See "Statistics cache contention" below |
 
 Every scenario asserts its own exact outcome counts (fills, rejections,
@@ -273,7 +274,7 @@ Every knob is an environment variable (`benches/latency/config.rs`):
 | `PL_LATENCY_STATS_PRODUCERS`      | 2       | Producer (cancel + re-add) threads per `stats_contention` case |
 | `PL_LATENCY_STATS_READERS`        | 2       | Statistics-reader threads per `stats_contention` case |
 | `PL_LATENCY_STATS_OPS`            | 20,000  | Matcher operations measured per `stats_contention` case |
-| `PL_LATENCY_ONLY`                 | all     | Comma-separated groups to run: `isolated`, `match`, `tif`, `snapshot` (includes `iteration`), `snapshot_sizes` (issue #149, with its own allocation pass), `depth`, `contention`, `stats_contention`, `alloc` |
+| `PL_LATENCY_ONLY`                 | all     | Comma-separated groups to run: `isolated`, `match`, `tif`, `snapshot` (includes `iteration`), `snapshot_sizes` (issue #149, with its own allocation pass), `depth`, `fok_depth`, `contention`, `stats_contention`, `alloc` |
 
 A short validation run (a few minutes at most, typically a few seconds):
 
@@ -897,6 +898,7 @@ between runs in both variants; only p50 is comparable at 10,000 and
 Criterion numbers were not collected for this issue: no production code
 changed, and the per-operation harness above carries the percentiles and
 allocation counts the issue asks for.
+
 ## Restore validation walks (issue #150)
 
 Before #150, `PriceLevel::from_snapshot` walked the orders three times
@@ -1173,3 +1175,142 @@ after a fill or replenishment, replenishment still demotes to the tail, and
 a racing cancel either fully wins or fully loses. The scenarios stay in the
 allocation pass, the latency harness and Criterion
 (`benches/price_level/residual_reuse.rs`) as a regression tripwire.
+
+## Fill-or-kill feasibility depth (issue #143)
+
+A fill-or-kill taker runs a dry run of the sweep under the level's
+exclusive guard before it touches a maker. The dry run used to materialize
+and sort the whole queue first, so a qty-1 FOK against a 10,000-order level
+cost about as much as walking all 10,000 makers, and every admission and
+cancel on the level waited behind it.
+
+The dry run now walks the queue in sweep order and stops as soon as the
+taker is covered (or the sweep would stop). The walk has two phases
+(`SeqWalk` in `order_queue.rs`):
+
+- **Lazy prefix**, at most `max(8, resting orders / 64)` makers: index entry,
+  one `DashMap` lookup and one `Arc` clone per maker. A fill within the
+  prefix never touches the makers behind it.
+- **Bulk continuation**: a walk that outlives the prefix collects the
+  remaining orders (sequence above the last one visited) in one pass and
+  sorts them, as the former snapshot did.
+
+The split exists because a lazy step costs more than its share of one bulk
+pass. Measured per maker on a 10,000-order level in a release test: index
+step about 8 ns, `DashMap` lookup about 13.5 ns, `Arc` clone about 5.5 ns
+(about 27 ns in total), against about 14 ns per maker for the old
+collect-and-sort. A lazy-only walk made the rejected FOK below about 2x
+slower; the budget caps that overhead to the prefix.
+
+Replenished tranches that the sweep re-sequences at the tail are buffered
+by value, and only when the taker still has quantity left.
+
+The prediction is unchanged: a property test (`src/price_level/tests/bounded_fok.rs`)
+compares every field of the new dry run (fill, trades, replenishes, parks,
+stop error) with the former implementation, kept only in that test. It uses
+random books of standard, iceberg and reserve makers, resizes, cancels,
+partial GTC sweeps, self-match taker ids, quantities near `u64::MAX` for the
+visible-headroom abort, and makers whose step fails, with the lazy budget
+forced to every small value so the bulk switch lands at every position.
+
+### Workload
+
+The issue's reproduction (`PL_LATENCY_ONLY=fok_depth`,
+`benches/latency/scenarios/fok_depth.rs`): a fresh level per configuration,
+standard GTC Sell makers at price 100 and timestamp 1, maker quantity 1,
+Sequential maker ids `0..depth`, taker id `u64::MAX` at timestamp 2,
+`TakerKind::Standard`, a trade-id generator with namespace `Uuid::nil()`.
+`*_first_maker` keeps the depth constant by admitting one replacement maker
+in an untimed teardown. 1,000 warmup calls, then 5,000 FOK samples or
+10,000 GTC samples. Each call is asserted to execute quantity 1, and
+statistics are asserted not degraded.
+
+- `fok_rejected`: a taker one unit larger than the level; the dry run must
+  visit every maker to prove the kill.
+- `fok_replenish`: iceberg makers (1 visible + 1,000,000 hidden); a qty-2
+  FOK drains the front tranche (re-sequenced at the tail) and one unit of
+  the next maker.
+- `writer_*_during_*`: one thread loops the qty-1 first-maker call (FOK, or
+  GTC as the control) at depth 10,000 while this thread times 5,000
+  `add_order` + `update_order(Cancel)` pairs on its own tail orders.
+
+### Environment
+
+Apple M5 Max (18 logical cores), macOS arm64, Rust 1.98.1 release profile,
+system allocator, unpinned shared host. Load averages were 5.9 to 9.1
+during the runs, so base (`origin/main` 2afb06a) and new binaries were run
+interleaved, three rounds each. The table reports the median of the three
+rounds. Times are microseconds.
+
+| Scenario | Base p50 | Base p99 | Base p99.9 | New p50 | New p99 | New p99.9 |
+|---|---|---|---|---|---|---|
+| fok_first_maker@1 | 1.58 | 2.29 | 3.08 | 0.25 | 0.96 | 1.33 |
+| gtc_first_maker@1 | 0.21 | 0.79 | 1.17 | 0.21 | 0.75 | 1.17 |
+| fok_rejected@1 | 1.38 | 1.50 | 1.58 | 0.08 | 0.08 | 0.17 |
+| fok_first_maker@100 | 2.75 | 3.33 | 4.50 | 0.29 | 0.83 | 0.96 |
+| gtc_first_maker@100 | 0.21 | 0.71 | 0.83 | 0.21 | 0.71 | 0.79 |
+| fok_rejected@100 | 2.67 | 2.83 | 3.42 | 2.92 | 3.04 | 3.21 |
+| fok_replenish@100 | 2.79 | 3.96 | 4.62 | 0.62 | 1.58 | 2.08 |
+| fok_first_maker@10000 | 157 | 307 | 717 | 0.29 | 1.00 | 2.33 |
+| gtc_first_maker@10000 | 0.25 | 0.79 | 2.04 | 0.29 | 1.21 | 7.12 |
+| fok_rejected@10000 | 173 | 217 | 585 | 205 | 581 | 1,788 |
+| fok_replenish@10000 | 156 | 171 | 242 | 0.67 | 1.75 | 2.67 |
+| writer_add_during_fok@10000 | 0.17 | 0.67 | 144,505 | 0.21 | 4.75 | 15.04 |
+| writer_cancel_during_fok@10000 | 0.08 | 0.71 | 74,739 | 0.12 | 4.46 | 10.00 |
+| writer_add_during_gtc@10000 | 0.21 | 1.04 | 2.00 | 0.46 | 1.08 | 2.42 |
+| writer_cancel_during_gtc@10000 | 0.12 | 0.96 | 2.67 | 0.42 | 1.33 | 2.83 |
+
+Criterion (`PriceLevel - FOK depth`, `benches/price_level/fok_depth.rs`,
+same workload, `BatchSize::PerIteration`; two interleaved rounds, point
+estimates):
+
+| Case | Base | New |
+|---|---|---|
+| fok_first_maker/1 | 1.49 / 1.59 µs | 270 / 280 ns |
+| fok_first_maker/100 | 2.77 / 2.86 µs | 314 / 282 ns |
+| fok_first_maker/10000 | 150 / 166 µs | 310 / 308 ns |
+| gtc_first_maker/10000 | 250 / 263 ns | 259 / 258 ns |
+| fok_rejected/1 | 1.33 / 1.52 µs | 65 / 68 ns |
+| fok_rejected/100 | 2.55 / 2.75 µs | 2.72 / 2.84 µs |
+| fok_rejected/10000 | 164 / 172 µs | 188 / 179 µs |
+| fok_replenish/100 | 2.84 / 2.86 µs | 616 / 624 ns |
+| fok_replenish/10000 | 147 / 155 µs | 778 / 666 ns |
+
+### Reading
+
+- A FOK filled by the front maker no longer depends on depth: at 10,000
+  orders its p50 drops from 157 µs to 0.29 µs, within about 40 ns of the GTC
+  control. The same holds with replenishing makers.
+- Mutators no longer stall behind the FOK: with a FOK matcher looping at
+  depth 10,000, the writer's p99.9 add / cancel latency goes from 145 / 75 ms
+  (queued behind back-to-back 150 µs exclusive sections) to 15 / 10 µs. Its
+  p99 rises from under 1 µs to about 4.5 µs because the matcher now
+  completes about 350,000 to 480,000 FOK calls per second instead of about
+  6,300, so
+  the writer meets a short exclusive section far more often.
+- **Regression: a FOK that must walk the whole level** (the rejected case)
+  is slower by the lazy prefix plus per-step overhead: Criterion +4 to +14%
+  at depth 10,000 and +3 to +7% at depth 100; in the latency harness +18%
+  at p50 at depth 10,000, with a higher p99 under this host's load. An
+  interleaved release micro-benchmark of the two dry runs alone measured
+  +3 to +5% at depth 10,000. The lazy-only walk (no bulk switch) measured
+  about +100%, so this split is kept; a smaller prefix would trade bounded
+  fills for a few microseconds on this path.
+- `gtc_first_maker` is unchanged within noise: the GTC path does not run the
+  dry run.
+
+### A pre-existing FIFO race exposed by the contention scenario
+
+While this scenario was being built, `writers_during` caught a FIFO
+violation on unmodified `origin/main`: under a FOK matcher looping qty-1
+calls at depth 10,000 with a concurrent writer adding and cancelling its
+own orders at the tail, a FOK call occasionally consumed the writer's
+newest order instead of the front maker. The level stayed internally
+consistent afterwards (map and index agree, count correct), and the
+writer's cancel then reported `Ok(None)`. The base binary tripped it in
+most runs (five failed attempts before one clean run in the table above).
+Adding a 150 µs spin inside the new dry run reproduced it 4 times out of 4,
+so the new code does not remove the race: it only makes it much rarer by
+shortening the exclusive section (no failure in 9 runs without the spin).
+The scenario now asserts strict FIFO for every matcher call. The root cause
+is not addressed here and needs its own issue.

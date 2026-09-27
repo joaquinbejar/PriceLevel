@@ -104,7 +104,7 @@ pub struct Config {
     /// Matcher operations measured per statistics-contention case (#154).
     pub stats_ops: usize,
     /// Scenario categories to run (`PL_LATENCY_ONLY`, comma-separated, e.g.
-    /// `stats_contention`). `None` runs every category.
+    /// `stats_contention` or `fok_depth`). `None` runs every category.
     pub only: Option<Vec<String>>,
     /// Raw `LOGLEVEL` environment value, recorded in the manifest for parity
     /// with the rest of the crate's tooling even though this harness does
