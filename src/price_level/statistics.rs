@@ -139,7 +139,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 /// share a cache line with the matcher's execution aggregates and `stats_seq`.
 /// That false sharing was measured and deliberately kept: separating the
 /// groups onto their own 128-byte lines removed it from a bare statistics
-/// object but gave no p99 / p99.9 improvement on a shared level, while raising
+/// object but showed no consistent or demonstrated repeatable p99 / p99.9
+/// benefit on a shared level, while raising
 /// the per-level allocation from 112 to 384 bytes. The data and method are in
 /// `BENCH.md`, "Statistics cache contention".
 #[derive(Debug)]

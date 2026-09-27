@@ -468,9 +468,15 @@ across topologies.
   (cancel then re-add their own churn orders) and/or 2 readers (point reads
   and a seqlock `Clone` through `PriceLevel::stats()`, plus a full
   `snapshot()` every 1,024 ops) run on the matcher's level.
-- `statsc_{ok,overflow}_indep_mixed`: the same workers run on a second,
-  identically built level. This controls for machine load, core placement
-  and memory bandwidth.
+- `statsc_{ok,overflow}_indep_mixed`: the same workers run on a second level
+  that starts out identical. This is a **background-load reference**, not an
+  equal-work control. The matcher drains its own level toward the churn
+  pool, while the independent level keeps all 22,000 initial makers.
+  Readers there run every periodic `snapshot()` over roughly 23,000 orders
+  instead of a shrinking set, so they scan and allocate far more per
+  snapshot and complete fewer `Clone`s (see the worker-row sample counts
+  below). The row controls for thread count and machine load. It does not
+  control for the reader and producer work mix.
 - `*_producer_add` / `*_reader_clone`: producer 0's `add_order` and reader
   0's statistics `Clone`, recorded only while the matcher measures.
 - `statsc_raw_*`: a bare `PriceLevelStatistics`. One sample is a batch of 16
@@ -495,10 +501,14 @@ successful path. The two paths are never merged into one number.
   efficiency), macOS aarch64, rustc 1.98.1, `bench` profile. Threads are not
   pinned; macOS exposes no affinity API. `Instant` ticks are 41.67 ns, so a
   `reader_clone` p50 of 0 means under one tick.
-- **Sampling:** 20,000 measured samples and 2,000 warmup per case. Five
-  interleaved rounds per binary (A, B, A, B, ...), 100,000 pooled raw
-  observations per row. Percentiles below are nearest-rank over the pooled
-  CSVs from `target/latency/<run-id>/`.
+- **Sampling:** 20,000 measured matcher samples and 2,000 warmup per case.
+  Five interleaved rounds per binary (A, B, A, B, ...). Matcher and raw rows
+  pool 100,000 observations. `PL_LATENCY_STATS_OPS` is only a **cap** for
+  worker rows (`*_producer_add`, `*_reader_clone`): recording stops when the
+  matcher's measured loop ends, so each round records fewer samples. The
+  pooled worker counts are in the Samples column below; per-run counts are
+  in each run's `manifest.json`. Percentiles are nearest-rank over the
+  pooled CSVs from `target/latency/<run-id>/`.
 - **Worker rates (baseline, same level, mixed):** matcher about 1.1 M ops/s;
   producers about 2.4 M ops/s combined; readers about 3.2 M ops/s combined.
   In the raw case, producers reached about 29 M ops/s.
@@ -514,24 +524,32 @@ successful path. The two paths are never merged into one number.
 
 p99.99 is an [exploratory estimate](#the-p9999-caveat). Values are ns.
 
-| Scenario | Baseline p50 | Padded p50 | Baseline p99 | Padded p99 | Baseline p99.9 | Padded p99.9 | Baseline p99.99 | Padded p99.99 |
-|---|---|---|---|---|---|---|---|---|
-| statsc_ok_single | 250 | 333 | 875 | 1000 | 1917 | 8917 | 12042 | 79791 |
-| statsc_ok_same_producers | 625 | 500 | 2250 | 2000 | 12667 | 15875 | 49250 | 427000 |
-| statsc_ok_same_readers | 292 | 292 | 1375 | 2083 | 20875 | 59625 | 457250 | 943250 |
-| statsc_ok_same_mixed | 833 | 666 | 4541 | 6833 | 63250 | 248417 | 986584 | 10012125 |
-| statsc_ok_same_mixed_producer_add | 708 | 584 | 2291 | 2375 | 13958 | 16708 | 180208 | 404083 |
-| statsc_ok_same_mixed_reader_clone | 0 | 0 | 333 | 166 | 583 | 250 | 8000 | 7833 |
-| statsc_ok_indep_mixed | 333 | 333 | 1708 | 1500 | 8541 | 8250 | 34834 | 39959 |
-| statsc_overflow_single | 333 | 333 | 959 | 917 | 8500 | 1666 | 34667 | 21333 |
-| statsc_overflow_same_mixed | 791 | 792 | 3791 | 7083 | 51334 | 72916 | 10018292 | 843208 |
-| statsc_overflow_indep_mixed | 375 | 375 | 1375 | 1459 | 4458 | 8834 | 21417 | 38292 |
-| statsc_raw_ok_single (per 16) | 166 | 166 | 209 | 208 | 250 | 250 | 9375 | 1500 |
-| statsc_raw_ok_same_producers (per 16) | 2708 | 166 | 10500 | 209 | 18541 | 375 | 60500 | 12958 |
-| statsc_raw_ok_indep_producers (per 16) | 166 | 166 | 209 | 209 | 292 | 542 | 9042 | 12667 |
-| statsc_raw_ok_same_readers (per 16) | 958 | 959 | 2958 | 2625 | 11250 | 11875 | 53916 | 47875 |
-| statsc_raw_overflow_single (per 16) | 916 | 917 | 1166 | 1167 | 11541 | 8750 | 79417 | 85583 |
-| statsc_raw_overflow_same_producers (per 16) | 10917 | 917 | 6075667 | 1208 | 36998000 | 9125 | 75595833 | 19458 |
+Samples are pooled counts (baseline / padded).
+
+| Scenario | Samples | Baseline p50 | Padded p50 | Baseline p99 | Padded p99 | Baseline p99.9 | Padded p99.9 | Baseline p99.99 | Padded p99.99 |
+|---|---|---|---|---|---|---|---|---|---|
+| statsc_ok_single | 100000 / 100000 | 250 | 333 | 875 | 1000 | 1917 | 8917 | 12042 | 79791 |
+| statsc_ok_same_producers | 100000 / 100000 | 625 | 500 | 2250 | 2000 | 12667 | 15875 | 49250 | 427000 |
+| statsc_ok_same_readers | 100000 / 100000 | 292 | 292 | 1375 | 2083 | 20875 | 59625 | 457250 | 943250 |
+| statsc_ok_same_mixed | 100000 / 100000 | 833 | 666 | 4541 | 6833 | 63250 | 248417 | 986584 | 10012125 |
+| statsc_ok_same_mixed_producer_add | 68169 / 64734 | 708 | 584 | 2291 | 2375 | 13958 | 16708 | 180208 | 404083 |
+| statsc_ok_same_mixed_reader_clone | 92704 / 88616 | 0 | 0 | 333 | 166 | 583 | 250 | 8000 | 7833 |
+| statsc_ok_indep_mixed | 100000 / 100000 | 333 | 333 | 1708 | 1500 | 8541 | 8250 | 34834 | 39959 |
+| statsc_ok_indep_mixed_producer_add | 29336 / 22500 | 583 | 542 | 2083 | 2459 | 13959 | 12833 | 84167 | 35667 |
+| statsc_ok_indep_mixed_reader_clone | 13797 / 11753 | 0 | 0 | 125 | 83 | 167 | 125 | 6250 | 7583 |
+| statsc_overflow_single | 100000 / 100000 | 333 | 333 | 959 | 917 | 8500 | 1666 | 34667 | 21333 |
+| statsc_overflow_same_mixed | 100000 / 100000 | 791 | 792 | 3791 | 7083 | 51334 | 72916 | 10018292 | 843208 |
+| statsc_overflow_same_mixed_producer_add | 68649 / 64030 | 667 | 708 | 2167 | 2666 | 15666 | 16583 | 574167 | 246875 |
+| statsc_overflow_same_mixed_reader_clone | 93610 / 93448 | 0 | 0 | 417 | 250 | 625 | 375 | 9417 | 8750 |
+| statsc_overflow_indep_mixed | 100000 / 100000 | 375 | 375 | 1375 | 1459 | 4458 | 8834 | 21417 | 38292 |
+| statsc_overflow_indep_mixed_producer_add | 25907 / 30307 | 583 | 541 | 1875 | 2209 | 10250 | 13125 | 30750 | 74500 |
+| statsc_overflow_indep_mixed_reader_clone | 24017 / 15841 | 0 | 0 | 83 | 42 | 125 | 125 | 500 | 8333 |
+| statsc_raw_ok_single (per 16) | 100000 / 100000 | 166 | 166 | 209 | 208 | 250 | 250 | 9375 | 1500 |
+| statsc_raw_ok_same_producers (per 16) | 100000 / 100000 | 2708 | 166 | 10500 | 209 | 18541 | 375 | 60500 | 12958 |
+| statsc_raw_ok_indep_producers (per 16) | 100000 / 100000 | 166 | 166 | 209 | 209 | 292 | 542 | 9042 | 12667 |
+| statsc_raw_ok_same_readers (per 16) | 100000 / 100000 | 958 | 959 | 2958 | 2625 | 11250 | 11875 | 53916 | 47875 |
+| statsc_raw_overflow_single (per 16) | 100000 / 100000 | 916 | 917 | 1166 | 1167 | 11541 | 8750 | 79417 | 85583 |
+| statsc_raw_overflow_same_producers (per 16) | 100000 / 100000 | 10917 | 917 | 6075667 | 1208 | 36998000 | 9125 | 75595833 | 19458 |
 
 Allocation: no engine code changed, so allocation per operation is the same
 as in the rest of this document. The only memory change evaluated is the
@@ -547,28 +565,36 @@ prototype's +272 bytes per level.
    reached 60 ms at p99.9. This looks like contended-atomic starvation on
    Apple silicon, and padding removes it. These cases are upper bounds: the
    producers do nothing but statistics RMWs, at about 29 M ops/s.
-2. **Inside the engine, the statistics line is a minor share of the
-   contention.** On the same level, the matcher's p50 rises by about
-   300 to 500 ns over the independent-level control (833 versus 333, and 791
-   versus 375). Padding recovers about 125 to 170 ns of p50 in the `ok`
+2. **Inside the engine, the statistics line looks like a minor share of the
+   contention.** On the same level, the matcher's p50 is about 300 to
+   500 ns above the independent-level background-load reference (833
+   versus 333, and 791 versus 375). That reference does not run the same
+   worker work (see Scenarios), so this gap is not a controlled
+   same-level cost. Padding recovers about 125 to 170 ns of p50 in the `ok`
    producer and mixed cases. It recovers nothing in `overflow_same_mixed`
-   (791 versus 792). The rest comes from state that producers and the
-   matcher genuinely share (`topology`, `visible_quantity`, `DashMap`
-   shards, the `SkipMap`, the `fok_guard` reader count), which padding the
-   statistics cannot remove.
-3. **Tails do not improve.** Across five interleaved rounds, the padded
-   build's p99 / p99.9 are equal or worse in every same-level case
-   (`ok_same_mixed` p99 4,541 versus 6,833). Run-to-run spread (for example,
-   `ok_single` p99.9 from 1 to 9 µs) is larger than any difference
-   attributable to the layout. The address of the statistics allocation
-   inside a line also changes between runs. Reader `Clone` p99 improves
-   (333 to 166 ns), but that is a reader-side gain, not matcher tail latency.
+   (791 versus 792). **Hypothesis, not demonstrated here:** most of the
+   remaining gap comes from state that producers and the matcher genuinely
+   share (`topology`, `visible_quantity`, `DashMap` shards, the `SkipMap`,
+   the `fok_guard` reader count), which padding the statistics cannot
+   remove. Testing it would need an equal-work control and per-structure
+   attribution.
+3. **No consistent tail benefit.** Across five interleaved rounds, the
+   padded build shows no consistent or demonstrably repeatable p99 / p99.9
+   improvement on a shared level. `ok_same_producers` p99 improves (2,250
+   to 2,000 ns), but `ok_same_mixed` (4,541 to 6,833 ns) and
+   `overflow_same_mixed` (3,791 to 7,083 ns) get worse, and p99.9 is worse
+   in all three. Run-to-run spread (for example, `ok_single` p99.9 from 1
+   to 9 µs) is larger than any difference attributable to the layout. The
+   address of the statistics allocation inside a line also changes between
+   runs. Reader `Clone` p99 improves (333 to 166 ns), but that is a
+   reader-side gain, not matcher tail latency.
 
 ### Decision: no change
 
 The current layout stays. The only improvement the prototype shows inside
 the engine is a 15 to 20% p50 gain in two same-level cases. It shows no
-p99 / p99.9 benefit, costs 3.4 times the statistics memory per level
+consistent or demonstrated repeatable p99 / p99.9 benefit (one p99
+improvement, two regressions, p99.9 worse in all three), costs 3.4 times the statistics memory per level
 (+272 bytes, 128-byte-aligned allocation), and would need a `repr(C)` field
 order plus pad fields kept in sync across every constructor. That
 does not meet the acceptance bar ("measured benefit with no unexplained tail
