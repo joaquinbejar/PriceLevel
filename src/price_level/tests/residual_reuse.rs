@@ -24,7 +24,7 @@ mod tests {
     use crate::price_level::level::PriceLevel;
     use crate::price_level::snapshot::PriceLevelSnapshotPackage;
     use crate::utils::{Price, Quantity, TimestampMs};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use uuid::Uuid;
@@ -198,19 +198,49 @@ mod tests {
     fn test_concurrent_views_never_observe_a_mutation() {
         const FILLS: u64 = 2_000;
         const READERS: usize = 2;
+        const ORIGINAL: u64 = 1_000_000;
         let level = Arc::new(PriceLevel::new(PRICE));
-        drop(level.add_order(standard(1, 1_000_000)).expect("admit"));
+        drop(level.add_order(standard(1, ORIGINAL)).expect("admit"));
         let done = Arc::new(AtomicBool::new(false));
+        // Rendezvous for the handshake: every reader holds a view before the
+        // handshake fill and checks it only after that fill has committed.
         let barrier = Arc::new(Barrier::new(READERS + 1));
+        // Views each reader has checked so far (handshake included).
+        let observations: Arc<Vec<AtomicU64>> =
+            Arc::new((0..READERS).map(|_| AtomicU64::new(0)).collect());
 
         let readers: Vec<_> = (0..READERS)
-            .map(|_| {
+            .map(|reader| {
                 let level = Arc::clone(&level);
                 let done = Arc::clone(&done);
                 let barrier = Arc::clone(&barrier);
+                let observations = Arc::clone(&observations);
                 thread::spawn(move || {
-                    barrier.wait();
-                    let mut last = u64::MAX;
+                    let counter = &observations[reader];
+                    // Handshake: this view is held across a confirmed fill.
+                    let view = level.iter_orders().next().expect("the maker rests");
+                    let seen = view.visible_quantity().as_u64();
+                    barrier.wait(); // view taken
+                    barrier.wait(); // handshake fill committed
+                    assert_eq!(
+                        view.visible_quantity().as_u64(),
+                        seen,
+                        "a fill changed a view held across it"
+                    );
+                    let current = level
+                        .iter_orders()
+                        .next()
+                        .expect("the maker rests")
+                        .visible_quantity()
+                        .as_u64();
+                    assert!(current < seen, "the handshake fill followed the view");
+                    drop(view);
+                    let mut observed = 1u64;
+                    // `Release` pairs with the matcher's `Acquire` load: the
+                    // count is published after the checks it reports.
+                    counter.store(observed, Ordering::Release);
+
+                    let mut last = current;
                     // `Acquire` pairs with the matcher's `Release` store so the
                     // loop ends after the last fill.
                     while !done.load(Ordering::Acquire) {
@@ -224,23 +254,43 @@ mod tests {
                         }
                         assert!(seen <= last, "a view went backwards");
                         last = seen;
+                        observed += 1;
+                        counter.store(observed, Ordering::Release);
                     }
+                    observed
                 })
             })
             .collect();
 
         let generator = generator();
-        barrier.wait();
+        barrier.wait(); // every reader holds a view
+        let handshake = take(&level, 1, 99, &generator);
+        assert_eq!(handshake.trades().len(), 1);
+        barrier.wait(); // readers may now check their held views
+
+        // Start the stress fills only once every reader is inside its stress
+        // loop (it has checked at least one view there), so the loop cannot
+        // pass vacuously by seeing `done` before any check.
+        while observations
+            .iter()
+            .any(|count| count.load(Ordering::Acquire) < 2)
+        {
+            thread::yield_now();
+        }
         for i in 0..FILLS {
             let result = take(&level, 1, 100 + i, &generator);
             assert_eq!(result.trades().len(), 1);
         }
         done.store(true, Ordering::Release);
         for reader in readers {
-            reader.join().expect("reader");
+            let observed = reader.join().expect("reader");
+            assert!(
+                observed >= 2,
+                "each reader checked the handshake view and a stress view"
+            );
         }
 
-        assert_eq!(level.visible_quantity(), 1_000_000 - FILLS);
+        assert_eq!(level.visible_quantity(), ORIGINAL - 1 - FILLS);
         assert_counters_match_queue(&level);
     }
 

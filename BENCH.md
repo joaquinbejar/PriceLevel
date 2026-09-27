@@ -1120,12 +1120,20 @@ Criterion (`Residual allocation reuse (#147)` and three `#148` cases;
 | Case | base | reuse | change | reuse faster |
 |---|---|---|---|---|
 | partial_unique | 180.4 ns | 178.9 ns | -0.8% | 3/5 |
-| partial_retained_view | 186.7 ns | 189.5 ns | +1.5% | 2/5 |
+| partial_retained_view * | 189.9 ns | 193.6 ns | +1.9% | 2/5 |
 | replenish_unique | 243.4 ns | 244.4 ns | +0.4% | 2/5 |
-| replenish_retained_view | 243.9 ns | 248.4 ns | +1.8% | 1/5 |
+| replenish_retained_view * | 245.9 ns | 251.6 ns | +2.3% | 0/5 |
 | maker_partial_deep1000 | 235.0 ns | 248.1 ns | +5.6% | 1/5 |
 | iceberg_1x | 241.6 ns | 243.6 ns | +0.8% | 2/5 |
 | reserve_1x | 242.2 ns | 244.3 ns | +0.9% | 2/5 |
+
+\* The retained-view rows use `BatchSize::PerIteration`: the view is taken
+in untimed setup immediately before each fill, so every fill sees a shared
+maker. An earlier `SmallInput` version prepared a whole batch of views
+before the batch ran; they all referenced the maker as it was before the
+batch, the first fill replaced that allocation, and the rest of the batch
+ran the unique path. These two rows come from a separate five-round
+interleaved rerun (load average 3.8 to 8.8) on the rebased branch.
 
 Latency harness (`PL_LATENCY_ONLY=match`, 20,000 samples, median of five
 runs; the clock ticks every ~41.7 ns):
@@ -1144,7 +1152,7 @@ runs; the clock ticks every ~41.7 ns):
 
 The reuse path removes one allocation and one deallocation per unique-owner
 fill, but that doesn't show up as latency on this host. The Criterion means
-move by -0.8% to +5.6%, reuse is faster in at most 3 of 5 rounds, and the
+move by -0.8% to +5.6% (the view rows +1.9% and +2.3%), reuse is faster in at most 3 of 5 rounds, and the
 one consistent difference (`maker_partial_deep1000`, 4 of 5 rounds slower)
 goes the wrong way. The harness p50s are identical to the clock tick, and
 the p99 / p99.9 changes go both ways within run-to-run noise. The

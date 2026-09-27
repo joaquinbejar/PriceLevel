@@ -100,7 +100,7 @@ pub fn register_benchmarks(c: &mut Criterion) {
                     );
                     (view, result)
                 },
-                BatchSize::SmallInput,
+                BatchSize::PerIteration,
             );
         });
     }
