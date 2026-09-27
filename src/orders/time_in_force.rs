@@ -1,4 +1,5 @@
 use crate::errors::PriceLevelError;
+use crate::utils::text::split_exactly_once;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -96,17 +97,17 @@ impl FromStr for TimeInForce {
             "FOK" => Ok(TimeInForce::Fok),
             "DAY" => Ok(TimeInForce::Day),
             s if s.starts_with("GTD-") => {
-                let parts: Vec<&str> = s.split('-').collect();
-                if parts.len() != 2 {
+                // Exactly one `-`: `GTD-<expiry>`; a second `-` is rejected.
+                let Some((_, expiry)) = split_exactly_once(s, b'-') else {
                     return Err(PriceLevelError::ParseError {
                         message: format!("Invalid GTD format: {s}"),
                     });
-                }
+                };
 
-                match parts[1].parse::<u64>() {
+                match expiry.parse::<u64>() {
                     Ok(expiry) => Ok(TimeInForce::Gtd(expiry)),
                     Err(_) => Err(PriceLevelError::ParseError {
-                        message: format!("Invalid expiry timestamp in GTD: {}", parts[1]),
+                        message: format!("Invalid expiry timestamp in GTD: {expiry}"),
                     }),
                 }
             }
