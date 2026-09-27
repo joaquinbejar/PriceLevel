@@ -223,7 +223,9 @@ fn main() {
 
     // --- Phase 8: Snapshot total_quantity ---
     println!("[Phase 8] Snapshot total_quantity...");
-    let snap2 = original.snapshot();
+    let snap2 = original
+        .snapshot()
+        .unwrap_or_else(|e| exit_err(&format!("snapshot: {e}")));
     let total = snap2
         .total_quantity()
         .unwrap_or_else(|e| exit_err(&format!("total_quantity: {e}")));

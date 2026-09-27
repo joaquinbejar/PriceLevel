@@ -8,8 +8,8 @@ Issue #172. Companion to the Production Panic Policy in
 
 The Production Panic Policy in `rules/global_rules.md` requires that
 crate-owned code not initiate panics. That is the required policy, not a
-completed state: remaining crate-owned panic paths (for example the
-`snapshot()` aggregate assertions) are being removed under the audit in
+completed state: remaining crate-owned panic paths (the `snapshot()`
+aggregate assertions were removed in #162) are being removed under the audit in
 [#161](https://github.com/joaquinbejar/PriceLevel/issues/161) and its
 sub-issues, and are out of scope here. This document covers the separate
 question of code the crate does not own. Some public operations call it: trait impls on a caller payload, caller closures, a caller's
@@ -118,6 +118,7 @@ and tests.
 | `match_order` self-match reject `debug!` | none | none |
 | `match_order` post-only reject `debug!` | none | none |
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
+| `snapshot` recollection `debug!` (rejected walk: mixed sides or aggregate overflow) and attempts-exhausted `warn!` (#162) | `fok_guard` **shared (read) side**, held for the whole bounded recollection | none: a rejected walk is discarded and the level is never mutated by `snapshot`. An unwind releases the read guard without poisoning it; synchronous reentry into a `Fok` `match_order` on the same level blocks behind that read guard (covered by the global no-reentry obligation) |
 | sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
 | sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
 | `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a `setup_logger` call from this event's `on_event` returns it instead of blocking |

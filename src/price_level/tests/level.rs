@@ -260,7 +260,7 @@ mod tests {
             ))
             .expect("add_order should succeed");
 
-        let snapshot = price_level.snapshot();
+        let snapshot = price_level.snapshot().expect("snapshot must succeed");
         let restored = PriceLevel::try_from(&snapshot).expect("valid snapshot restores");
 
         let original_orders = price_level.snapshot_orders();
@@ -3055,7 +3055,7 @@ mod tests {
             .expect("add_order should succeed");
 
         // Create a snapshot
-        let snapshot = price_level.snapshot();
+        let snapshot = price_level.snapshot().expect("snapshot must succeed");
 
         // Verify snapshot data
         assert_eq!(snapshot.price().as_u128(), 10000);
@@ -4372,7 +4372,9 @@ mod tests {
             thread::spawn(move || {
                 barrier.wait();
                 for _ in 0..OPS_PER_THREAD {
-                    assert_snapshot_internally_consistent(&level.snapshot());
+                    assert_snapshot_internally_consistent(
+                        &level.snapshot().expect("snapshot must succeed"),
+                    );
                 }
             })
         };
@@ -4383,7 +4385,9 @@ mod tests {
         reader.join().expect("reader thread panicked");
 
         // The final quiescent snapshot must also be self-consistent.
-        assert_snapshot_internally_consistent(&price_level.snapshot());
+        assert_snapshot_internally_consistent(
+            &price_level.snapshot().expect("snapshot must succeed"),
+        );
     }
 
     // ------------------------------------------------------------------
@@ -5332,7 +5336,7 @@ mod tests {
         // order list by construction (issue #62). Asserting on it (rather than on
         // the live atomics + a separate iteration) avoids a benign torn read of
         // two independent reads.
-        let snapshot = level.snapshot();
+        let snapshot = level.snapshot().expect("snapshot must succeed");
         let orders = snapshot.orders();
 
         let visible_sum: u64 = orders.iter().map(|o| o.visible_quantity().as_u64()).sum();
@@ -5457,7 +5461,7 @@ mod tests {
             // The traded quantity plus what cancel removed plus what still rests
             // must conserve the original maker quantity. Read the residual from a
             // consistent snapshot.
-            let snapshot = level.snapshot();
+            let snapshot = level.snapshot().expect("snapshot must succeed");
             let resting_ids: HashSet<Id> = snapshot.orders().iter().map(|o| o.id()).collect();
             let resting_qty: u64 = snapshot
                 .orders()
@@ -5595,7 +5599,7 @@ mod tests {
                 .as_ref()
                 .map_or(0, |o| o.visible_quantity().as_u64());
 
-            let snapshot = level.snapshot();
+            let snapshot = level.snapshot().expect("snapshot must succeed");
             let resting_qty: u64 = snapshot
                 .orders()
                 .iter()
@@ -5994,7 +5998,7 @@ mod tests {
                         // snapshot is always validated too.
                         let finished = writer_done.load(Ordering::Acquire);
 
-                        let snap = level.snapshot();
+                        let snap = level.snapshot().expect("snapshot must succeed");
                         let ids: HashSet<Id> = snap.orders().iter().map(|o| o.id()).collect();
                         assert_eq!(
                             ids.len(),
@@ -6462,7 +6466,7 @@ mod tests {
         assert_eq!(level.order_count(), 2);
 
         // Counter == snapshot aggregate == sum over the queue contents.
-        let snapshot = level.snapshot();
+        let snapshot = level.snapshot().expect("snapshot must succeed");
         assert_eq!(snapshot.visible_quantity().as_u64(), u64::MAX);
         let queue_sum = level
             .snapshot_by_insertion_seq()
@@ -6875,7 +6879,7 @@ mod tests {
                 vec![Id::from_u64(DUP_ID)],
                 "iter {iter}: exactly one id rests, once"
             );
-            let snapshot = level.snapshot();
+            let snapshot = level.snapshot().expect("snapshot must succeed");
             assert_eq!(snapshot.order_count(), 1);
             assert_eq!(snapshot.orders().len(), 1);
             assert_eq!(
@@ -7468,7 +7472,7 @@ mod tests {
             // The level holds exactly one order; snapshot is single-side; the
             // advisory counters agree with the queue.
             assert_eq!(level.order_count(), 1, "iter {iter}");
-            let snap = level.snapshot();
+            let snap = level.snapshot().expect("snapshot must succeed");
             assert_eq!(snap.orders().len(), 1, "iter {iter}");
             assert_counters_match_queue(&level);
 
@@ -7542,7 +7546,19 @@ mod tests {
         };
 
         for _ in 0..50_000 {
-            let snap = level.snapshot();
+            // Issue #162: under this sustained flipping the bounded
+            // recollection may legitimately give up; that is a typed
+            // `InvalidOperation`, never a torn success.
+            let snap = match level.snapshot() {
+                Ok(snap) => snap,
+                Err(err) => {
+                    assert!(
+                        matches!(err, PriceLevelError::InvalidOperation { .. }),
+                        "a failed snapshot must be a typed InvalidOperation, got {err:?}"
+                    );
+                    continue;
+                }
+            };
             let mut side = None;
             for order in snap.orders() {
                 match side {
@@ -8360,7 +8376,7 @@ mod tests {
             );
             // Either it saw the maker (rejected) or it did not (rested), but it
             // never consumed. The maker is left resting at full quantity.
-            let snapshot = level.snapshot();
+            let snapshot = level.snapshot().expect("snapshot must succeed");
             assert_eq!(snapshot.order_count(), 1, "iter {iter}: maker must survive");
             assert_eq!(
                 snapshot.visible_quantity().as_u64(),
@@ -8482,7 +8498,7 @@ mod tests {
                     Some(id_b),
                     "iter {iter}: the cancel that won removed id_b"
                 );
-                let snapshot = level.snapshot();
+                let snapshot = level.snapshot().expect("snapshot must succeed");
                 assert_eq!(
                     snapshot.order_count(),
                     1,
@@ -8645,7 +8661,7 @@ mod tests {
                     Some(id_b),
                     "iter {iter}: the resize that won returned the prior id_b order"
                 );
-                let snapshot = level.snapshot();
+                let snapshot = level.snapshot().expect("snapshot must succeed");
                 assert_eq!(
                     snapshot.order_count(),
                     2,
@@ -8765,7 +8781,7 @@ mod tests {
 
         // snapshot stays allowed (diagnostics / reconstruction): maker 1 is still
         // resting and readable.
-        let snapshot = level.snapshot();
+        let snapshot = level.snapshot().expect("snapshot must succeed");
         assert_eq!(snapshot.order_count(), 1);
     }
 

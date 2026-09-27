@@ -636,6 +636,37 @@ impl OrderQueue {
         })
     }
 
+    /// Test-only: the resting ids grouped by `DashMap` shard, in the order the
+    /// snapshot walk visits them (issue #162).
+    ///
+    /// Each inner vector is one non-empty shard; the outer order is the shard
+    /// visiting order. Shard membership depends only on the id (the map's
+    /// hasher is fixed per queue), so a test can pick ids in distinct shards and
+    /// know which one the walk captures first. Two consecutive ids share a shard
+    /// exactly when a write lock on the previous id is refused while the walk
+    /// still holds the current shard's read lock.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn debug_shard_runs(&self) -> Vec<Vec<Id>> {
+        let mut runs: Vec<Vec<Id>> = Vec::new();
+        let mut previous: Option<Id> = None;
+        for entry in self.orders.iter() {
+            let id = *entry.key();
+            let same_shard = previous.is_some_and(|prev| {
+                matches!(
+                    self.orders.try_get_mut(&prev),
+                    dashmap::try_result::TryResult::Locked
+                )
+            });
+            match runs.last_mut() {
+                Some(run) if same_shard => run.push(id),
+                _ => runs.push(vec![id]),
+            }
+            previous = Some(id);
+        }
+        runs
+    }
+
     /// Iterate through current orders without materializing an intermediate vector.
     ///
     /// The iterator holds a `DashMap` shard read lock between `next()` calls,
@@ -719,7 +750,11 @@ impl OrderQueue {
         let mut pairs: Vec<(u64, Arc<OrderType<()>>)> = self
             .orders
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|entry| {
+                #[cfg(test)]
+                snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
+                entry.value().clone()
+            })
             .collect();
         // Unstable sort is deterministic here because sequences are unique
         // across live orders (the tail-appending paths mint distinct seqs via
@@ -940,5 +975,77 @@ impl<'de> Deserialize<'de> for OrderQueue {
         //     queue.push(Arc::new(order));
         // }
         // Ok(queue)
+    }
+}
+
+/// Test-only collection hook for the snapshot walk (issue #162).
+///
+/// Lets a test run code at deterministic points of
+/// [`crate::price_level::PriceLevel::snapshot`]: at the start of each attempt
+/// and as each order is captured by the shard walk. The hook is thread-local,
+/// so it only fires on the thread that installed it (other tests and helper
+/// threads are unaffected), and the whole module is `#[cfg(test)]`: it does
+/// not exist in production builds and adds no knob to the public surface.
+///
+/// A `Collected` event fires while the walk holds the captured order's
+/// `DashMap` shard read lock. A hook that mutates the level must do so from a
+/// different thread (and wait for it) and must only touch ids in other shards;
+/// see `OrderQueue::debug_shard_runs`.
+#[cfg(test)]
+pub(crate) mod snapshot_hook {
+    use crate::orders::Id;
+    use std::cell::RefCell;
+
+    /// A point in the snapshot walk at which the installed hook runs.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum SnapshotHookEvent {
+        /// A snapshot attempt is about to walk the orders.
+        AttemptStart,
+        /// The walk has just captured the order with this id.
+        Collected(Id),
+    }
+
+    type Hook = Box<dyn FnMut(SnapshotHookEvent)>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Clears the current thread's hook when dropped, so a failing test cannot
+    /// leak its hook into a later test on the same thread.
+    pub(crate) struct SnapshotHookGuard;
+
+    impl Drop for SnapshotHookGuard {
+        fn drop(&mut self) {
+            HOOK.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut() {
+                    *slot = None;
+                }
+            });
+        }
+    }
+
+    /// Installs `hook` for the current thread, replacing any previous one. The
+    /// hook stays installed until the returned guard is dropped.
+    #[must_use = "the hook is removed when the guard is dropped"]
+    pub(crate) fn install(hook: impl FnMut(SnapshotHookEvent) + 'static) -> SnapshotHookGuard {
+        HOOK.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                *slot = Some(Box::new(hook));
+            }
+        });
+        SnapshotHookGuard
+    }
+
+    /// Runs the current thread's hook for `event`. A re-entrant fire (the hook
+    /// itself triggering a walk on this thread) is skipped.
+    pub(crate) fn fire(event: SnapshotHookEvent) {
+        HOOK.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut()
+                && let Some(hook) = slot.as_mut()
+            {
+                hook(event);
+            }
+        });
     }
 }

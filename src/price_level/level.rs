@@ -5,6 +5,7 @@ use crate::errors::PriceLevelError;
 use crate::execution::{MatchResult, TakerKind, Trade};
 use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{FrontAction, FrontOutcome, OrderQueue, UpdateDecision};
+use crate::price_level::snapshot::SnapshotAggregates;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
@@ -17,6 +18,41 @@ use std::str::FromStr;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+
+/// Upper bound on the order walks one [`PriceLevel::snapshot`] call performs
+/// before it gives up with [`PriceLevelError::InvalidOperation`] (issue #162).
+///
+/// A walk is only repeated when the previous one was rejected (a mixed-side
+/// view across a side transition, or collected aggregates that overflow
+/// `u64`), which requires a concurrent mutation to land inside the walk. The
+/// bound turns "retry until mutation pauses" into a finite, reported outcome
+/// instead of an unbounded loop under sustained mutation.
+pub(crate) const SNAPSHOT_MAX_ATTEMPTS: u32 = 8;
+
+/// Error for a collected snapshot vector that mixes both sides.
+#[cold]
+fn snapshot_mixed_side() -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: "snapshot walk captured a mixed-side view across a side transition".to_string(),
+    }
+}
+
+/// Error returned when every bounded snapshot attempt was rejected. Carries
+/// the last rejection's reason.
+#[cold]
+fn snapshot_attempts_exhausted(price: u128, last: Option<PriceLevelError>) -> PriceLevelError {
+    let reason = match last {
+        Some(PriceLevelError::InvalidOperation { message }) => message,
+        Some(other) => other.to_string(),
+        None => "no attempt was made".to_string(),
+    };
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "snapshot of price level {price} could not collect a coherent view after \
+             {SNAPSHOT_MAX_ATTEMPTS} attempts under concurrent mutation: {reason}"
+        ),
+    }
+}
 
 /// Bit layout of the [`PriceLevel::topology`] word (issue #126): the high two
 /// bits carry the pinned-side tag, the low bits the resting-order count. Packing
@@ -708,6 +744,14 @@ impl PriceLevel {
             topology::pack(topology::tag_of(side), topology::COUNT_MASK),
             Ordering::Release,
         );
+    }
+
+    /// Resting ids grouped by order-storage shard, in snapshot-walk order
+    /// (issue #162 test seam); see `OrderQueue::debug_shard_runs`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_shard_runs(&self) -> Vec<Vec<Id>> {
+        self.orders.debug_shard_runs()
     }
 
     #[cfg(test)]
@@ -2089,14 +2133,55 @@ impl PriceLevel {
         result
     }
 
-    /// Create a snapshot of the current price level state
+    /// Create a coherent snapshot of the current price level state.
     ///
-    /// All aggregates are derived from a single materialized order vector so the
-    /// snapshot is internally consistent under concurrent mutation: the counter
-    /// fields can never disagree with a sum over the snapshot's own `orders`. We
-    /// fold the vector instead of reading the live atomic counters separately,
-    /// which would be a torn read (the atomics could advance between the counter
-    /// load and the order materialization).
+    /// # What "coherent" means
+    ///
+    /// A returned snapshot is **coherent**: its `visible_quantity`,
+    /// `hidden_quantity` and `order_count` are exactly the checked sums and the
+    /// length of its own `orders` vector, every order's own visible + hidden
+    /// total fits `u64`, and all orders rest on one side. The aggregates are
+    /// folded from the collected vector, never read from the live atomic
+    /// counters, so they can never disagree with the orders they describe.
+    ///
+    /// Coherent is **not** linearizable. The orders are collected by walking
+    /// the `DashMap` shards one at a time with no transaction over the whole
+    /// level, so under concurrent same-side admissions, cancels and resizes the
+    /// vector may combine orders observed at different instants: each captured
+    /// order is a real committed state of that order, but the set as a whole
+    /// need not match any single instant of the level. Only a concurrent
+    /// fill-or-kill match is excluded as a whole (see below). A caller that
+    /// needs a point-in-time view must quiesce mutators first.
+    ///
+    /// # Recollection policy (bounded)
+    ///
+    /// A collected vector is rejected and recollected when either
+    ///
+    /// - a side transition raced the walk and left a mixed-side view (issue
+    ///   #126), or
+    /// - its aggregates cannot be represented: a same-side quantity transfer
+    ///   between two shards (resize one order down, then another up, while the
+    ///   walk sits between them) can capture both large values, so the collected
+    ///   visible or hidden sum overflows `u64` although every committed level
+    ///   state fits (issue #162).
+    ///
+    /// The walk is attempted at most `SNAPSHOT_MAX_ATTEMPTS` (8) times. Under
+    /// sustained mutation that keeps defeating the walk, the call does not loop
+    /// indefinitely: it returns [`PriceLevelError::InvalidOperation`] and the
+    /// caller decides whether to retry later. Once such mutation pauses, the
+    /// next attempt collects a coherent vector. A failed call has no side
+    /// effects on the level; a successful one never substitutes a live counter
+    /// or any other value for an aggregate.
+    ///
+    /// # Fill-or-kill exclusion
+    ///
+    /// Every attempt runs under the fill-or-kill guard's shared side, so a
+    /// multi-maker fill-or-kill match is observed either entirely before or
+    /// entirely after the snapshot, never mid-sweep. The guard is not
+    /// poison-checked here: a snapshot stays available on a poisoned level for
+    /// diagnostics and reconstruction.
+    ///
+    /// # Order
     ///
     /// The `orders` vector is materialized in **queue-consumption order**
     /// (ascending insertion sequence — the exact order [`Self::match_order`]
@@ -2108,113 +2193,123 @@ impl PriceLevel {
     /// admission timestamp. Using the timestamp view here would let such an
     /// order sort back to its old position and wrongly regain front priority on
     /// restore.
-    #[must_use]
-    pub fn snapshot(&self) -> PriceLevelSnapshot {
-        // Hold the fill-or-kill guard's SHARED side across the materialization
-        // (issue #130) so a snapshot can never capture a multi-maker fill-or-kill
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if no attempt within the
+    /// bounded recollection policy above collected a coherent vector (a
+    /// mixed-side view or an aggregate that overflows `u64` on every attempt).
+    /// The level is left unchanged.
+    pub fn snapshot(&self) -> Result<PriceLevelSnapshot, PriceLevelError> {
+        // Hold the fill-or-kill guard's SHARED side across every attempt (issue
+        // #130) so a snapshot can never capture a multi-maker fill-or-kill
         // mid-transaction: the FOK holds the EXCLUSIVE side across its dry-run and
         // sweep, so this read waits for it to fully commit or is excluded before
         // it starts — the snapshot sees the pre- or post-FOK state, never a
         // partial sweep. Ordinary mutators (`add_order` / `update_order`) also
         // take the shared side, so they run concurrently with this read (read vs
-        // read) and are handled by the topology-epoch retry below for side
-        // transitions. `snapshot` intentionally does NOT poison-check: it stays
-        // available on a poisoned level for diagnostics / reconstruction.
+        // read) and are handled by the bounded recollection below.
+        // `snapshot` intentionally does NOT poison-check: it stays available on a
+        // poisoned level for diagnostics / reconstruction.
         let _fok = self.fok_read();
 
-        // Materialize the orders exactly once, in queue-consumption (insertion
-        // sequence) order so a snapshot round-trip re-enqueues them in identical
-        // priority order; every aggregate is derived from this same snapshot so
-        // they are mutually consistent by construction.
-        //
-        // Guard against a TORN topology (issue #126): a walk that spans a
-        // drain-then-re-admit to the opposite side could capture old-side and
-        // new-side orders together, producing a checksummed snapshot that
-        // `from_snapshot` would reject for mixed sides. `topology_epoch` is
-        // bumped on every side pin / un-pin, so if it moves across the walk we
-        // retry. The `is_single_side` fallback GUARANTEES termination: a stable
-        // epoch already implies a coherent walk (a tear requires a transition,
-        // which bumps the epoch), so we only ever loop while a walk actually came
-        // back mixed-side, which needs an in-progress opposite-side flip — once
-        // flipping stops (finite writers) the next walk is coherent and returns.
-        let orders = loop {
+        let mut last_rejection: Option<PriceLevelError> = None;
+
+        for attempt in 1..=SNAPSHOT_MAX_ATTEMPTS {
+            #[cfg(test)]
+            crate::price_level::order_queue::snapshot_hook::fire(
+                crate::price_level::order_queue::snapshot_hook::SnapshotHookEvent::AttemptStart,
+            );
+
+            // Materialize the orders in queue-consumption (insertion sequence)
+            // order so a snapshot round-trip re-enqueues them in identical
+            // priority order.
+            //
+            // Guard against a TORN topology (issue #126): a walk that spans a
+            // drain-then-re-admit to the opposite side could capture old-side and
+            // new-side orders together, producing a checksummed snapshot that
+            // `from_snapshot` would reject for mixed sides. `topology_epoch` is
+            // bumped on every side pin / un-pin, so a stable epoch implies a
+            // single-side walk; a moved epoch is only rejected when the walk
+            // actually came back mixed-side.
             let epoch_before = self.topology_epoch.load(Ordering::Acquire);
             let orders = self.snapshot_by_insertion_seq();
             let epoch_after = self.topology_epoch.load(Ordering::Acquire);
-            if epoch_before == epoch_after || Self::is_single_side(&orders) {
-                break orders;
+            if epoch_before != epoch_after && !Self::is_single_side(&orders) {
+                tracing::debug!(
+                    price = self.price,
+                    attempt,
+                    "snapshot walk captured a mixed-side view across a side transition; recollecting"
+                );
+                last_rejection = Some(snapshot_mixed_side());
+                continue;
             }
-            // A side transition raced the walk AND left a mixed-side view; retry.
-        };
 
-        let order_count = orders.len();
-
-        let mut visible_quantity: u64 = 0;
-        let mut hidden_quantity: u64 = 0;
-
-        for order in &orders {
-            // Checked arithmetic per the crate's no-saturate/no-wrap rule.
-            // `snapshot()` is infallible (changing it would ripple to
-            // `snapshot_package` / `snapshot_to_json` and every caller), so the
-            // overflow branch needs a value, not a `Result`. That branch is
-            // unreachable for any state the level can represent: the level tracks
-            // the same running total in a `u64` atomic counter, so a sum that
-            // overflows `u64` here is one the level itself could never have held.
-            // On that impossible branch we fall back to the live atomic counter —
-            // the engine's own authoritative `u64` total (best-effort, since the
-            // branch cannot occur for representable state).
-            match visible_quantity.checked_add(order.visible_quantity().as_u64()) {
-                Some(total) => visible_quantity = total,
-                None => {
-                    debug_assert!(false, "snapshot visible quantity overflow is unreachable");
-                    visible_quantity = self.visible_quantity();
+            // Every aggregate is folded from this same vector with checked
+            // arithmetic (issue #162). The walk has no transaction over the whole
+            // level, so a same-side quantity transfer between two shards can make
+            // the collected sums overflow although every committed state fits:
+            // reject that vector and recollect instead of asserting or
+            // substituting a live counter.
+            match SnapshotAggregates::from_orders(&orders) {
+                Ok(aggregates) => {
+                    // Persist the per-level statistics alongside the aggregates
+                    // so the snapshot round-trip reproduces the recorded
+                    // execution history. The clone reads the atomic counters
+                    // (best-effort, like every other read path); statistics are
+                    // independent counters, not part of the order aggregates
+                    // this snapshot guarantees coherent.
+                    return Ok(PriceLevelSnapshot::from_raw_parts_with_stats(
+                        Price::new(self.price),
+                        aggregates.visible_quantity,
+                        aggregates.hidden_quantity,
+                        aggregates.order_count,
+                        orders,
+                        (*self.stats).clone(),
+                    ));
                 }
-            }
-
-            match hidden_quantity.checked_add(order.hidden_quantity().as_u64()) {
-                Some(total) => hidden_quantity = total,
-                None => {
-                    debug_assert!(false, "snapshot hidden quantity overflow is unreachable");
-                    hidden_quantity = self.hidden_quantity();
+                Err(err) => {
+                    tracing::debug!(
+                        price = self.price,
+                        attempt,
+                        error = %err,
+                        "snapshot walk collected aggregates that do not fit u64; recollecting"
+                    );
+                    last_rejection = Some(err);
                 }
             }
         }
 
-        // Persist the per-level statistics alongside the aggregates so the
-        // snapshot round-trip reproduces the recorded execution history. The
-        // clone snapshots the eight atomic counters (best-effort, like every
-        // other read path); statistics are independent counters, not part of
-        // the queue / counter consistency invariant.
-        PriceLevelSnapshot::from_raw_parts_with_stats(
-            Price::new(self.price),
-            Quantity::new(visible_quantity),
-            Quantity::new(hidden_quantity),
-            order_count,
-            orders,
-            (*self.stats).clone(),
-        )
+        let err = snapshot_attempts_exhausted(self.price, last_rejection);
+        tracing::warn!(
+            price = self.price,
+            attempts = SNAPSHOT_MAX_ATTEMPTS,
+            error = %err,
+            "snapshot could not collect a coherent view; level unchanged"
+        );
+        Err(err)
     }
 
     /// Serialize the current price level state into a checksum-protected snapshot package.
     ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if computing the snapshot's
-    /// aggregate quantities overflows while building the package's checksummed
-    /// payload, or [`PriceLevelError::SerializationError`] if encoding the
-    /// snapshot payload to compute its SHA-256 checksum fails.
+    /// Returns [`PriceLevelError::InvalidOperation`] if [`Self::snapshot`]
+    /// cannot collect a coherent view within its bounded recollection policy,
+    /// or [`PriceLevelError::SerializationError`] if encoding the snapshot
+    /// payload to compute its SHA-256 checksum fails.
     pub fn snapshot_package(&self) -> Result<PriceLevelSnapshotPackage, PriceLevelError> {
-        PriceLevelSnapshotPackage::new(self.snapshot())
+        PriceLevelSnapshotPackage::new(self.snapshot()?)
     }
 
     /// Serialize the current price level state to JSON, including checksum metadata.
     ///
     /// # Errors
     ///
-    /// Returns [`PriceLevelError::InvalidOperation`] if building the snapshot
-    /// package overflows an aggregate quantity, or
-    /// [`PriceLevelError::SerializationError`] if the package cannot be encoded
-    /// to JSON.
+    /// Returns [`PriceLevelError::InvalidOperation`] if [`Self::snapshot`]
+    /// cannot collect a coherent view within its bounded recollection policy,
+    /// or [`PriceLevelError::SerializationError`] if the package cannot be
+    /// encoded to JSON.
     pub fn snapshot_to_json(&self) -> Result<String, PriceLevelError> {
         self.snapshot_package()?.to_json()
     }

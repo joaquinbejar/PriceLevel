@@ -14,7 +14,7 @@
 //!  - Support for diverse order types including standard limit orders, iceberg orders, post-only, fill-or-kill, and more
 //!  - Thread-safe concurrent admissions, updates (cancel / resize) and reads alongside one logical matcher per level (see [Concurrency Model](#concurrency-model))
 //!  - Lock-free ordered index (`crossbeam-skiplist`) and atomic quantity / statistics counters; order storage is a sharded `DashMap`
-//!  - Checked arithmetic on the quantity / value accessors (`total_quantity`, `executed_quantity`, `executed_value`) with typed errors; removing the remaining production panic paths (for example the `snapshot()` aggregate assertions) is tracked in #161
+//!  - Checked arithmetic on the quantity / value accessors (`total_quantity`, `executed_quantity`, `executed_value`) with typed errors, and a fallible `snapshot()` whose aggregates always agree with its own orders; removing the remaining production panic paths is tracked in #161
 //!  - Checksum-protected (SHA-256) snapshots for persistence and recovery
 //!  - Designed with domain-driven principles for financial markets
 //!  - Comprehensive test suite, including concurrent usage scenarios
@@ -82,7 +82,7 @@
 //! | [`PriceLevel::match_order`], post-only taker | No sweep and no maker write lock; its depth scan iterates order storage under `DashMap` shard **read** locks |
 //! | [`PriceLevel::add_order`] | Fill-or-kill guard's **shared** side, plus the shard write lock of the new id |
 //! | [`PriceLevel::update_order`] (every [`OrderUpdate`] variant) | Fill-or-kill guard's **shared** side, plus the shard write lock of the target id |
-//! | [`PriceLevel::snapshot`] | Fill-or-kill guard's **shared** side, plus `DashMap` shard read locks while it materializes the orders |
+//! | [`PriceLevel::snapshot`] | Fill-or-kill guard's **shared** side, plus `DashMap` shard read locks while it materializes the orders (up to 8 bounded attempts) |
 //! | Counter accessors ([`PriceLevel::visible_quantity`], [`PriceLevel::order_count`], statistics) | Atomic loads only (advisory, eventually consistent; `value_executed` subject to the fallback above) |
 //!
 //! The supported execution model:
@@ -107,7 +107,11 @@
 //!   [`PriceLevel::snapshot`] waits only behind an in-flight fill-or-kill or a
 //!   held shard lock; it walks the shards without a transaction over the whole
 //!   level, so under concurrent same-side resizes it is not a linearizable
-//!   point-in-time view (tracked in #162).
+//!   point-in-time view. It is **coherent**: its aggregates always equal the
+//!   checked sums over its own collected orders. A walk whose orders mix sides
+//!   or whose sums overflow `u64` is recollected at most 8 times in total, after
+//!   which the call returns a typed [`PriceLevelError::InvalidOperation`] rather
+//!   than looping or substituting a live counter (#162).
 //!
 //! ## Caller-Supplied Code
 //!
@@ -917,6 +921,51 @@
 //!     TradeList::from_str(&format!("Trades:[{trade};note=]]")),
 //!     Err(PriceLevelError::InvalidFormat)
 //! ));
+//! ```
+//!
+//! ## Migration Guide (fallible `PriceLevel::snapshot` — breaking)
+//!
+//! [`PriceLevel::snapshot`] walks the order shards without a transaction over
+//! the whole level, so a same-side quantity transfer between two shards during
+//! the walk (one order resized down, another up) could capture a set of orders
+//! whose visible or hidden sum overflows `u64`, even though every committed
+//! level state fits. The old code hit a `debug_assert!` in debug builds and, in
+//! release builds, silently stored the live atomic counter as the aggregate, a
+//! value that disagreed with the snapshot's own orders. It now rejects that
+//! walk, recollects a bounded number of times (8 attempts), and returns a typed
+//! error if no attempt is coherent.
+//!
+//! | v0.9 | v0.10 |
+//! |------|-------|
+//! | `level.snapshot() -> PriceLevelSnapshot` | [`level.snapshot()`](PriceLevel::snapshot) `-> Result<PriceLevelSnapshot, PriceLevelError>` |
+//! | `level.snapshot_package()`, `level.snapshot_to_json()` | Unchanged signatures; they now also return the snapshot's [`PriceLevelError::InvalidOperation`] |
+//!
+//! Semantics:
+//!
+//! - **Coherent, not linearizable.** A returned snapshot's `visible_quantity`,
+//!   `hidden_quantity` and `order_count` always equal the checked sums and the
+//!   length of its own `orders`. The orders may still combine states observed
+//!   at different instants under concurrent same-side mutation; only a
+//!   fill-or-kill match is excluded as a whole.
+//! - **Bounded retries.** A walk is recollected when it came back mixed-side
+//!   across a side transition (previously an unbounded loop until flipping
+//!   stopped) or its aggregates overflow `u64`. After 8 rejected attempts the
+//!   call returns [`PriceLevelError::InvalidOperation`] and leaves the level
+//!   unchanged; retry later or quiesce mutators first.
+//! - [`PriceLevelSnapshot::refresh_aggregates`] is now transactional: on error
+//!   no field changes (previously `order_count` was updated before a later
+//!   overflow was detected).
+//! - Snapshot format v4, the package checksum and restore order are unchanged
+//!   for every snapshot that succeeds.
+//!
+//! ```rust
+//! use pricelevel::{PriceLevel, PriceLevelError};
+//!
+//! let level = PriceLevel::new(10_000);
+//! // Before: let snapshot = level.snapshot();
+//! let snapshot = level.snapshot()?;
+//! assert_eq!(snapshot.order_count(), snapshot.orders().len());
+//! # Ok::<(), PriceLevelError>(())
 //! ```
 //!
 //! ## Migration Guide (fallible execution results and the match failure slot — breaking)
