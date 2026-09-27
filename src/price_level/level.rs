@@ -2021,10 +2021,15 @@ impl PriceLevel {
         // had been skipped — keeping counter <-> queue consistency intact and
         // preserving its price-time position for the next sweep.
         //
-        // `match_against`'s own progress fix means this guard should never fire
-        // for the iceberg/reserve states it now handles; it is defense-in-depth
-        // against any future zero-progress shape (e.g. a degenerate residual
-        // from `with_reduced_quantity(0)`).
+        // No current `OrderType` value can trigger this guard: for a positive
+        // remainder `match_against` always consumes, draws hidden, or removes
+        // the maker (pinned by `tests/parked_prefix.rs`, issue #155). It is
+        // defense-in-depth against a future zero-progress shape. The only
+        // parking that fires today is the self-trade skip. Id-keyed storage
+        // limits it to one LIVE parked entry; stale parked keys left by a
+        // cancel racing a readmission are dropped by `match_front` on first
+        // encounter, so re-scanning from the front costs at most one extra
+        // visit per step plus one per stale key (see BENCH.md).
         let mut set_aside: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
         // Per-step bookkeeping carried out of the locked decision closure. The

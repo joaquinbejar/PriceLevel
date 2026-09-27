@@ -407,3 +407,74 @@ continue to measure setup + batched operations + (for some cases)
 destruction together, as lifecycle comparisons — see the "Why a second
 harness" section above for why that is a different, and still useful,
 measurement from the per-operation numbers in this document.
+
+## Parked-maker front scans (issue #155)
+
+`OrderQueue::match_front` restarts its front scan at the lowest sequence on
+every step and skips the sequences the current sweep has parked. A prefix of
+`S` parked index keys ahead of `K` fills costs about `S * K` extra index
+visits. The parking paths:
+
+- **No-progress `SetAside`: unreachable.** The sweep parks a maker only when
+  `match_against` returns `consumed == 0`, `hidden_reduced == 0`, an
+  unchanged remainder and a residual. The loop runs only while the taker
+  remainder is positive. For that remainder `Standard`, `PostOnly`,
+  `TrailingStop`, `PeggedOrder` and `MarketToLimit` consume
+  `min(quantity, remaining)` and return no residual on a full match (a
+  zero-quantity maker is removed, not parked). `IcebergOrder` consumes on a
+  partial match and, on a full visible match, either draws a positive
+  hidden tranche (a zero-visible iceberg draws all of its hidden) or is
+  removed. `ReserveOrder` does the same with a `NonZeroU64` replenish amount.
+  This holds for every field value, so it covers shapes an update or
+  snapshot restore can produce, not only admission-validated ones. The guard
+  stays as defense in depth.
+- **Self-trade skip: one live parked key, possibly several stale ones.** It
+  parks a maker whose id equals the taker's. `match_order` rejects the taker
+  up front when that id already rests, so the skip fires only when the
+  taker's own order is admitted after that probe, during a non-`Fok` sweep
+  (a `Fok` sweep holds the level guard exclusively, blocking admission).
+  Order storage is keyed by id and admission is insert-if-absent
+  (`DuplicateOrderId`), so at most one resting order carries the taker id
+  and at most one parked key is live. Parked keys can still go stale, and
+  this is reachable under the documented model (one matcher, concurrent
+  cancels and admissions): `OrderQueue::remove` deletes the map entry,
+  releases the shard lock, and only then deletes the index key. If another
+  thread readmits the id in that gap, the same sweep parks the new
+  sequence while the old key is still indexed and still in the sweep's
+  parked set. Overlapping cancel / readmit pairs stack several such keys.
+- **`Failed`, `IdsExhausted`, `SequenceExhausted`, `Abort`** also return
+  `SetAside` but stop the sweep, so nothing is scanned again.
+
+Before the fix the front scan filtered the parked set before its stale-entry
+checks, so a stale parked key was visited on every later step until its
+paused cancel resumed. `match_front` now checks each parked key it meets
+against the map (a shard read lock taken only for parked keys, never on the
+common path with nothing parked) and removes the key from the index and from
+the parked set when its id no longer rests under that sequence. Sequences are
+never reused, so such a key can never become live again; the removal is the
+same self-heal as the existing `Vacant` and stale-front (#119) arms, and it
+leaves admission, update, cancel, replenishment tail insertion and the
+makers parked earlier in the sweep unchanged. Each stale key now costs one
+visit in total and the steady cost is one extra visit per step (the live
+parked key), `O(K + stale keys)` rather than `O(S * K)`. A full sweep cursor
+was not needed.
+
+Measured with the `#[cfg(test)]` visit counter in `match_front` (release and
+bench builds do not compile it) on the adversarial schedule in
+`overlapping_cancel_gaps_leave_stale_parked_keys_that_are_visited_once`:
+`D = 4` nested cancels, each paused in the gap by a `#[cfg(test)]` hook in
+`OrderQueue::remove` while the id is readmitted and re-parked by the same
+sweep scratch, then `K = 64` fills. No sleeps; the schedule is exact.
+
+| | Parking steps | Fills | Total |
+|---|---|---|---|
+| Before (parked set checked first) | `1 + D(D+3)/2` = 15 | `K(D+2)` = 384 | 399 |
+| After (stale parked keys dropped) | `1 + 2D` = 9 | `2K` = 128 | 137 |
+
+Visits are the metric here, not latency: the schedule needs a paused cancel,
+so it is a correctness-of-bound test rather than a latency-harness scenario.
+The other tests in `src/price_level/tests/parked_prefix.rs` pin the rest of
+the bound: `K` fills with nothing parked visit exactly `K` entries, one
+parked self-trade maker gives `2K + 2`, a demoted parked maker never forms a
+two-entry prefix, and an 800-shape grid over every variant asserts the
+no-progress shape never occurs.
