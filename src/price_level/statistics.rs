@@ -1017,6 +1017,73 @@ impl PriceLevelStatistics {
     }
 }
 
+/// Test-only layout probe (issue #154).
+///
+/// Returns `(field, byte offset, byte size)` for every field of
+/// [`PriceLevelStatistics`], in declaration order, as laid out by the compiler
+/// for the current target. Offsets come from [`std::mem::offset_of!`], so they
+/// reflect any field reordering `rustc` applied to this `repr(Rust)` struct.
+/// Used to report which fields can share a cache line; it has no production
+/// caller.
+#[cfg(test)]
+impl PriceLevelStatistics {
+    pub(crate) fn field_layout() -> [(&'static str, usize, usize); 10] {
+        use std::mem::{offset_of, size_of};
+        [
+            (
+                "orders_added",
+                offset_of!(Self, orders_added),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "orders_removed",
+                offset_of!(Self, orders_removed),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "orders_executed",
+                offset_of!(Self, orders_executed),
+                size_of::<AtomicUsize>(),
+            ),
+            (
+                "quantity_executed",
+                offset_of!(Self, quantity_executed),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "value_executed",
+                offset_of!(Self, value_executed),
+                size_of::<AtomicU128>(),
+            ),
+            (
+                "last_execution_time",
+                offset_of!(Self, last_execution_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "first_arrival_time",
+                offset_of!(Self, first_arrival_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "sum_waiting_time",
+                offset_of!(Self, sum_waiting_time),
+                size_of::<AtomicU64>(),
+            ),
+            (
+                "stats_degraded",
+                offset_of!(Self, stats_degraded),
+                size_of::<AtomicBool>(),
+            ),
+            (
+                "stats_seq",
+                offset_of!(Self, stats_seq),
+                size_of::<AtomicU64>(),
+            ),
+        ]
+    }
+}
+
 impl Default for PriceLevelStatistics {
     /// Deterministic, clock-free empty statistics with an unstamped start time;
     /// identical to [`PriceLevelStatistics::new`].
