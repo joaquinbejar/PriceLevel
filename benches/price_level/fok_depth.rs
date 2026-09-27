@@ -1,27 +1,31 @@
 //! Fill-or-kill feasibility cost versus resting depth (issue #143).
 //!
-//! Every case keeps one long-lived level at a fixed resting depth. The timed
-//! routine is one `match_order` call; the untimed per-iteration setup admits
-//! one replacement maker so the depth stays constant (`BatchSize::PerIteration`
-//! runs exactly one setup per routine, so the depth never drifts by a batch).
+//! Every case keeps one long-lived level. The timed routine is one
+//! `match_order` call that returns its `MatchResult`; `iter_batched` drops
+//! the outputs after the measured batch, so result destruction is not
+//! timed. An untimed setup asserts that the level holds exactly the stated
+//! depth when each timed call starts.
 //!
 //! * `fok_first_maker@depth` — a qty-1 FOK taker filled by the front qty-1
-//!   standard maker. The dry run only needs the front maker.
+//!   standard maker. `depth - 1` makers are seeded and the per-iteration
+//!   setup (`BatchSize::PerIteration`, one setup per routine) admits one
+//!   more, so every call starts at `depth`. The dry run only needs the
+//!   front maker.
 //! * `gtc_first_maker@depth` — the same taker with GTC: the control.
 //! * `fok_rejected@depth` — a FOK taker one unit larger than the level: the
 //!   dry run must walk every maker to prove the kill (bounded work cannot
-//!   help here; the case guards against a regression).
+//!   help here; the case guards against a regression). A kill leaves the
+//!   level unchanged.
 //! * `fok_replenish@depth` — iceberg makers (1 visible + 1,000,000 hidden):
 //!   a qty-2 FOK taker takes the front tranche (a replenishment re-sequenced
-//!   at the tail) and one unit from the next maker.
+//!   at the tail) and one unit from the next maker; the depth never changes.
 
 use criterion::{BatchSize, BenchmarkId, Criterion};
 use pricelevel::{
-    Hash32, Id, MatchOutcome, OrderType, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
+    Hash32, Id, MatchResult, OrderType, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
     TimestampMs, UuidGenerator,
 };
 use std::cell::Cell;
-use std::hint::black_box;
 use uuid::Uuid;
 
 const PRICE: u128 = 100;
@@ -63,21 +67,33 @@ fn level_of(depth: u64, make: fn(u64) -> OrderType<()>) -> PriceLevel {
     level
 }
 
+/// The timed call. It returns the whole `MatchResult`: `iter_batched`
+/// collects routine outputs and drops them only after the measured batch,
+/// so result destruction is never timed.
 fn take(
     level: &PriceLevel,
     quantity: u64,
     tif: TimeInForce,
     generator: &UuidGenerator,
-) -> MatchOutcome {
-    black_box(level.match_order(
+) -> MatchResult {
+    level.match_order(
         quantity,
         Id::from_u64(u64::MAX),
         tif,
         TakerKind::Standard,
         TimestampMs::new(2),
         generator,
-    ))
-    .outcome()
+    )
+}
+
+/// Untimed input check: the level holds exactly `depth` resting orders
+/// when the timed call starts.
+fn assert_depth(level: &PriceLevel, depth: u64) {
+    assert_eq!(
+        level.order_count() as u64,
+        depth,
+        "the timed call must start at the stated depth"
+    );
 }
 
 /// Register the fill-or-kill depth benchmarks.
@@ -90,23 +106,21 @@ pub fn register_benchmarks(c: &mut Criterion) {
             ("gtc_first_maker", TimeInForce::Gtc),
         ] {
             group.bench_function(BenchmarkId::new(name, depth), |b| {
-                let level = level_of(depth, standard);
+                // `depth - 1` seeded; the untimed setup admits one more, so
+                // every timed call starts at exactly `depth` and consumes
+                // the front maker, leaving `depth - 1` again.
+                let level = level_of(depth - 1, standard);
                 let generator = UuidGenerator::new(Uuid::nil());
-                let next_id = Cell::new(depth);
+                let next_id = Cell::new(depth - 1);
                 b.iter_batched(
                     || {
-                        // Replacement maker, untimed: depth stays `depth`
-                        // after the timed call consumes the front.
                         level
                             .add_order(standard(next_id.get()))
                             .expect("replacement");
                         next_id.set(next_id.get() + 1);
+                        assert_depth(&level, depth);
                     },
-                    |()| {
-                        let outcome = take(&level, 1, tif, &generator);
-                        debug_assert_eq!(outcome, MatchOutcome::Filled);
-                        outcome
-                    },
+                    |()| take(&level, 1, tif, &generator),
                     BatchSize::PerIteration,
                 )
             });
@@ -116,7 +130,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
             let level = level_of(depth, standard);
             let generator = UuidGenerator::new(Uuid::nil());
             // A kill leaves the level untouched: no replacement needed.
-            b.iter(|| take(&level, depth + 1, TimeInForce::Fok, &generator))
+            b.iter_batched(
+                || assert_depth(&level, depth),
+                |()| take(&level, depth + 1, TimeInForce::Fok, &generator),
+                BatchSize::SmallInput,
+            )
         });
 
         if depth >= 2 {
@@ -126,7 +144,11 @@ pub fn register_benchmarks(c: &mut Criterion) {
                 // Each call consumes one visible unit from two makers; every
                 // maker holds a million hidden units, so the level keeps its
                 // depth for the whole measurement without replacements.
-                b.iter(|| take(&level, 2, TimeInForce::Fok, &generator))
+                b.iter_batched(
+                    || assert_depth(&level, depth),
+                    |()| take(&level, 2, TimeInForce::Fok, &generator),
+                    BatchSize::SmallInput,
+                )
             });
         }
     }

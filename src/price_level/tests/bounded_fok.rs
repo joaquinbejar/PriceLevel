@@ -18,11 +18,11 @@ mod tests {
     use crate::execution::{MatchOutcome, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
     use crate::price_level::level::{
-        DryRun, PriceLevel, count_park, override_lazy_walk_budget, test_take_tail_revisits,
+        DryRun, PriceLevel, count_park, override_lazy_walk_budget, test_take_tail_revisited,
         topology_underflow,
     };
     use crate::price_level::order_queue::snapshot_hook::{self, SnapshotHookEvent};
-    use crate::price_level::order_queue::test_take_bulk_switches;
+    use crate::price_level::order_queue::test_take_bulk_switched;
     use crate::utils::alloc::test_seam;
     use crate::utils::{Price, Quantity, TimestampMs};
     use proptest::prelude::*;
@@ -438,11 +438,11 @@ mod tests {
             _ => Id::from_u64(FRESH_TAKER),
         };
 
-        test_take_tail_revisits();
-        test_take_bulk_switches();
+        test_take_tail_revisited();
+        test_take_bulk_switched();
         let bounded = level.test_dry_run(incoming, taker);
-        coverage.tail_revisits += test_take_tail_revisits();
-        coverage.bulk_switches += test_take_bulk_switches();
+        coverage.tail_revisits += u64::from(test_take_tail_revisited());
+        coverage.bulk_switches += u64::from(test_take_bulk_switched());
         let reference = reference_dry_run(&level, incoming, taker);
         prop_assert_eq!(&bounded, &reference);
         prop_assert_eq!(

@@ -174,15 +174,20 @@ state it describes is mutated. A refusal is reported as
 `PriceLevelError::CapacityExceeded { resource, additional }`: a `Copy` tag and
 a `usize`, so the report itself never allocates. Capacity arithmetic is
 checked. Covered sites: the queue views and their sort buffer (in-place
-unstable sort, no scratch), the fill-or-kill dry-run copy, the sweep's
+unstable sort, no scratch), the fill-or-kill dry run's bulk collection of
+the remaining makers and its buffer of replenished tranches (#143), the sweep's
 parked-sequence set, `MatchResult` / `TradeList` (#170), the restore
 duplicate-id set, `PriceLevelData`, snapshot `try_clone`, package JSON, the
 hex checksum, decoded order vectors and checksum strings, and the text
 parsers (#174).
 
-Proven-capacity sites that do not reserve: the dry run's `VecDeque` (built
-from the reserved vector in O(1); each step pops one maker before it pushes
-at most one residual, so it never grows), and pushes / extends that follow a
+The dry run's replenished-tranche buffer (#143) starts empty and grows one
+element at a time through the fallible `try_push_back_deque` helper,
+holding residuals by value (no `Arc`); a residual is only buffered when
+the taker still has quantity left. The lazy phase of the dry run's walk
+clones each visited maker's existing `Arc` and allocates nothing.
+
+Proven-capacity sites that do not reserve: pushes / extends that follow a
 successful reservation of their exact size.
 
 What is **not** covered, and why:
@@ -191,7 +196,7 @@ What is **not** covered, and why:
 |------------|-------|------------------------|---------------------|
 | `DashMap` entry / shard growth | `OrderQueue` admission, `try_from_vec`, restore | no stable fallible insertion API | size levels to available memory; an allocator failure aborts |
 | `SkipMap` node | `OrderQueue` index insert / re-key | no fallible API | as above |
-| `Arc::new` | admission, residual / refreshed orders, dry-run residuals, decoded snapshot orders, `stats` | fixed-size; `Arc::try_new` is unstable | as above |
+| `Arc::new` | admission, live-sweep residual / refreshed orders, decoded snapshot orders, `stats` | fixed-size; `Arc::try_new` is unstable | as above |
 | `serde_json` internals | error boxing (`serde_json::Error` is a `Box`), scratch buffers while decoding, the `io::Error` wrapper after a refused `FallibleWriter` write | dependency code | a refusal inside `serde_json` aborts; our own buffers report `CapacityExceeded` (on decode, through `serde`'s error type) |
 | error text | `InvalidOperation` / `DeserializationError` messages built for non-allocation failures | small, bounded by the failure, not input growth | none |
 | `tracing` subscriber | events | caller code (see above) | the subscriber must not allocate unboundedly; capacity refusals in `snapshot` and the fill-or-kill dry run are returned without an event |

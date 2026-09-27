@@ -777,14 +777,15 @@ enum DryRunIsolation {
 
 #[cfg(test)]
 thread_local! {
-    static DRY_RUN_TAIL_REVISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static DRY_RUN_TAIL_REVISITED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Test coverage probe (issue #143): replenished tranches the dry run has
-/// revisited from its tail buffer on this thread since the last call.
+/// Test coverage probe (issue #143): whether the dry run has revisited a
+/// replenished tranche from its tail buffer on this thread since the last
+/// call. A flag, not a counter, so the probe does no arithmetic.
 #[cfg(test)]
-pub(crate) fn test_take_tail_revisits() -> u64 {
-    DRY_RUN_TAIL_REVISITS.with(|cell| cell.replace(0))
+pub(crate) fn test_take_tail_revisited() -> bool {
+    DRY_RUN_TAIL_REVISITED.with(|cell| cell.replace(false))
 }
 
 /// Terminal epoch value (issue #165): an epoch never moves past it, and a
@@ -2193,7 +2194,7 @@ impl PriceLevel {
                 &resting_order
             } else if let Some(requeued) = tail.pop_front() {
                 #[cfg(test)]
-                DRY_RUN_TAIL_REVISITS.with(|cell| cell.set(cell.get() + 1));
+                DRY_RUN_TAIL_REVISITED.with(|cell| cell.set(true));
                 residual = requeued;
                 &residual
             } else {

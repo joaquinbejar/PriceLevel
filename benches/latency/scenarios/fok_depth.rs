@@ -111,6 +111,7 @@ fn assert_healthy(level: &PriceLevel, context: &str) {
 /// Runs every fill-or-kill depth case and the contention pair.
 #[must_use]
 pub fn run(config: &Config) -> Vec<ScenarioReport> {
+    check_fifo_gate();
     let mut reports = Vec::new();
     for depth in DEPTHS {
         reports.push(first_maker(config, depth, TimeInForce::Fok));
@@ -266,9 +267,10 @@ fn replenish(config: &Config, depth: u64) -> ScenarioReport {
 /// * `ambiguous`: `m` falls inside `W`'s bracket (concurrent adds).
 ///
 /// A matcher maker consumed out of id order is counted as a violation too.
-/// `PL_LATENCY_STRICT_FIFO=1` turns any anomaly into a hard failure that
-/// prints every classified event; it is off by default so an unfair
-/// scheduler cannot fail `cargo test --all-targets`.
+/// A proven violation or an out-of-order fill always fails the run (see
+/// [`fifo_gate`]). `PL_LATENCY_STRICT_FIFO=1` additionally turns starvation
+/// events into a hard failure that prints every classified event; it is off
+/// by default so an unfair scheduler cannot fail `cargo test --all-targets`.
 fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioReport> {
     let samples = config.contention_ops;
     let level = Arc::new(level_of(CONTENTION_DEPTH, standard));
@@ -359,9 +361,9 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
     } else {
         "gtc"
     };
-    if config.strict_fifo && anomalies.any() {
+    if let Err(reason) = fifo_gate(&anomalies, config.strict_fifo) {
         panic!(
-            "PL_LATENCY_STRICT_FIFO: writers_during_{tag}: {anomalies}\nevents (writer id, matcher front id, bracket [done_before, started_after], class):\n{}",
+            "writers_during_{tag}: {reason}: {anomalies}\nevents (writer id, matcher front id, bracket [done_before, started_after], class):\n{}",
             anomalies.events.join("\n")
         );
     }
@@ -387,6 +389,70 @@ fn writers_during(config: &Config, matcher_tif: TimeInForce) -> Vec<ScenarioRepo
             note,
         ),
     ]
+}
+
+/// Decides whether a `writers_during` run fails (issue #206 review).
+///
+/// A proven FIFO violation or an out-of-order matcher fill is a correctness
+/// failure and always fails the run. Starvation events (a writer order that
+/// was the proven front when filled, an ambiguous classification, a cancel
+/// that found nothing) are expected under an unfair lock and only fail when
+/// `strict` (`PL_LATENCY_STRICT_FIFO=1`) is set.
+fn fifo_gate(anomalies: &Anomalies, strict: bool) -> Result<(), &'static str> {
+    if anomalies.violations() {
+        return Err("FIFO violation");
+    }
+    if strict && anomalies.any() {
+        return Err("PL_LATENCY_STRICT_FIFO: starvation anomaly");
+    }
+    Ok(())
+}
+
+/// Self-check of [`fifo_gate`], run at the start of every `fok_depth` group
+/// (this bench target has `harness = false`, so `#[test]` functions in it
+/// would never run; `cargo test --all-targets` does run its `main`).
+fn check_fifo_gate() {
+    let clean = Anomalies::default();
+    assert_eq!(fifo_gate(&clean, false), Ok(()));
+    assert_eq!(fifo_gate(&clean, true), Ok(()));
+
+    let starved = Anomalies {
+        writer_consumed: 1,
+        proven_front: 1,
+        cancel_missing: 1,
+        ..Anomalies::default()
+    };
+    assert_eq!(fifo_gate(&starved, false), Ok(()), "starvation is counted");
+    assert!(
+        fifo_gate(&starved, true).is_err(),
+        "strict fails on starvation"
+    );
+
+    let ambiguous = Anomalies {
+        writer_consumed: 1,
+        ambiguous: 1,
+        ..Anomalies::default()
+    };
+    assert_eq!(fifo_gate(&ambiguous, false), Ok(()));
+    assert!(fifo_gate(&ambiguous, true).is_err());
+
+    let violation = Anomalies {
+        writer_consumed: 1,
+        proven_violation: 1,
+        ..Anomalies::default()
+    };
+    assert_eq!(
+        fifo_gate(&violation, false),
+        Err("FIFO violation"),
+        "a proven violation fails with the default config"
+    );
+    assert_eq!(fifo_gate(&violation, true), Err("FIFO violation"));
+
+    let out_of_order = Anomalies {
+        out_of_order: 1,
+        ..Anomalies::default()
+    };
+    assert_eq!(fifo_gate(&out_of_order, false), Err("FIFO violation"));
 }
 
 /// What the matcher consumed, in call order (issue #206).
@@ -482,6 +548,12 @@ struct Anomalies {
 }
 
 impl Anomalies {
+    /// Correctness failures: a proven FIFO violation or an out-of-order
+    /// matcher fill. Never tolerated, whatever the strict flag says.
+    fn violations(&self) -> bool {
+        self.proven_violation > 0 || self.out_of_order > 0
+    }
+
     fn any(&self) -> bool {
         self.writer_consumed > 0 || self.cancel_missing > 0 || self.out_of_order > 0
     }

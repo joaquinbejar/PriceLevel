@@ -1271,20 +1271,27 @@ rounds. Times are microseconds.
 | writer_cancel_during_gtc@10000 | 0.12 | 0.96 | 2.67 | 0.42 | 1.33 | 2.83 |
 
 Criterion (`PriceLevel - FOK depth`, `benches/price_level/fok_depth.rs`,
-same workload, `BatchSize::PerIteration`; two interleaved rounds, point
-estimates):
+same workload; two interleaved rounds, point estimates; load averages 2.8
+to 3.6; base is `origin/main` c4a1ab1). Every timed call starts at exactly
+the stated depth (asserted in the untimed setup; the first-maker cases seed
+`depth - 1` makers and admit one per iteration), and the routine returns
+the `MatchResult`, which `iter_batched` drops after the measured batch, so
+result destruction is not timed. An earlier revision of this table timed
+calls at `depth + 1` and included the result's drop.
 
 | Case | Base | New |
 |---|---|---|
-| fok_first_maker/1 | 1.49 / 1.59 µs | 270 / 280 ns |
-| fok_first_maker/100 | 2.77 / 2.86 µs | 314 / 282 ns |
-| fok_first_maker/10000 | 150 / 166 µs | 310 / 308 ns |
-| gtc_first_maker/10000 | 250 / 263 ns | 259 / 258 ns |
-| fok_rejected/1 | 1.33 / 1.52 µs | 65 / 68 ns |
-| fok_rejected/100 | 2.55 / 2.75 µs | 2.72 / 2.84 µs |
-| fok_rejected/10000 | 164 / 172 µs | 188 / 179 µs |
-| fok_replenish/100 | 2.84 / 2.86 µs | 616 / 624 ns |
-| fok_replenish/10000 | 147 / 155 µs | 778 / 666 ns |
+| fok_first_maker/1 | 1.48 / 1.47 µs | 257 / 253 ns |
+| gtc_first_maker/1 | 207 / 208 ns | 207 / 206 ns |
+| fok_rejected/1 | 1.29 / 1.28 µs | 66 / 66 ns |
+| fok_first_maker/100 | 2.61 / 2.62 µs | 260 / 273 ns |
+| gtc_first_maker/100 | 212 / 212 ns | 210 / 210 ns |
+| fok_rejected/100 | 2.55 / 2.54 µs | 2.68 / 2.70 µs |
+| fok_replenish/100 | 2.74 / 2.70 µs | 599 / 593 ns |
+| fok_first_maker/10000 | 144.7 / 146.1 µs | 280 / 277 ns |
+| gtc_first_maker/10000 | 227 / 231 ns | 229 / 228 ns |
+| fok_rejected/10000 | 163.3 / 164.6 µs | 169.8 / 169.5 µs |
+| fok_replenish/10000 | 146.9 / 148.4 µs | 642 / 640 ns |
 
 ### Reading
 
@@ -1298,8 +1305,8 @@ estimates):
   completes about 350,000 to 480,000 FOK calls per second instead of about
   6,300, so the writer meets a short exclusive section far more often.
 - **Regression: a FOK that must walk the whole level** (the rejected case)
-  is slower by the lazy prefix plus per-step overhead: Criterion +4 to +14%
-  at depth 10,000 and +3 to +7% at depth 100; in the latency harness +18%
+  is slower by the lazy prefix plus per-step overhead: Criterion +3 to +4%
+  at depth 10,000 and +5 to +6% at depth 100; in the latency harness +18%
   at p50 at depth 10,000, with a higher p99 under this host's load. An
   interleaved release micro-benchmark of the two dry runs alone measured
   +3 to +5% at depth 10,000. The lazy-only walk (no bulk switch) measured

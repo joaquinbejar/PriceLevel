@@ -243,14 +243,15 @@ pub(crate) struct SeqWalk<'a> {
 
 #[cfg(test)]
 thread_local! {
-    static SEQ_WALK_BULK_SWITCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static SEQ_WALK_BULK_SWITCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Test coverage probe (issue #143): `SeqWalk`s that switched to the bulk
-/// continuation on this thread since the last call.
+/// Test coverage probe (issue #143): whether a `SeqWalk` switched to the
+/// bulk continuation on this thread since the last call. A flag, not a
+/// counter, so the probe does no arithmetic.
 #[cfg(test)]
-pub(crate) fn test_take_bulk_switches() -> u64 {
-    SEQ_WALK_BULK_SWITCHES.with(|cell| cell.replace(0))
+pub(crate) fn test_take_bulk_switched() -> bool {
+    SEQ_WALK_BULK_SWITCHED.with(|cell| cell.replace(false))
 }
 
 impl SeqWalk<'_> {
@@ -269,7 +270,7 @@ impl SeqWalk<'_> {
         }
         let Some(lazy_left) = self.lazy_left.checked_sub(1) else {
             #[cfg(test)]
-            SEQ_WALK_BULK_SWITCHES.with(|cell| cell.set(cell.get() + 1));
+            SEQ_WALK_BULK_SWITCHED.with(|cell| cell.set(true));
             let mut bulk = self.queue.collect_pairs_after(self.last_seq)?.into_iter();
             let first = bulk.next().map(|(_, order)| order);
             self.bulk = Some(bulk);

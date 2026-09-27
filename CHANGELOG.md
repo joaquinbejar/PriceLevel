@@ -362,7 +362,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   144,505 us to 15 us; the remaining unfairness is #206). The FOK verdict
   and the preflight order are unchanged.
   - **Regression: a FOK that must visit every maker** (a rejected FOK) is
-    slower. Criterion: +4 to +14% at depth 10,000, +3 to +7% at depth 100.
+    slower. Criterion: +3 to +4% at depth 10,000, +5 to +6% at depth 100.
     Latency harness at depth 10,000 (median of three interleaved rounds on
     an unpinned host at load averages 5.9 to 9.1, so the tails are
     load-sensitive): p50 173 to 205 us, p99 217 to 581 us, p99.9 585 to
