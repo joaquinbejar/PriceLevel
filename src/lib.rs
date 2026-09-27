@@ -851,24 +851,42 @@
 //!   constructors are nameable (it was previously reachable only through
 //!   [`PriceLevel::stats`] and [`PriceLevelSnapshot::statistics`]).
 //!
-//! A [`UnixClock`] over the OS clock converts with
-//! [`TimestampMs::try_from_system_time`] (checked `u64` narrowing; pre-epoch is
-//! a typed error). Note that `SystemTime::now` itself can panic inside `std`:
+//! A conforming [`UnixClock`] must not panic. `std::time::SystemTime::now`
+//! can panic inside `std` if the platform clock call fails, so an
+//! implementation built on it does **not** meet that contract. The simplest
+//! path needs no clock trait: read the time in your own code (with whatever
+//! failure policy your application accepts), convert it with the checked
+//! [`TimestampMs::try_from_system_time`] (pre-epoch and `u64` overflow are
+//! typed errors), and pass the explicit timestamp to the `_at` APIs or
+//! [`Trade::with_timestamp`]. A clock you inject for tests or replay can be a
+//! fixed value:
 //!
 //! ```rust
 //! use pricelevel::{PriceLevelError, PriceLevelStatistics, TimestampMs, UnixClock};
+//! use std::time::{Duration, UNIX_EPOCH};
 //!
-//! struct WallClock;
+//! // Explicit-timestamp path: the application owns the clock read.
+//! // (`UNIX_EPOCH + ...` stands in for a time your code already read.)
+//! let read_by_caller = UNIX_EPOCH + Duration::from_millis(1_716_000_000_500);
+//! let now = TimestampMs::try_from_system_time(read_by_caller)?;
 //!
-//! impl UnixClock for WallClock {
+//! let stats = PriceLevelStatistics::new_at(TimestampMs::new(1_716_000_000_000));
+//! stats.record_execution(10, 100, 0, 1_716_000_000_000)?;
+//! assert_eq!(stats.time_since_last_execution_at(now)?, Some(500));
+//! stats.reset_at(now);
+//!
+//! // Injected clock path: a fixed clock that cannot panic.
+//! struct FixedClock(TimestampMs);
+//!
+//! impl UnixClock for FixedClock {
 //!     fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
-//!         TimestampMs::try_from_system_time(std::time::SystemTime::now())
+//!         Ok(self.0)
 //!     }
 //! }
 //!
-//! let stats = PriceLevelStatistics::new_at(TimestampMs::new(1_716_000_000_000));
-//! assert_eq!(stats.time_since_last_execution(&WallClock)?, None);
-//! stats.reset(&WallClock)?;
+//! stats.reset(&FixedClock(now))?;
+//! assert_eq!(stats.first_arrival_time(), now.as_u64());
+//! assert_eq!(stats.time_since_last_execution(&FixedClock(now))?, None);
 //! # Ok::<(), PriceLevelError>(())
 //! ```
 //!

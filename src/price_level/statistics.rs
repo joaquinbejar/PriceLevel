@@ -635,12 +635,55 @@ impl PriceLevelStatistics {
     ///
     /// Returns [`PriceLevelError::InvalidOperation`] if `now` is earlier than
     /// the last execution time (a clock running behind the recorded execution),
-    /// rather than conflating it with the "no execution" case.
+    /// rather than conflating it with the "no execution" case. With a
+    /// concurrent matcher, a `now` the caller sampled before a fill that lands
+    /// before this call's load is reported this way; prefer
+    /// [`time_since_last_execution`](Self::time_since_last_execution), which
+    /// loads the last execution before sampling its clock.
     pub fn time_since_last_execution_at(
         &self,
         now: TimestampMs,
     ) -> Result<Option<u64>, PriceLevelError> {
         let last = self.last_execution_time.load(Ordering::Relaxed);
+        Self::elapsed_since_execution(last, now)
+    }
+
+    /// Milliseconds elapsed since the most recent execution, reading the
+    /// current time once from a caller-supplied [`UnixClock`].
+    ///
+    /// Returns `Ok(None)` when no execution has been recorded yet; the clock is
+    /// not read in that case.
+    ///
+    /// `last_execution_time` is loaded **once, before** the clock is sampled,
+    /// and that same value is used for the difference. A fill recorded by a
+    /// concurrent matcher after the load therefore cannot make a healthy clock
+    /// reading look earlier than the last execution: the result is measured
+    /// from the execution observed at the load.
+    ///
+    /// # Errors
+    ///
+    /// Returns the clock's error unchanged, or
+    /// [`PriceLevelError::InvalidOperation`] if the clock reports a time
+    /// earlier than the execution loaded before it was read.
+    pub fn time_since_last_execution<C>(&self, clock: &C) -> Result<Option<u64>, PriceLevelError>
+    where
+        C: UnixClock + ?Sized,
+    {
+        let last = self.last_execution_time.load(Ordering::Relaxed);
+        if last == 0 {
+            return Ok(None);
+        }
+        let now = clock.try_now_ms()?;
+        Self::elapsed_since_execution(last, now)
+    }
+
+    /// Shared elapsed-time computation over an already-loaded
+    /// `last_execution_time` (`0` means no execution) and a sampled `now`.
+    #[inline]
+    fn elapsed_since_execution(
+        last: u64,
+        now: TimestampMs,
+    ) -> Result<Option<u64>, PriceLevelError> {
         if last == 0 {
             return Ok(None);
         }
@@ -650,27 +693,6 @@ impl PriceLevelStatistics {
             .ok_or_else(|| PriceLevelError::InvalidOperation {
                 message: format!("current time {now} is before the last execution time {last}"),
             })
-    }
-
-    /// Milliseconds elapsed since the most recent execution, reading the
-    /// current time once from a caller-supplied [`UnixClock`].
-    ///
-    /// Returns `Ok(None)` when no execution has been recorded yet; the clock is
-    /// not read in that case.
-    ///
-    /// # Errors
-    ///
-    /// Returns the clock's error unchanged, or
-    /// [`PriceLevelError::InvalidOperation`] as described on
-    /// [`time_since_last_execution_at`](Self::time_since_last_execution_at).
-    pub fn time_since_last_execution<C>(&self, clock: &C) -> Result<Option<u64>, PriceLevelError>
-    where
-        C: UnixClock + ?Sized,
-    {
-        if self.last_execution_time.load(Ordering::Relaxed) == 0 {
-            return Ok(None);
-        }
-        self.time_since_last_execution_at(clock.try_now_ms()?)
     }
 
     /// Reset all statistics to zero and re-stamp `first_arrival_time` with the

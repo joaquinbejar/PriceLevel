@@ -219,6 +219,52 @@ mod tests {
         assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
     }
 
+    /// Clock that, when sampled, lets a concurrent matcher thread record a fill
+    /// and waits for it to finish before returning its reading: a fill lands
+    /// exactly between the reader's `last_execution_time` load and its clock
+    /// sample, deterministically (barriers, no sleeps).
+    struct InterleavingClock {
+        now: u64,
+        fill_may_start: std::sync::Barrier,
+        fill_done: std::sync::Barrier,
+    }
+
+    impl UnixClock for InterleavingClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            self.fill_may_start.wait();
+            self.fill_done.wait();
+            Ok(TimestampMs::new(self.now))
+        }
+    }
+
+    #[test]
+    fn test_time_since_last_execution_fill_between_load_and_clock_sample() {
+        // Review regression (#171): last = 100, clock samples 150, then a
+        // concurrent fill at 200 lands before the difference is computed. The
+        // clock is healthy, so the result must be measured from the execution
+        // observed before sampling (50 ms), not an InvalidOperation.
+        let stats = PriceLevelStatistics::new();
+        stats.record_execution(1, 1, 0, 100).unwrap();
+        let clock = InterleavingClock {
+            now: 150,
+            fill_may_start: std::sync::Barrier::new(2),
+            fill_done: std::sync::Barrier::new(2),
+        };
+
+        let elapsed = thread::scope(|scope| {
+            scope.spawn(|| {
+                clock.fill_may_start.wait();
+                stats.record_execution(1, 1, 0, 200).unwrap();
+                clock.fill_done.wait();
+            });
+            stats.time_since_last_execution(&clock)
+        });
+
+        assert_eq!(elapsed.unwrap(), Some(50));
+        // The concurrent fill was recorded.
+        assert_eq!(stats.last_execution_time(), 200);
+    }
+
     #[test]
     fn test_failed_reset_leaves_statistics_unchanged() {
         let stats = PriceLevelStatistics::new_at(TimestampMs::new(NOW - 10_000));
