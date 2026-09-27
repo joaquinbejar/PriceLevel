@@ -700,6 +700,51 @@ mod tests {
         }
     }
 
+    /// v4 package written by the pre-#201 (allocating `to_string` / `to_hex`)
+    /// serializer, with UUID / ULID / sequential ids at their edges and
+    /// non-trivial `user_id` hashes.
+    const FIXTURE_V4_MIXED_IDS_PRE_201: &str =
+        include_str!("fixtures/snapshot_v4_mixed_ids_pre_201.json");
+
+    #[test]
+    fn test_snapshot_fixture_v4_mixed_ids_is_byte_identical_after_issue_201() {
+        let fixture = FIXTURE_V4_MIXED_IDS_PRE_201.trim();
+        let snapshot = restore_fixture(
+            fixture,
+            SNAPSHOT_FORMAT_VERSION,
+            "b9686549483f501300adf65d7a96028e4eebfd0551318bd54bd18e7d44ea4d5a",
+        );
+        let kinds: Vec<(bool, bool, bool)> = snapshot
+            .orders()
+            .iter()
+            .map(|order| {
+                let id = order.id();
+                (id.is_uuid(), id.is_ulid(), id.is_sequential())
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (true, false, false),
+                (true, false, false),
+                (true, false, false),
+                (false, true, false),
+                (false, true, false),
+                (false, true, false),
+                (false, false, true),
+                (false, false, true),
+                (false, false, true),
+            ]
+        );
+
+        // The stack-buffer serializer re-emits the exact pre-#201 bytes, so
+        // the stored checksum matches and the package JSON is unchanged.
+        let package = PriceLevelSnapshotPackage::from_json(fixture).expect("fixture parses");
+        assert_eq!(package.to_json().expect("re-encode"), fixture);
+        let repackaged = PriceLevelSnapshotPackage::new(snapshot).expect("repackage");
+        assert_eq!(repackaged.to_json().expect("re-encode"), fixture);
+    }
+
     #[test]
     fn test_snapshot_fixture_tampered_value_is_rejected() {
         // Bumping the legacy value without re-signing must still fail the pinned

@@ -3,6 +3,7 @@ use crate::utils::TimestampMs;
 use crate::utils::entropy::{EntropySource, UnixClock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::io::Write as _;
 use std::str::FromStr;
 use ulid::Ulid;
 use uuid::Uuid;
@@ -75,32 +76,155 @@ impl FromStr for Id {
     }
 }
 
+/// Size of the stack buffer [`Id::encode_text`] writes into: the widest
+/// text form, a hyphenated UUID (36 characters). A ULID (26) and a decimal
+/// `u64` (at most 20) both fit in its prefix.
+const ID_TEXT_MAX_LEN: usize = uuid::fmt::Hyphenated::LENGTH;
+
+impl Id {
+    /// Writes the canonical text of this id into `buf` and returns it as a
+    /// borrowed `&str`, without allocating (issue #201).
+    ///
+    /// The text is byte-identical to the pre-#201 `to_string` form and is
+    /// exactly what [`FromStr`] parses back:
+    ///
+    /// - [`Id::Uuid`]: hyphenated lowercase (`Uuid::hyphenated().encode_lower`);
+    /// - [`Id::Ulid`]: 26-character Crockford Base32 (`Ulid::array_to_str`);
+    /// - [`Id::Sequential`]: plain decimal, no sign or leading zeros.
+    ///
+    /// # Errors
+    ///
+    /// [`fmt::Error`] if the fixed buffer prefix for a ULID or decimal cannot
+    /// be borrowed or the decimal digits are not UTF-8. Neither can happen
+    /// (both prefixes are shorter than the buffer and digits are ASCII); the
+    /// typed error keeps the path panic-free.
+    #[inline]
+    fn encode_text<'b>(&self, buf: &'b mut [u8; ID_TEXT_MAX_LEN]) -> Result<&'b str, fmt::Error> {
+        match self {
+            // `encode_lower` requires a buffer of at least
+            // `Hyphenated::LENGTH` bytes; `buf` is exactly that long by type.
+            Self::Uuid(uuid) => Ok(uuid.hyphenated().encode_lower(buf)),
+            Self::Ulid(ulid) => {
+                let prefix = buf
+                    .first_chunk_mut::<{ ulid::ULID_LEN }>()
+                    .ok_or(fmt::Error)?;
+                Ok(ulid.array_to_str(prefix))
+            }
+            Self::Sequential(value) => {
+                // `std`'s integer formatting writes straight into the slice
+                // through `io::Write for &mut [u8]` (no heap), so the digits
+                // are exactly `value.to_string()`. The unwritten tail left in
+                // `rest` gives the used length by checked subtraction.
+                let capacity = buf.len();
+                let mut rest: &mut [u8] = buf;
+                write!(rest, "{value}").map_err(|_| fmt::Error)?;
+                let used = capacity.checked_sub(rest.len()).ok_or(fmt::Error)?;
+                let digits = buf.get(..used).ok_or(fmt::Error)?;
+                std::str::from_utf8(digits).map_err(|_| fmt::Error)
+            }
+        }
+    }
+}
+
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Uuid(uuid) => write!(f, "{uuid}"),
-            Self::Ulid(ulid) => write!(f, "{ulid}"),
-            Self::Sequential(id) => write!(f, "{id}"),
+        let mut buf = [0u8; ID_TEXT_MAX_LEN];
+        match self.encode_text(&mut buf) {
+            Ok(text) => f.write_str(text),
+            // Unreachable in practice; fall back to the components' own
+            // `Display` so `to_string` never observes an encoder error.
+            Err(fmt::Error) => match self {
+                Self::Uuid(uuid) => write!(f, "{uuid}"),
+                Self::Ulid(ulid) => write!(f, "{ulid}"),
+                Self::Sequential(id) => write!(f, "{id}"),
+            },
         }
     }
 }
 
 impl Serialize for Id {
+    /// Serializes the canonical text through a stack buffer: no per-id heap
+    /// allocation (issue #201). The wire form is unchanged.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        let mut buf = [0u8; ID_TEXT_MAX_LEN];
+        let text = self
+            .encode_text(&mut buf)
+            .map_err(|_| serde::ser::Error::custom("failed to encode Id text"))?;
+        serializer.serialize_str(text)
+    }
+}
+
+/// Serde visitor for [`Id`]: parses the borrowed string through
+/// [`Id::from_str`] (issue #178 shape rules) without copying it.
+struct IdVisitor;
+
+impl serde::de::Visitor<'_> for IdVisitor {
+    type Value = Id;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a string")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        Id::from_str(v).map_err(E::custom)
+    }
+
+    /// Owned-string fallback for deserializers that only hand out `String`s;
+    /// parses in place without a further copy.
+    fn visit_string<E>(self, v: String) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_str(&v)
+    }
+
+    /// UTF-8 byte input, accepted exactly as `String`'s visitor accepts it
+    /// (the pre-#201 `String::deserialize` path): invalid UTF-8 is an
+    /// `invalid_value` error naming the bytes, valid text goes through
+    /// [`Id::from_str`]. `char` input needs no override: the default
+    /// `visit_char` forwards to `visit_str`.
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        match std::str::from_utf8(v) {
+            Ok(s) => self.visit_str(s),
+            Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
+        }
+    }
+
+    /// Borrowed UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_borrowed_bytes<E>(self, v: &[u8]) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(v)
+    }
+
+    /// Owned UTF-8 byte input; same rules as `visit_bytes`.
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Id, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_bytes(&v)
     }
 }
 
 impl<'de> Deserialize<'de> for Id {
+    /// Deserializes through a borrowing `str` visitor: input is parsed in place
+    /// (issue #201), with the exact #178 shape-based grammar of
+    /// [`Id::from_str`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Self::from_str(&s).map_err(serde::de::Error::custom)
+        deserializer.deserialize_str(IdVisitor)
     }
 }
 
@@ -808,6 +932,148 @@ mod tests {
             #[test]
             fn prop_from_str_never_panics(text in ".{0,48}") {
                 let _ = Id::from_str(&text);
+            }
+
+            // ---- issue #201: stack-buffer text / serde equivalence ----
+
+            #[test]
+            fn prop_display_is_byte_identical_to_pre_201_form(id in any_id()) {
+                let expected = reference_text(id);
+                prop_assert_eq!(id.to_string(), expected.clone());
+                let mut buf = [0u8; super::super::ID_TEXT_MAX_LEN];
+                prop_assert_eq!(id.encode_text(&mut buf), Ok(expected.as_str()));
+                let json = serde_json::to_string(&id)
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
+                prop_assert_eq!(json, reference_json(id));
+            }
+
+            #[test]
+            fn prop_deserialize_matches_from_str(text in id_like_text()) {
+                let expected = Id::from_str(&text).ok();
+                let json = serde_json::to_string(&text)
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
+                // Borrowed path (`visit_str`).
+                prop_assert_eq!(serde_json::from_str::<Id>(&json).ok(), expected);
+                // Reader path (scratch-buffer `visit_str`).
+                prop_assert_eq!(serde_json::from_reader::<_, Id>(json.as_bytes()).ok(), expected);
+                // Owned path (`visit_string`).
+                let value = serde_json::Value::String(text.clone());
+                prop_assert_eq!(serde_json::from_value::<Id>(value).ok(), expected);
+            }
+        }
+
+        /// The pre-#201 allocating text form (test-only reference).
+        fn reference_text(id: Id) -> String {
+            match id {
+                Id::Uuid(uuid) => uuid.to_string(),
+                Id::Ulid(ulid) => ulid.to_string(),
+                Id::Sequential(n) => n.to_string(),
+            }
+        }
+
+        /// The pre-#201 JSON form: a string holding [`reference_text`].
+        fn reference_json(id: Id) -> String {
+            format!("\"{}\"", reference_text(id))
+        }
+
+        /// Arbitrary strings plus every id shape and its near misses, so the
+        /// #178 shape rules are exercised on valid and invalid input alike.
+        fn id_like_text() -> impl Strategy<Value = String> {
+            prop_oneof![
+                any_id().prop_map(reference_text),
+                any_id().prop_map(|id| reference_text(id).to_uppercase()),
+                any_id().prop_map(|id| format!("+{}", reference_text(id))),
+                any::<u128>().prop_map(|v| Uuid::from_u128(v).simple().to_string()),
+                any::<u128>().prop_map(|v| Uuid::from_u128(v).urn().to_string()),
+                "[0-9A-Za-z]{26}",
+                "[0-9]{0,24}",
+                ".{0,48}",
+            ]
+        }
+
+        #[test]
+        fn test_encode_text_sequential_width_boundaries() {
+            let mut power: u64 = 1;
+            let mut values = vec![0, u64::MAX - 1, u64::MAX];
+            loop {
+                values.extend([power - 1, power, power + 1]);
+                match power.checked_mul(10) {
+                    Some(next) => power = next,
+                    None => break,
+                }
+            }
+            for value in values {
+                let id = Id::sequential(value);
+                let mut buf = [0u8; super::super::ID_TEXT_MAX_LEN];
+                assert_eq!(id.encode_text(&mut buf), Ok(value.to_string().as_str()));
+            }
+        }
+
+        #[test]
+        fn test_deserialize_rejects_non_string_with_serde_type_error() {
+            let err = serde_json::from_str::<Id>("42")
+                .err()
+                .map(|e| e.to_string());
+            assert_eq!(
+                err.as_deref(),
+                Some("invalid type: integer `42`, expected a string at line 1 column 2")
+            );
+        }
+
+        #[test]
+        fn test_deserialize_bytes_and_char_match_pre_201_string_path() {
+            use crate::utils::encode::serde_parity::assert_byte_and_char_parity;
+            let texts = [
+                reference_text(Id::sequential(1)),
+                reference_text(Id::sequential(u64::MAX)),
+                reference_text(Id::from_uuid(Uuid::from_u128(0x0123_4567_89ab_cdef))),
+                reference_text(Id::from_ulid(Ulid(u128::MAX >> 2))),
+                "00000000000000000000000000".to_string(),
+                "+7".to_string(),
+                "not-an-id".to_string(),
+                String::new(),
+            ];
+            for text in &texts {
+                assert_byte_and_char_parity::<Id>(text.as_bytes(), &[]);
+            }
+            // Invalid UTF-8 and single-char input.
+            assert_byte_and_char_parity::<Id>(&[0xff, b'1'], &['7', '0', 'x', 'é']);
+            assert_byte_and_char_parity::<Id>(&[b'1', 0xc3], &[]);
+        }
+
+        #[test]
+        fn test_deserialize_bytes_accepts_utf8_like_base() {
+            use serde::Deserialize;
+            use serde::de::value::{BytesDeserializer, Error as ValueError};
+            let de = BytesDeserializer::<ValueError>::new(b"1");
+            assert_eq!(Id::deserialize(de).ok(), Some(Id::sequential(1)));
+            let bad = BytesDeserializer::<ValueError>::new(&[0xff]);
+            assert_eq!(
+                Id::deserialize(bad).err().map(|e| e.to_string()).as_deref(),
+                Some("invalid value: byte array, expected a string")
+            );
+        }
+
+        #[test]
+        fn test_deserialize_error_carries_input() {
+            let err = serde_json::from_str::<Id>("\"not-an-id\"")
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(err.contains("not-an-id"), "{err}");
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+            #[test]
+            fn prop_escaped_json_uses_owned_fallback(id in any_id()) {
+                // An escaped character forces serde_json to unescape into an
+                // owned scratch buffer; the result must still match.
+                let text = reference_text(id);
+                let mut chars = text.chars();
+                let first = chars.next().map_or(0, u32::from);
+                let json = format!("\"\\u{first:04x}{}\"", chars.as_str());
+                prop_assert_eq!(serde_json::from_str::<Id>(&json).ok(), Some(id));
             }
         }
     }
