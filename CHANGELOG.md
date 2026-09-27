@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of being masked. UUID v4 version/variant bits and the ULID layout
   are unchanged.
 
+- **`Id::from_str` disambiguates by shape (#178).** The parser (and therefore
+  `Id`'s serde `Deserialize`, which goes through it) now tries a 26-character
+  ULID first, then any UUID text form, and only then a decimal `u64`.
+  Previously `u64` came first, so an all-digit ULID such as the nil ULID
+  `00000000000000000000000000` parsed as `Sequential` and `Display` →
+  `FromStr` was not an identity. Now `id.to_string().parse::<Id>() == Ok(id)`
+  for every `Id`. Inputs that change meaning: 26-character all-digit texts
+  with at least six leading zeros (now `Ulid`, were `Sequential`), 32-digit
+  simple-form texts with at least twelve leading zeros (now `Uuid`, were
+  `Sequential`), and 26-character texts starting with `8`-`9` / a letter,
+  which overflow 128 bits and used to wrap silently to a different ULID (now
+  `ParseError`). Canonical `Sequential` text (at most 20 digits) and other
+  non-canonical decimals (`"007"`, `"+42"`) parse exactly as before.
+
 - **New `PriceLevelError::EntropyUnavailable { message }` variant (#167)**,
   the conventional error for a failing `EntropySource`. Exhaustive matches on
   `PriceLevelError` need a new arm.

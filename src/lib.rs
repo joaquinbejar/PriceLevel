@@ -750,6 +750,35 @@
 //! [`Id::from_u64`], [`Id::from_uuid`], [`Id::from_ulid`], [`Id::nil`] and
 //! [`UuidGenerator`].
 //!
+//! ## Migration Guide (`Id` text parsing disambiguates by shape)
+//!
+//! `Id::from_str` (and `Id`'s serde `Deserialize`, which parses the same text)
+//! now tries a 26-character ULID first, then any UUID text form, and only then
+//! a decimal `u64`. Previously `u64` came first, so an all-digit ULID such as
+//! the nil ULID `00000000000000000000000000` came back as
+//! [`Id::Sequential`]. Now `id.to_string().parse::<Id>() == Ok(id)` holds for
+//! every [`Id`], and canonical sequential text (at most 20 digits) is
+//! unaffected.
+//!
+//! Only non-canonical inputs change meaning:
+//!
+//! | Input | Before | Now |
+//! |-------|--------|-----|
+//! | 26 digits, at least 6 leading zeros | `Sequential` | `Ulid` |
+//! | 32 digits, at least 12 leading zeros | `Sequential` | `Uuid` (simple form) |
+//! | 26 Crockford characters starting above `7` | `Ulid` (top bits silently lost) | `ParseError` |
+//!
+//! If you store sequential ids zero-padded to 26 or 32 characters, strip the
+//! padding (or build them with [`Id::sequential`]) before parsing.
+//!
+//! ```rust
+//! use pricelevel::Id;
+//!
+//! let nil_ulid: Id = "00000000000000000000000000".parse().unwrap();
+//! assert!(nil_ulid.is_ulid());
+//! assert_eq!("18446744073709551615".parse::<Id>().unwrap(), Id::sequential(u64::MAX));
+//! ```
+//!
 
 mod orders;
 mod price_level;
