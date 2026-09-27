@@ -163,7 +163,11 @@ fn fire_post_only_decision_hook() {
 /// across a drain-then-re-admit either: a `topology_epoch` is bumped on every
 /// side pin / un-pin, and `snapshot` retries its materialization if the epoch
 /// moves under it (see there).
-#[derive(Debug)]
+///
+/// `Debug` reads every field into locals (materializing the queue) before it
+/// writes to the caller's formatter, and omits the fill-or-kill guard, so no
+/// shard lock or `RwLock` guard is held while caller-supplied formatting
+/// destination code runs (issue #172).
 pub struct PriceLevel {
     /// The price of this level
     price: u128,
@@ -897,6 +901,18 @@ impl PriceLevel {
     ///
     /// The iteration order is not guaranteed to be stable. Use [`Self::snapshot_orders`]
     /// when deterministic ordering is required.
+    ///
+    /// # Caller-supplied code
+    ///
+    /// The iterator borrows the order storage lazily, so it holds a `DashMap`
+    /// shard **read** lock between `next()` calls, while the caller's loop body
+    /// and adapter closures run. While it is alive the caller must not mutate
+    /// this level from the same thread (`add_order`, `update_order`,
+    /// `match_order` on an order in a locked shard deadlocks), and should keep
+    /// the body short: writers to that shard, including the matcher, wait on it.
+    /// A panic in the body unwinds without mutating the level (the read lock is
+    /// released and not poisoned). Use [`Self::snapshot_orders`] to run
+    /// arbitrary code over the orders with no lock held (issue #172).
     pub fn iter_orders(&self) -> impl Iterator<Item = Arc<OrderType<()>>> + '_ {
         self.orders.iter_orders()
     }
@@ -1275,6 +1291,23 @@ impl PriceLevel {
     /// `PriceLevelStatistics::stats_degraded` flag is set (sticky,
     /// snapshot-persisted) so the under-count is observable. The emitted trades
     /// and the `MatchResult` are unaffected (issue #117).
+    ///
+    /// # Caller-supplied code: `tracing` subscriber
+    ///
+    /// The level's payload is `()`, so matching runs no caller payload code.
+    /// The only external code it can reach is the process-installed `tracing`
+    /// subscriber, which runs synchronously on the calling thread at the
+    /// `debug!` / `warn!` / `error!` events this method emits. The subscriber
+    /// **must not panic** and must not call back into this level. The library
+    /// arranges that no event is emitted while a `DashMap` shard lock is held
+    /// or between a step's queue commit and its counter bookkeeping, and the
+    /// fill-or-kill kill event is emitted after the exclusive guard is released
+    /// (issue #172). It does **not** promise to recover from a subscriber
+    /// panic: an event emitted mid-sweep unwinds with earlier steps' trades
+    /// committed to the queue but the `MatchResult` reporting them lost, and a
+    /// panic during a `Fok` sweep poisons the level (the guard is still held).
+    /// It installs no panic hook and does not catch the unwind. See
+    /// `doc/panic-boundaries.md`.
     pub fn match_order(
         &self,
         incoming_quantity: u64,
@@ -1381,6 +1414,14 @@ impl PriceLevel {
             }
             let available = self.matchable_quantity(incoming_quantity, taker_order_id);
             if available < incoming_quantity {
+                // Release the exclusive guard BEFORE emitting the event (issue
+                // #172): the kill verdict is already decided and nothing was
+                // mutated, so the guard protects nothing further. Logging under
+                // it would run the process-installed `tracing` subscriber while
+                // every mutator is excluded, and a panicking subscriber would
+                // poison `fok_guard`, permanently refusing a level whose state
+                // is in fact intact.
+                drop(guard);
                 tracing::debug!(
                     taker_order_id = %taker_order_id,
                     incoming_quantity,
@@ -1689,6 +1730,16 @@ impl PriceLevel {
                     };
                     let new_remaining = data.new_remaining;
 
+                    // A statistics drop to report for this step. The event is
+                    // emitted only AFTER every counter / topology delta of the
+                    // step has been applied (issue #172): `tracing` dispatches
+                    // synchronously into the process-installed subscriber, which
+                    // is caller-supplied code, so logging mid-bookkeeping would
+                    // let a panicking subscriber unwind with the maker already
+                    // removed from the queue but `order_count` / the hidden
+                    // counter not yet adjusted.
+                    let mut stats_drop = None;
+
                     if data.consumed > 0 {
                         // Update visible quantity counter. `Relaxed`: advisory
                         // counter (issue #68); the queue mutation committed
@@ -1755,17 +1806,7 @@ impl PriceLevel {
                             timestamp.as_u64(),
                         ) && !was_degraded
                         {
-                            // WARN, not ERROR: the match is not aborted — this is
-                            // a recoverable observability anomaly flagged by the
-                            // sticky degraded flag (the trade is committed).
-                            tracing::warn!(
-                                price = self.price,
-                                taker_order_id = %taker_order_id,
-                                maker_order_id = %data.maker_id,
-                                consumed = data.consumed,
-                                error = %err,
-                                "execution statistics dropped (all-or-nothing); level stats marked degraded — trade unaffected"
-                            );
+                            stats_drop = Some(err);
                         }
                     }
 
@@ -1798,6 +1839,21 @@ impl PriceLevel {
                     // Pure partial fill (KeepInPlace, hidden_reduced == 0):
                     // visible already decremented by `consumed` above; the maker
                     // stays resident with its residual. Nothing else to do.
+
+                    if let Some(err) = stats_drop {
+                        // WARN, not ERROR: the match is not aborted — this is a
+                        // recoverable observability anomaly flagged by the sticky
+                        // degraded flag (the trade is committed). Emitted here,
+                        // after the step's bookkeeping, per the note above.
+                        tracing::warn!(
+                            price = self.price,
+                            taker_order_id = %taker_order_id,
+                            maker_order_id = %data.maker_id,
+                            consumed = data.consumed,
+                            error = %err,
+                            "execution statistics dropped (all-or-nothing); level stats marked degraded — trade unaffected"
+                        );
+                    }
 
                     if remaining == 0 {
                         break;
@@ -2519,6 +2575,33 @@ impl PartialOrd for PriceLevel {
 impl Ord for PriceLevel {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.price.cmp(&other.price)
+    }
+}
+
+impl std::fmt::Debug for PriceLevel {
+    /// Snapshot-then-write (issue #172): the atomics are loaded and the queue is
+    /// formatted through [`OrderQueue`]'s own materializing `Debug`, and the
+    /// `fok_guard` is deliberately omitted — `RwLock`'s `Debug` would hold a
+    /// read guard while writing into the caller's formatter, which could
+    /// deadlock a destination that re-enters this level's fill-or-kill path.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let visible_quantity = self.visible_quantity.load(Ordering::Relaxed);
+        let hidden_quantity = self.hidden_quantity.load(Ordering::Relaxed);
+        let topology = self.topology.load(Ordering::Relaxed);
+        let topology_epoch = self.topology_epoch.load(Ordering::Relaxed);
+        let level_poisoned = self.level_poisoned.load(Ordering::Relaxed);
+        let mutation_epoch = self.mutation_epoch.load(Ordering::Relaxed);
+        f.debug_struct("PriceLevel")
+            .field("price", &self.price)
+            .field("visible_quantity", &visible_quantity)
+            .field("hidden_quantity", &hidden_quantity)
+            .field("topology", &topology)
+            .field("topology_epoch", &topology_epoch)
+            .field("orders", &self.orders)
+            .field("stats", &self.stats)
+            .field("level_poisoned", &level_poisoned)
+            .field("mutation_epoch", &mutation_epoch)
+            .finish_non_exhaustive()
     }
 }
 

@@ -34,6 +34,28 @@ pub const DEFAULT_RESERVE_REPLENISH_AMOUNT: NonZeroU64 = match NonZeroU64::new(8
 };
 
 /// Represents different types of limit orders
+///
+/// # Caller-supplied payload `T` (issue #172)
+///
+/// `T` is caller-owned. The derived and generic impls call into it:
+/// `Clone` (in [`Self::with_reduced_quantity`], [`Self::refresh_iceberg`],
+/// [`Self::match_against`] and `Clone for OrderType<T>`), `Debug` (writing to
+/// the caller's formatter), `PartialEq` / `Eq`, `Serialize` / `Deserialize`
+/// (driven by the caller's serializer / deserializer) and `Default` (in
+/// [`FromStr`]). The `Display` impl never touches `T`. Supplied impls, and the
+/// closure given to [`Self::map_extra_fields`], **must not panic**. These are
+/// pure value utilities: none holds a lock or mutates library state, and every
+/// method except [`Self::map_extra_fields`] borrows `self`, so a panic unwinds
+/// with the crate-controlled fields of the source order (id, price,
+/// quantities, side, user id, timestamp, time in force, order-type
+/// parameters) unchanged. That guarantee does **not** extend to the payload:
+/// a caller impl can mutate `T` through interior mutability (a `Cell`, a
+/// shared handle) before panicking, and those side effects are the caller's.
+/// The library does not promise to recover from a caller panic or from an
+/// allocator OOM abort, and never catches one.
+///
+/// The matching engine ([`crate::PriceLevel`]) only ever stores
+/// `OrderType<()>`, so no caller payload code runs under its locks.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OrderType<T> {
     /// Standard limit order
@@ -661,6 +683,9 @@ impl<T: Clone> OrderType<T> {
     /// - The quantity that was reduced from hidden portion (for iceberg/reserve orders)
     /// - The remaining quantity of the incoming order
     ///
+    /// For a generic `T`, a partial fill clones the payload into the residual;
+    /// that caller `Clone` must not panic (see the type-level note).
+    ///
     /// # Overflow
     ///
     /// The only quantity *addition* on any match path is a reserve order's
@@ -998,6 +1023,10 @@ impl<T> OrderType<T> {
     }
 
     /// Transform the extra fields type using a function
+    ///
+    /// `f` is caller-supplied and **must not panic**. It runs once, on the
+    /// owned payload, holding no lock and touching no library state; if it
+    /// panics, the consumed `self` is dropped during the unwind (issue #172).
     #[must_use]
     pub fn map_extra_fields<U, F>(self, f: F) -> OrderType<U>
     where

@@ -1,0 +1,143 @@
+# Caller-supplied code and panic boundaries
+
+Issue #172. Companion to the Production Panic Policy in
+`rules/global_rules.md` and to the "Concurrency model" section of
+`doc/architecture.md`.
+
+## Contract
+
+The Production Panic Policy in `rules/global_rules.md` requires that
+crate-owned code not initiate panics. That is the required policy, not a
+completed state: remaining crate-owned panic paths (for example the
+`snapshot()` aggregate assertions) are being removed under the audit in
+[#161](https://github.com/joaquinbejar/PriceLevel/issues/161) and its
+sub-issues, and are out of scope here. This document covers the separate
+question of code the crate does not own. Some public operations call it: trait impls on a caller payload, caller closures, a caller's
+`fmt::Write` / `Serializer` / `Deserializer`, and the process-installed
+`tracing` subscriber. Rust bounds such as `Clone`, `Default`, `Debug`,
+`Serialize` or `FnOnce` cannot express "does not panic", so:
+
+- **Obligation.** Caller-supplied implementations and callbacks must not
+  panic, and must not call back into the `PriceLevel` / `OrderQueue` that is
+  invoking them unless the row below says re-entry is safe.
+- **What the library guarantees.** It never runs caller code while a
+  `DashMap` shard **write** lock is held or between a queue commit and the
+  counter bookkeeping of the same step. Where a guard or partial mutation
+  remains, the row below says so.
+- **What it does not guarantee.** It does not recover from a caller panic
+  and does not certify third-party code. It installs no panic hook, uses no
+  `catch_unwind`, and never aborts on purpose. An allocator's OOM abort is a
+  process-wide failure and is not reported as a typed error.
+
+## Two scopes
+
+1. **Pure generic utilities**: `OrderType<T>` with an arbitrary payload `T`.
+   These are value transformations. They hold no lock and mutate no library
+   state.
+2. **The matching engine**: `PriceLevel` / `OrderQueue`, which only ever store
+   `OrderType<()>`. `()`'s impls are in `core` and cannot panic, so no caller
+   payload code runs in the engine. The remaining engine boundaries are
+   formatting destinations, serializers, iterator consumers and the `tracing`
+   subscriber.
+
+## Inventory
+
+"Guard" means a lock held while the caller code runs. "Partial mutation"
+means that library state was changed before the caller code runs and would be
+left behind by an unwind.
+
+### Generic payload `T` (`src/orders/order_type.rs`)
+
+| Call | Where | Guard | Partial mutation | Unwind effect |
+|------|-------|-------|------------------|---------------|
+| `T::clone` | `with_reduced_quantity`, `refresh_iceberg`, `match_against` (partial-fill residual), derived `Clone` | none | none (`&self`) | crate-controlled fields of the source order unchanged; payload side effects (interior mutability in `T`) are not covered |
+| `T: Debug` into caller formatter | derived `Debug` | none | none | none |
+| `T: PartialEq` / `Eq` | derived `PartialEq` | none | none | none |
+| `T: Serialize` + caller `Serializer` | derived `Serialize` | none | none | partial output is the caller's |
+| `T: Deserialize` + caller `Deserializer` | derived `Deserialize` | none | none | partially built value dropped |
+| `T::default` | `FromStr for OrderType<T>` | none | none | parse abandoned |
+| `F: FnOnce(T) -> U` | `map_extra_fields` | none | none | consumed `self` dropped |
+| `&mut T` handed out | `extra_fields_mut` | none | caller-owned value | caller's responsibility |
+
+"Unwind effect" describes crate-controlled state only. A caller impl can
+mutate its own payload through interior mutability before panicking; the
+library makes no statement about the payload after such a panic. The
+payload test in `src/orders/tests/order_type.rs` shows preservation only for
+its own side-effect-free payload.
+
+`Display for OrderType<T>` does not touch `T`; it writes to the caller's
+formatter only. `OrderMetadata` and `()` are crate/core payloads and are
+compliant.
+
+### Formatting destinations (`fmt::Write` behind a `Formatter`)
+
+| Call | Guard | Partial mutation | Notes |
+|------|-------|------------------|-------|
+| `Display` for `PriceLevel`, `OrderQueue` | none | none | materialize via `snapshot_orders` / `snapshot_vec`, then write |
+| `Debug` for `PriceLevel`, `OrderQueue` | none (since #172) | none | manual impls materialize first; `fok_guard` is omitted. The derived impls held `DashMap` shard read locks (and a `fok_guard` read guard) while writing, so a re-entrant destination deadlocked |
+| `Display` / `Debug` for the other crate types | none | none | plain values |
+
+Re-entry from a formatting destination into the level is safe.
+
+### Serializers and deserializers
+
+| Call | Guard | Partial mutation | Notes |
+|------|-------|------------------|-------|
+| `Serialize for PriceLevel` | none | none | builds `PriceLevelData` (materialized) first |
+| `Serialize for OrderQueue` | none | none | `snapshot_by_seq` first |
+| `Serialize for PriceLevelStatistics` | none | none | one seqlock-consistent read into locals first |
+| `Serialize` for snapshots, `Id`, `Hash32`, `PegReferenceType`, `Trade`, `MatchResult`, ... | none | none | owned values |
+| `Deserialize` for `PriceLevel`, `OrderQueue`, snapshots | none | a fresh, not-yet-shared value only | an unwind drops the partially built value |
+
+`PriceLevelSnapshotPackage` uses `serde_json` internally; that is a crate
+dependency, not caller code, and its errors map to typed variants.
+
+### Iterator consumers
+
+| Call | Guard | Partial mutation | Notes |
+|------|-------|------------------|-------|
+| `PriceLevel::iter_orders`, `OrderQueue::iter_orders` loop body / adapters | **`DashMap` shard read lock**, held between `next()` calls | none | a body that mutates the same level on the same thread can deadlock; writers to that shard (including the matcher) wait. A panic releases the read lock without poisoning. Use `snapshot_orders` to run arbitrary code with no lock. Kept lazy because v0.7 made `iter_orders` non-allocating on purpose |
+| `PriceLevelSnapshot::iter_orders` | none | none | iterates an owned `Vec` |
+
+### Clock and entropy traits (`src/utils/entropy.rs`, `src/utils/id.rs`)
+
+| Call | Where | Guard | Partial mutation | Notes |
+|------|-------|-------|------------------|-------|
+| `EntropySource::try_fill_bytes` | `Id::try_new`, `Id::try_new_ulid`, `Id::try_new_ulid_at`, `Id::try_new_uuid` | none | none | failures must be returned as `Err`; a panic unwinds with no library state touched (#167) |
+| `UnixClock::try_now_ms` | `Id::try_new`, `Id::try_new_ulid` | none | none | same |
+
+### `tracing` subscriber
+
+Events are dispatched synchronously into the process-installed subscriber.
+The library never installs one; `setup_logger` is a convenience for binaries
+and tests.
+
+| Event site (`src/price_level/level.rs`) | Guard | Partial mutation at the event |
+|-----------------------------------------|-------|-------------------------------|
+| `mark_poisoned` `error!` | the already-poisoned `fok_guard` (read or write) | the level is already flagged poisoned; no new mutation |
+| `match_order` self-match reject `debug!` | none | none |
+| `match_order` post-only reject `debug!` | none | none |
+| `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
+| sweep set-aside `warn!`, self-trade skip `debug!`, overflow abort `error!` | `fok_guard` write side for a `Fok` taker; nothing otherwise | this step is a no-op. **Earlier steps are committed** to the queue and counters, and their trades live only in the local `MatchResult` |
+| sweep statistics-drop `warn!` | as above | the step's queue, counter and topology bookkeeping is complete (moved after the bookkeeping in #172). **The step and earlier steps are committed**, as above |
+| `setup_logger` `debug!` | none; emitted after the `OnceLock` initialization completes (since #172) | global subscriber installed; init result cached, so a `setup_logger` call from this event's `on_event` returns it instead of blocking |
+|  `setup_logger` → `set_global_default` → `Dispatch` construction: callsite-interest rebuild invoking live subscribers' `register_callsite` / `max_level_hint` | **`LOGGER_INIT_RESULT` `OnceLock` initialization in progress** | none yet (the global default is not set until these return). a callback that calls `setup_logger` blocks on the same initialization and deadlocks; **re-entry from registration callbacks is prohibited**. A panic unwinds out of `get_or_init`, leaving it uninitialized |
+
+No event is emitted inside the `OrderQueue::match_front` / `update_entry` /
+`try_push_with` closures, so none runs under a `DashMap` shard write lock.
+
+Consequence of a subscriber panic inside a sweep: the queue and counters
+remain mutually consistent at step granularity, but the unwinding
+`match_order` loses the `MatchResult` for trades it already committed. For a
+`Fok` taker the unwind also poisons `fok_guard`, so the level fails fast
+(issue #130), which is the right outcome for a fill-or-kill that is no longer
+all-or-nothing. Removing the loss entirely would require deferring every sweep
+event until after `match_order` returns. That is a proposed follow-up, not a
+current guarantee.
+
+## Tests
+
+`src/price_level/tests/caller_boundaries.rs` and
+`src/orders/tests/order_type.rs` use deliberately panicking subscribers,
+formatting destinations, payload `Clone` impls and `map_extra_fields`
+closures, with test-only `catch_unwind`, to pin the behaviour above.

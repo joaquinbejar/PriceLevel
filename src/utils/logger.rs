@@ -85,10 +85,32 @@ static LOGGER_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// **Behavior:**
 /// - Concurrent calls to this function result in the logger being initialized only once.
 ///
+/// # Subscriber boundary (issue #172)
+///
+/// This is a convenience for binaries and tests; the library itself never
+/// installs a subscriber. Every `tracing` event the crate emits is dispatched
+/// synchronously, on the calling thread, into whichever subscriber the process
+/// installed (this one or the caller's own). That subscriber is external code
+/// and **must not panic** or call back into the level that emitted the event.
+/// The confirmation event is emitted after the one-time initialization
+/// completes, so a subscriber's `on_event` for that event may call
+/// `setup_logger` again and gets the cached result. That is the only
+/// re-entry guarantee. Installing the subscriber (`set_global_default`)
+/// still runs other subscribers' registration callbacks
+/// (`register_callsite`, `max_level_hint`) **while the initialization is in
+/// progress**; those callbacks **must not call `setup_logger`**, which would
+/// block on the same initialization and deadlock. The library does not catch
+/// a subscriber panic; see
+/// `PriceLevel::match_order` and `doc/panic-boundaries.md` for where events
+/// are emitted relative to locks and mutations.
+///
 /// # Errors
 /// Returns an error if initializing the global subscriber fails.
 #[allow(dead_code)]
 pub fn setup_logger() -> Result<(), PriceLevelError> {
+    // Set only by the call that actually performs initialization, so the
+    // confirmation event is emitted exactly once, as before.
+    let mut installed_level = None;
     let result = LOGGER_INIT_RESULT.get_or_init(|| {
         let log_level = env::var("LOGLEVEL")
             .unwrap_or_else(|_| "INFO".to_string())
@@ -107,10 +129,18 @@ pub fn setup_logger() -> Result<(), PriceLevelError> {
         tracing::subscriber::set_global_default(subscriber)
             .map_err(|error| format!("failed to set global logging subscriber: {error}"))?;
 
-        tracing::debug!("Log level set to: {}", level);
+        installed_level = Some(level);
 
         Ok(())
     });
+
+    // Emit the confirmation only AFTER `get_or_init` has completed (issue
+    // #172): logging inside the initializer would run subscriber code while the
+    // `OnceLock` is still initializing, and a subscriber that re-entered
+    // `setup_logger` would block on that same initialization (deadlock).
+    if let Some(level) = installed_level {
+        tracing::debug!("Log level set to: {}", level);
+    }
 
     result
         .clone()

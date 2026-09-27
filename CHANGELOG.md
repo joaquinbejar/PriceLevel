@@ -67,6 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of an already-read `SystemTime` (pre-epoch and `u64` millisecond overflow
   are typed errors; no clamping). It does not read the clock.
 
+### Fixed
+
+- **No caller code under level guards or mid-bookkeeping (#172).**
+  `PriceLevel` and `OrderQueue` `Debug` impls are now hand-written: they
+  materialize the orders before writing, so a formatter destination no longer
+  runs while `DashMap` shard read locks (and a `fok_guard` read guard) are held.
+  A re-entrant destination used to deadlock. The `Debug` text changes shape:
+  the internal index and the guard are no longer printed, and
+  `finish_non_exhaustive` marks the omission. `Debug` output is not a stable
+  format. In `match_order`, the fill-or-kill kill event is now emitted after the
+  exclusive guard is released, so a panicking `tracing` subscriber can no longer
+  poison a level whose state is intact. The statistics-drop warning is emitted
+  after the step's queue, counter and topology bookkeeping, not before it.
+  `setup_logger` emits its confirmation event after its one-time
+  initialization completes, so a subscriber's `on_event` for that event can
+  re-enter `setup_logger` and get the cached result. Subscriber registration
+  callbacks (`register_callsite`, `max_level_hint`) still run during the
+  initialization, while `set_global_default` builds the dispatcher; calling
+  `setup_logger` from them deadlocks and is documented as prohibited.
+
 ### Documentation
 
 - **Concurrency and performance claims corrected (#156).** The crate docs,
@@ -80,6 +100,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The unprovenanced throughput tables (237,347.51 vs "over 264,000" ops/s,
   measured with ten concurrent takers on one level) are withdrawn, and an
   operation-accounting guide for future results is added.
+- **Caller-supplied code boundaries documented (#172).** New
+  `doc/panic-boundaries.md` inventories every call into caller code (generic
+  payload `Clone` / `Debug` / `PartialEq` / serde / `Default`,
+  `map_extra_fields`, formatter destinations, serializers, `iter_orders` loop
+  bodies, the `tracing` subscriber) with the guard held and the mutation state
+  at each. Rustdoc on `OrderType`, `map_extra_fields`, `match_against`,
+  `PriceLevel::match_order`, `iter_orders`, `PegReferenceType` and
+  `setup_logger` states the no-panic obligation and that the library does not
+  recover from caller panics or OOM aborts. A "Caller-Supplied Code" section is
+  added to the crate docs.
 - **Examples respect one matcher per level (#156).** `hft_simulation`,
   `contention_test` and `simple` now run a single matcher thread per shared
   level, keep maker and taker ids disjoint, and report successful operations
