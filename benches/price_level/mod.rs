@@ -9,6 +9,7 @@ pub mod newtypes;
 pub mod serialization;
 pub mod snapshot_recovery;
 pub mod special_orders;
+pub mod trade_ids;
 pub mod update_orders;
 
 // Import common benchmarks into the main bench group
@@ -24,4 +25,5 @@ pub fn register_benchmarks(c: &mut criterion::Criterion) {
     newtypes::register_benchmarks(c);
     special_orders::register_benchmarks(c);
     lifecycle::register_benchmarks(c);
+    trade_ids::register_benchmarks(c);
 }
