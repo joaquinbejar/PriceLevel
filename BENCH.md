@@ -272,7 +272,7 @@ Every knob is an environment variable (`benches/latency/config.rs`):
 | `PL_LATENCY_STATS_PRODUCERS`      | 2       | Producer (cancel + re-add) threads per `stats_contention` case |
 | `PL_LATENCY_STATS_READERS`        | 2       | Statistics-reader threads per `stats_contention` case |
 | `PL_LATENCY_STATS_OPS`            | 20,000  | Matcher operations measured per `stats_contention` case |
-| `PL_LATENCY_ONLY`                 | all     | Comma-separated groups to run: `isolated`, `match`, `tif`, `snapshot` (includes `iteration`), `depth`, `contention`, `stats_contention`, `alloc` |
+| `PL_LATENCY_ONLY`                 | all     | Comma-separated groups to run: `isolated`, `match`, `tif`, `snapshot` (includes `iteration`), `snapshot_sizes` (issue #149, with its own allocation pass), `depth`, `contention`, `stats_contention`, `alloc` |
 
 A short validation run (a few minutes at most, typically a few seconds):
 
@@ -796,3 +796,96 @@ estimates). The latency clock ticks every ~41.7 ns on this host.
 
 The cases stay in the allocation pass, the latency harness and Criterion as
 a regression tripwire for result sizing.
+
+## Snapshot serialization buffers (issue #149)
+
+Question: what do the temporary snapshot buffers cost, now that the
+production path serializes orders borrowed (`BorrowedOrders`, no
+`Vec<&OrderType<()>>`) and streams the canonical JSON into SHA-256
+(`serde_json::to_writer` into an `io::Write` adapter, no `to_vec` payload)?
+Both landed with #164; #149 adds the equivalence tests, the two-pass
+documentation and this measurement.
+
+### Method
+
+`benches/latency/scenarios/snapshot_sizes.rs` (`PL_LATENCY_ONLY=snapshot_sizes`)
+runs `PriceLevel::snapshot_package()`, `PriceLevel::snapshot_to_json()` and
+`PriceLevelSnapshotPackage::validate()` on levels of 100, 10,000 and 100,000
+standard orders (the fixture's package JSON is 24.9 KB, 2.45 MB and
+24.5 MB). Each is paired with a bench-local emulation of the buffered pre-#164
+path (`legacy`: collect the reference vector, hash `serde_json::to_vec`,
+encode the package with `serde_json::to_string`); the fixture asserts the
+two produce byte-identical JSON and checksums before timing. The two variants
+are **interleaved sample by sample**, alternating which runs first, because
+the host load average was above 4 (4.5 to 9.3 across the runs). Samples per
+variant: 20,000 / 500 / 50 (budget of 5 M orders serialized). The untimed
+allocation pass runs 2,000 / 100 / 10 repetitions; `peak_live_bytes` is the
+counting allocator's new high-water mark of live bytes (`alloc.rs`), output
+retained by the call included.
+
+Host: Apple M5 Max, macOS, rustc 1.98.1, `bench` profile, system allocator
+behind the counting wrapper (counting off while timing), single thread.
+Baseline: `origin/main` `a597851` with this harness copied in; after: this
+branch. Production code is identical in both (the #149 diff is tests, docs
+and benches), so the two runs double as a run-to-run noise check.
+
+### Latency (after run; ns)
+
+| Operation | Orders | legacy p50 | stream p50 | legacy p99 | stream p99 | legacy p99.9 | stream p99.9 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| snapshot_package | 100 | 93,083 | 90,083 | 99,833 | 96,209 | 110,875 | 108,583 |
+| snapshot_package | 10,000 | 8.98 M | 8.76 M | 11.88 M | 11.60 M | 12.00 M | 11.67 M |
+| snapshot_package | 100,000 | 92.1 M | 88.7 M | 96.8 M | 96.0 M | = p99 | = p99 |
+| snapshot_to_json | 100 | 174,834 | 172,875 | 222,666 | 219,625 | 229,708 | 226,875 |
+| snapshot_to_json | 10,000 | 17.11 M | 16.95 M | 19.25 M | 19.17 M | 24.02 M | 23.59 M |
+| snapshot_to_json | 100,000 | 174.8 M | 171.6 M | 188.9 M | 185.9 M | = p99 | = p99 |
+| validate | 100 | 89,166 | 86,125 | 97,000 | 94,583 | 106,250 | 103,709 |
+| validate | 10,000 | 8.83 M | 8.59 M | 9.70 M | 9.65 M | 12.04 M | 11.29 M |
+| validate | 100,000 | 90.0 M | 86.2 M | 97.0 M | 108.1 M | = p99 | = p99 |
+
+The baseline run (`origin/main`) agreed within 1 to 3% at p50 (for example
+validate at 10,000: 9.03 M legacy / 8.80 M stream). With 500 and 50 samples,
+p99 and p99.9 are the top one to five observations and move by 10 to 60%
+between runs in both variants; only p50 is comparable at 10,000 and
+100,000 orders.
+
+### Allocations (per operation; deterministic, identical on both runs)
+
+| Operation | Orders | legacy allocs | stream allocs | legacy bytes | stream bytes | legacy peak live | stream peak live |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| snapshot_package | 100 | 3,741 | 3,731 | 112,144 | 45,936 | 34,440 | 2,400 |
+| snapshot_package | 10,000 | 360,148 | 360,131 | 12.75 M | 4.28 M | 4,354,376 | 240,000 |
+| snapshot_package | 100,000 | 3,600,151 | 3,600,131 | 110.7 M | 42.8 M | 35,154,504 | 2,400,000 |
+| snapshot_to_json | 100 | 7,351 | 7,340 | 218,752 | 151,744 | 34,504 | 33,704 |
+| snapshot_to_json | 10,000 | 720,165 | 720,147 | 25.26 M | 16.71 M | 4,354,440 | 4,274,440 |
+| snapshot_to_json | 100,000 | 7,200,171 | 7,200,150 | 219.0 M | 150.3 M | 35,154,568 | 34,354,568 |
+| validate | 100 | 3,611 | 3,601 | 106,672 | 40,464 | 33,640 | 72 |
+| validate | 10,000 | 360,018 | 360,001 | 12.51 M | 4.04 M | 4,274,376 | 72 |
+| validate | 100,000 | 3,600,021 | 3,600,001 | 108.3 M | 40.4 M | 34,354,504 | 72 |
+
+### Reading
+
+- **Peak temporary memory** is where the buffers mattered. `validate` now
+  peaks at 72 bytes (the hex checksum) instead of the whole payload
+  (34.4 MB at 100,000 orders); `snapshot_package` peaks at the snapshot's
+  own `Arc` vector (24 bytes per order) instead of payload plus vector.
+  `snapshot_to_json` still peaks at roughly the output JSON, which is the
+  returned value.
+- **Allocated bytes** fall by about 8.5 MB per 10,000 orders on every path
+  (the payload buffer and its doubling growth, plus the reference vector);
+  the allocation **count** only drops by 10 to 21 because those buffers were
+  a handful of large allocations.
+- **Latency** improves 1 to 4% at p50, interleaved. It is dominated by
+  ~36 allocations (~404 bytes) per order that remain in the streaming path:
+  `Id` and `Hash32` serialize through `to_string` / `to_hex`, and `Hash32`
+  hex encoding formats byte by byte. That is order-model code
+  (`src/orders/`, `src/utils/`), outside #149, and the next lever for
+  snapshot latency.
+- **Two passes remain.** `snapshot_to_json` serializes the snapshot once
+  into SHA-256 and once into the package JSON; the table shows it at
+  roughly twice `snapshot_package`. A single-pass envelope changes the
+  package byte layout and needs a separate compatibility review.
+
+Criterion numbers were not collected for this issue: no production code
+changed, and the per-operation harness above carries the percentiles and
+allocation counts the issue asks for.
