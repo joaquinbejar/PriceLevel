@@ -282,6 +282,40 @@ mod tests {
     }
 
     #[test]
+    fn test_fresh_level_snapshots_are_deterministic() {
+        // Issue #171: constructing a level / snapshot reads no clock, so the
+        // same input yields byte-identical, identically-checksummed packages.
+        let a = crate::price_level::PriceLevel::new(1000);
+        let b = crate::price_level::PriceLevel::new(1000);
+        assert_eq!(a.stats().first_arrival_time(), 0);
+        assert_eq!(
+            a.snapshot_to_json().expect("json a"),
+            b.snapshot_to_json().expect("json b")
+        );
+        let s1 = PriceLevelSnapshot::with_orders(Price::new(77), create_sample_orders())
+            .expect("snapshot");
+        let s2 = PriceLevelSnapshot::with_orders(Price::new(77), create_sample_orders())
+            .expect("snapshot");
+        assert_eq!(
+            PriceLevelSnapshotPackage::new(s1)
+                .expect("package")
+                .checksum(),
+            PriceLevelSnapshotPackage::new(s2)
+                .expect("package")
+                .checksum()
+        );
+    }
+
+    #[test]
+    fn test_snapshot_omitted_statistics_restore_unstamped() {
+        let json =
+            r#"{"price":5,"visible_quantity":0,"hidden_quantity":0,"order_count":0,"orders":[]}"#;
+        let snap: PriceLevelSnapshot = serde_json::from_str(json).expect("decode");
+        assert_eq!(snap.statistics().first_arrival_time(), 0);
+        assert_eq!(snap.statistics().orders_added(), 0);
+    }
+
+    #[test]
     fn test_new() {
         let snapshot = PriceLevelSnapshot::new(Price::new(1000));
         assert_eq!(snapshot.price().as_u128(), 1000);

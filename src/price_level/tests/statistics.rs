@@ -1,10 +1,35 @@
 #[cfg(test)]
 mod tests {
+    use crate::errors::PriceLevelError;
     use crate::price_level::PriceLevelStatistics;
+    use crate::utils::{TimestampMs, UnixClock};
     use std::str::FromStr;
     use std::sync::Arc;
     use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Test clock returning a fixed reading.
+    struct FixedClock(u64);
+
+    impl UnixClock for FixedClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            Ok(TimestampMs::new(self.0))
+        }
+    }
+
+    /// Test clock that always fails, as a pre-epoch reading would.
+    struct FailingClock;
+
+    impl UnixClock for FailingClock {
+        fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+            TimestampMs::try_from_system_time(
+                std::time::UNIX_EPOCH
+                    .checked_sub(std::time::Duration::from_millis(1))
+                    .unwrap(),
+            )
+        }
+    }
+
+    const NOW: u64 = 1_716_000_000_000;
 
     #[test]
     fn test_new() {
@@ -15,18 +40,40 @@ mod tests {
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
         assert_eq!(stats.last_execution_time(), 0);
-        assert!(stats.first_arrival_time() > 0);
+        // Deterministic and clock-free (issue #171): unstamped start time.
+        assert_eq!(stats.first_arrival_time(), 0);
         assert_eq!(stats.sum_waiting_time(), 0);
+    }
+
+    #[test]
+    fn test_new_at_and_try_new_stamp_start_time() {
+        let stats = PriceLevelStatistics::new_at(TimestampMs::new(NOW));
+        assert_eq!(stats.first_arrival_time(), NOW);
+
+        let stats = PriceLevelStatistics::try_new(&FixedClock(NOW + 5)).unwrap();
+        assert_eq!(stats.first_arrival_time(), NOW + 5);
+        assert_eq!(stats.orders_added(), 0);
+
+        let clock: &dyn UnixClock = &FixedClock(NOW);
+        assert_eq!(
+            PriceLevelStatistics::try_new(clock)
+                .unwrap()
+                .first_arrival_time(),
+            NOW
+        );
+    }
+
+    #[test]
+    fn test_try_new_propagates_clock_failure() {
+        let err = PriceLevelStatistics::try_new(&FailingClock).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
     }
 
     #[test]
     fn test_record_execution_error_paths() {
         let stats = PriceLevelStatistics::new();
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = NOW;
 
         // Future timestamps (maker arrived after execution) should return an
         // explicit error.
@@ -42,6 +89,9 @@ mod tests {
         assert_eq!(stats.orders_added(), 0);
         assert_eq!(stats.orders_removed(), 0);
         assert_eq!(stats.orders_executed(), 0);
+        // Deterministic: identical to `new()`, no clock read (issue #171).
+        assert_eq!(stats.first_arrival_time(), 0);
+        assert_eq!(stats.to_string(), PriceLevelStatistics::new().to_string());
     }
 
     #[test]
@@ -123,22 +173,91 @@ mod tests {
     fn test_time_since_last_execution() {
         let stats = PriceLevelStatistics::new();
 
-        // Test with no executions
-        assert_eq!(stats.time_since_last_execution(), None);
+        // No execution: Ok(None), and the clock is not even consulted.
+        assert_eq!(
+            stats.time_since_last_execution(&FailingClock).unwrap(),
+            None
+        );
+        assert_eq!(
+            stats
+                .time_since_last_execution_at(TimestampMs::new(NOW))
+                .unwrap(),
+            None
+        );
 
-        // Record an execution with an explicit execution time in the past so
-        // the wall-clock-based `time_since_last_execution` reports a positive
-        // delta deterministically (no sleep needed).
-        let past = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
-            - 1000;
-        assert!(stats.record_execution(10, 100, 0, past).is_ok());
+        assert!(stats.record_execution(10, 100, 0, NOW - 1000).is_ok());
 
-        // Should return some non-zero value
-        let time_since = stats.time_since_last_execution().unwrap();
-        assert!(time_since > 0);
+        assert_eq!(
+            stats.time_since_last_execution(&FixedClock(NOW)).unwrap(),
+            Some(1000)
+        );
+        assert_eq!(
+            stats
+                .time_since_last_execution_at(TimestampMs::new(NOW - 1000))
+                .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_time_since_last_execution_distinguishes_clock_failure() {
+        let stats = PriceLevelStatistics::new();
+        assert!(stats.record_execution(10, 100, 0, NOW).is_ok());
+
+        // Clock failure is a typed error, not `None`.
+        let err = stats.time_since_last_execution(&FailingClock).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+
+        // A clock behind the last execution is a typed error, not `None`.
+        let err = stats
+            .time_since_last_execution_at(TimestampMs::new(NOW - 1))
+            .unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+        let err = stats
+            .time_since_last_execution(&FixedClock(NOW - 1))
+            .unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+    }
+
+    #[test]
+    fn test_failed_reset_leaves_statistics_unchanged() {
+        let stats = PriceLevelStatistics::new_at(TimestampMs::new(NOW - 10_000));
+        stats.record_order_added();
+        stats.record_order_added();
+        stats.record_order_removed();
+        assert!(stats.record_execution(10, 100, NOW - 5_000, NOW).is_ok());
+        stats.mark_degraded();
+        let before = stats.to_string();
+        assert!(before.contains("stats_degraded=true"));
+
+        let err = stats.reset(&FailingClock).unwrap_err();
+        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+
+        // Counters, timestamps and the degraded flag are untouched.
+        assert_eq!(stats.to_string(), before);
+        assert_eq!(stats.orders_added(), 2);
+        assert_eq!(stats.orders_removed(), 1);
+        assert_eq!(stats.orders_executed(), 1);
+        assert_eq!(stats.quantity_executed(), 10);
+        assert_eq!(stats.value_executed(), 1000);
+        assert_eq!(stats.last_execution_time(), NOW);
+        assert_eq!(stats.first_arrival_time(), NOW - 10_000);
+        assert_eq!(stats.sum_waiting_time(), 5_000);
+        assert!(stats.stats_degraded());
+
+        // The write section closed cleanly: a subsequent reset succeeds.
+        assert!(stats.reset(&FixedClock(NOW + 1)).is_ok());
+        assert_eq!(stats.first_arrival_time(), NOW + 1);
+        assert!(!stats.stats_degraded());
+    }
+
+    #[test]
+    fn test_reset_at_is_clock_free() {
+        let stats = PriceLevelStatistics::new();
+        stats.record_order_added();
+        stats.reset_at(TimestampMs::new(42));
+        assert_eq!(stats.orders_added(), 0);
+        assert_eq!(stats.first_arrival_time(), 42);
     }
 
     #[test]
@@ -160,7 +279,7 @@ mod tests {
         assert_eq!(stats.orders_executed(), 1);
 
         // Reset stats
-        stats.reset();
+        stats.reset(&FixedClock(NOW)).unwrap();
 
         // Verify reset worked
         assert_eq!(stats.orders_added(), 0);
@@ -169,7 +288,7 @@ mod tests {
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
         assert_eq!(stats.last_execution_time(), 0);
-        assert!(stats.first_arrival_time() > 0);
+        assert_eq!(stats.first_arrival_time(), NOW);
         assert_eq!(stats.sum_waiting_time(), 0);
     }
 
@@ -356,7 +475,7 @@ mod tests {
         assert_eq!(stats.orders_executed(), 1);
 
         // Reset stats
-        stats.reset();
+        stats.reset(&FixedClock(NOW)).unwrap();
 
         // Verify all statistics are reset
         assert_eq!(stats.orders_added(), 0);
@@ -365,7 +484,7 @@ mod tests {
         assert_eq!(stats.quantity_executed(), 0);
         assert_eq!(stats.value_executed(), 0);
         assert_eq!(stats.last_execution_time(), 0);
-        assert!(stats.first_arrival_time() > 0);
+        assert_eq!(stats.first_arrival_time(), NOW);
         assert_eq!(stats.sum_waiting_time(), 0);
     }
 
@@ -422,6 +541,11 @@ mod tests {
         assert_eq!(deserialized.value_executed(), 0);
         // Missing stats_degraded defaults to false.
         assert!(!deserialized.stats_degraded());
+        // Missing first_arrival_time decodes as unstamped, deterministically:
+        // no clock is read during deserialization (issue #171).
+        assert_eq!(deserialized.first_arrival_time(), 0);
+        let again: PriceLevelStatistics = serde_json::from_str(json).unwrap();
+        assert_eq!(again.to_string(), deserialized.to_string());
     }
 
     // ------------------------------------------------------------------
@@ -649,7 +773,7 @@ mod tests {
         assert!(!stats.mark_degraded(), "second drop is silent");
         assert!(!stats.mark_degraded(), "still silent");
         // A reset re-arms the transition.
-        stats.reset();
+        stats.reset_at(TimestampMs::new(NOW));
         assert!(!stats.stats_degraded());
         assert!(stats.mark_degraded(), "post-reset drop transitions again");
     }

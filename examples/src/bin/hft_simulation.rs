@@ -15,8 +15,8 @@
 // the crate docs before quoting any number it prints.
 
 use pricelevel::{
-    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, Quantity, Side,
-    TakerKind, TimeInForce, TimestampMs, UuidGenerator, setup_logger,
+    Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, PriceLevelError,
+    Quantity, Side, TakerKind, TimeInForce, TimestampMs, UnixClock, UuidGenerator, setup_logger,
 };
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -317,8 +317,21 @@ fn main() {
         info!("Average waiting time: {:.2} ms", avg_wait);
     }
 
-    if let Some(time_since) = stats.time_since_last_execution() {
-        info!("Time since last execution: {} ms", time_since);
+    match stats.time_since_last_execution(&WallClock) {
+        Ok(Some(time_since)) => info!("Time since last execution: {} ms", time_since),
+        Ok(None) => info!("No execution recorded yet"),
+        Err(error) => info!("Time since last execution unavailable: {}", error),
+    }
+}
+
+/// Example wall clock. The crate reads no clock itself: it converts the
+/// `SystemTime` the application reads with checked arithmetic, so a pre-epoch
+/// or unrepresentable reading is a typed error rather than a silent `0`.
+struct WallClock;
+
+impl UnixClock for WallClock {
+    fn try_now_ms(&self) -> Result<TimestampMs, PriceLevelError> {
+        TimestampMs::try_from_system_time(std::time::SystemTime::now())
     }
 }
 

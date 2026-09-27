@@ -375,7 +375,15 @@ impl PriceLevel {
 }
 
 impl PriceLevel {
-    /// Create a new price level
+    /// Create a new, empty price level.
+    ///
+    /// Deterministic and clock-free (issue #171): the level's statistics start
+    /// **unstamped** (`stats().first_arrival_time() == 0`), so two levels built
+    /// from the same input snapshot to byte-identical packages. To record when
+    /// tracking began, call
+    /// [`PriceLevelStatistics::reset_at`] or
+    /// [`PriceLevelStatistics::reset`] on `stats()` while the level is still
+    /// quiescent.
     #[must_use]
     pub fn new(price: u128) -> Self {
         Self {
