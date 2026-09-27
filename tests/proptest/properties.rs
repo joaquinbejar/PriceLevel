@@ -230,7 +230,7 @@ proptest! {
             && matches!(makers.first().map(|m| &m.order), Some(OrderType::Standard { .. }))
             && result.is_complete()
             && result.filled_order_ids().is_empty()
-            && let Some(front) = level.snapshot_orders().first()
+            && let Some(front) = level.snapshot_orders().expect("materialize").first()
             && let Some(front_id) = front.id().as_u64().or_else(|| seq_from_uuid_id(front.id()))
         {
             prop_assert_eq!(
@@ -562,8 +562,8 @@ proptest! {
         prop_assert_eq!(restored.order_count(), level.order_count());
 
         // Order order preserved: snapshot_orders is the deterministic view.
-        let original_ids: Vec<Id> = level.snapshot_orders().iter().map(|o| o.id()).collect();
-        let restored_ids: Vec<Id> = restored.snapshot_orders().iter().map(|o| o.id()).collect();
+        let original_ids: Vec<Id> = level.snapshot_orders().expect("materialize").iter().map(|o| o.id()).collect();
+        let restored_ids: Vec<Id> = restored.snapshot_orders().expect("materialize").iter().map(|o| o.id()).collect();
         prop_assert_eq!(&original_ids, &restored_ids, "order order must round-trip");
 
         // Statistics round-trip (executions recorded survive the snapshot).

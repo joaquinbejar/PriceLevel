@@ -10,7 +10,10 @@
 //!
 //! This module is a leaf: it depends only on `crate::errors`.
 
-use crate::errors::PriceLevelError;
+use crate::errors::{CapacityResource, PriceLevelError};
+#[cfg(test)]
+use crate::utils::alloc::try_reserve_vec;
+use crate::utils::alloc::{try_push_vec, try_reserve_string};
 
 /// Maximum bracket / parenthesis nesting depth the text parsers accept.
 ///
@@ -366,24 +369,27 @@ impl<'a> Iterator for TopLevelSplit<'a> {
 ///
 /// # Errors
 ///
-/// [`PriceLevelError::InvalidOperation`] if the vector cannot grow; `vec` is
-/// left unchanged.
+/// [`PriceLevelError::CapacityExceeded`] (resource
+/// [`CapacityResource::Text`]) if the vector cannot grow; `vec` is left
+/// unchanged. The error is fixed-size, so reporting the failure does not
+/// allocate (issue #164).
 #[inline]
 pub(crate) fn try_push<T>(vec: &mut Vec<T>, item: T) -> Result<(), PriceLevelError> {
-    try_reserve(vec, 1)?;
-    vec.push(item);
-    Ok(())
+    try_push_vec(vec, item, CapacityResource::Text)
 }
 
 /// Reserves room for `additional` more elements through `Vec::try_reserve`.
+/// Test-only since #164: production parsers grow through [`try_push`].
 ///
 /// # Errors
 ///
-/// [`PriceLevelError::InvalidOperation`] on capacity overflow or allocation
-/// failure; `vec` is left unchanged.
+/// [`PriceLevelError::CapacityExceeded`] (resource
+/// [`CapacityResource::Text`]) on capacity overflow or allocation failure;
+/// `vec` is left unchanged.
+#[cfg(test)]
 #[inline]
 pub(crate) fn try_reserve<T>(vec: &mut Vec<T>, additional: usize) -> Result<(), PriceLevelError> {
-    vec.try_reserve(additional).map_err(allocation_error)
+    try_reserve_vec(vec, additional, CapacityResource::Text)
 }
 
 /// Reserves room for `additional` more bytes in `s` through
@@ -391,19 +397,12 @@ pub(crate) fn try_reserve<T>(vec: &mut Vec<T>, additional: usize) -> Result<(), 
 ///
 /// # Errors
 ///
-/// [`PriceLevelError::InvalidOperation`] on capacity overflow or allocation
-/// failure; `s` is left unchanged.
+/// [`PriceLevelError::CapacityExceeded`] (resource
+/// [`CapacityResource::Text`]) on capacity overflow or allocation failure;
+/// `s` is left unchanged.
 #[inline]
 pub(crate) fn try_reserve_str(s: &mut String, additional: usize) -> Result<(), PriceLevelError> {
-    s.try_reserve_exact(additional).map_err(allocation_error)
-}
-
-#[cold]
-#[inline(never)]
-fn allocation_error(e: std::collections::TryReserveError) -> PriceLevelError {
-    PriceLevelError::InvalidOperation {
-        message: format!("text parser allocation failed: {e}"),
-    }
+    try_reserve_string(s, additional, CapacityResource::Text)
 }
 
 #[cfg(test)]
@@ -576,11 +575,23 @@ mod tests {
     fn test_try_reserve_reports_capacity_overflow_as_typed_error() {
         let mut v: Vec<u64> = vec![1];
         let err = try_reserve(&mut v, usize::MAX).expect_err("must overflow");
-        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+        assert!(matches!(
+            err,
+            PriceLevelError::CapacityExceeded {
+                resource: CapacityResource::Text,
+                additional: usize::MAX
+            }
+        ));
         assert_eq!(v, vec![1]);
         let mut s = String::from("x");
         let err = try_reserve_str(&mut s, usize::MAX).expect_err("must overflow");
-        assert!(matches!(err, PriceLevelError::InvalidOperation { .. }));
+        assert!(matches!(
+            err,
+            PriceLevelError::CapacityExceeded {
+                resource: CapacityResource::Text,
+                ..
+            }
+        ));
         assert_eq!(s, "x");
         try_push(&mut v, 2).expect("push");
         assert_eq!(v, vec![1, 2]);

@@ -1,5 +1,6 @@
-use crate::errors::{ExhaustedCounter, PriceLevelError};
+use crate::errors::{CapacityResource, ExhaustedCounter, PriceLevelError};
 use crate::orders::{Id, OrderType};
+use crate::utils::alloc::{try_push_vec, try_reserve_exact_vec, try_reserve_set, try_reserve_vec};
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -197,6 +198,9 @@ pub(crate) enum UpdateDecision {
 }
 
 /// The outcome of [`OrderQueue::remove_if`] (issue #163).
+/// Committed `(stored_seq, order)` pairs collected for a materialization.
+type SeqPairs = Vec<(u64, Arc<OrderType<()>>)>;
+
 #[derive(Debug)]
 pub(crate) enum RemoveOutcome {
     /// The id is not resident; nothing was checked or changed.
@@ -218,6 +222,13 @@ pub(crate) enum FrontOutcome<R> {
     /// already encoded in that bookkeeping (full consume vs partial vs
     /// replenish), so it is not surfaced separately.
     Matched { result: R },
+    /// The decision closure ran and chose [`FrontAction::SetAside`], but the
+    /// caller's parked-sequence set could not grow to record it (issue #164).
+    /// Nothing was committed (`SetAside` never mutates the queue) and the
+    /// sequence was NOT parked, so re-running the sweep step would re-select
+    /// the same maker: the caller must stop. Carries the closure's result so a
+    /// terminal step (which stops anyway) keeps its own error.
+    ParkRefused { result: R },
     /// The queue is empty (no front candidate that is not already set aside).
     /// The sweep is done.
     Empty,
@@ -700,10 +711,22 @@ impl OrderQueue {
                     // The entry lock is released on every arm above; a
                     // possibly-allocating scratch-set insert and the evicted
                     // order's drop now run unlocked.
+                    //
+                    // The park grows fallibly (issue #164): a full set reserves
+                    // one slot first, and a refused reservation reports
+                    // `ParkRefused` with the step still a no-op. A set the
+                    // caller pre-reserved (fill-or-kill) never reaches the
+                    // reservation.
+                    drop(evicted);
                     if let Some(seq) = park_seq {
+                        if set_aside.len() >= set_aside.capacity()
+                            && try_reserve_set(set_aside, 1, CapacityResource::SweepScratch)
+                                .is_err()
+                        {
+                            return FrontOutcome::ParkRefused { result };
+                        }
                         set_aside.insert(seq);
                     }
-                    drop(evicted);
 
                     return FrontOutcome::Matched { result };
                 }
@@ -1021,18 +1044,62 @@ impl OrderQueue {
     /// materialize via `snapshot_by_seq` (ascending insertion sequence), so the
     /// live queue order — including the "sizing up loses time priority"
     /// demotion — survives a restore.
-    #[must_use]
-    pub fn snapshot_vec(&self) -> Vec<Arc<OrderType<()>>> {
-        let mut orders: Vec<(u64, Arc<OrderType<()>>)> =
-            self.orders.iter().map(|o| o.value().clone()).collect();
-        orders.sort_by_key(|(seq, o)| (o.timestamp(), *seq));
-        orders.into_iter().map(|(_, o)| o).collect()
+    ///
+    /// Every buffer grows fallibly (issue #164). The sort is the in-place,
+    /// allocation-free `sort_unstable_by_key`: it is deterministic because
+    /// the `(timestamp, sequence)` keys are unique (every live order carries
+    /// its own sequence), so no stable-sort scratch buffer is needed.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if a buffer cannot be reserved.
+    /// The queue is only read.
+    pub fn snapshot_vec(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
+        let mut pairs = self.collect_pairs()?;
+        pairs.sort_unstable_by_key(|(seq, o)| (o.timestamp(), *seq));
+        let mut out = Vec::new();
+        try_reserve_exact_vec(&mut out, pairs.len(), CapacityResource::OrderSnapshot)?;
+        out.extend(pairs.into_iter().map(|(_, o)| o));
+        Ok(out)
     }
 
     /// Convert the queue to a vector (for compatibility and snapshots).
-    #[must_use]
-    pub fn to_vec(&self) -> Vec<Arc<OrderType<()>>> {
+    ///
+    /// # Errors
+    ///
+    /// As [`OrderQueue::snapshot_vec`].
+    pub fn to_vec(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
         self.snapshot_vec()
+    }
+
+    /// Collects the committed `(stored_seq, order)` pairs from the `orders`
+    /// map (one entry per id), growing fallibly (issue #164).
+    ///
+    /// The buffer is pre-sized to the current length; a concurrent admission
+    /// that lands during the walk grows it through the same fallible path.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]).
+    fn collect_pairs(&self) -> Result<SeqPairs, PriceLevelError> {
+        let mut pairs: SeqPairs = Vec::new();
+        try_reserve_vec(
+            &mut pairs,
+            self.orders.len(),
+            CapacityResource::OrderSnapshot,
+        )?;
+        for entry in self.orders.iter() {
+            #[cfg(test)]
+            snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
+            try_push_vec(
+                &mut pairs,
+                entry.value().clone(),
+                CapacityResource::OrderSnapshot,
+            )?;
+        }
+        Ok(pairs)
     }
 
     /// Materialize the resting orders in ascending **insertion-sequence** order —
@@ -1060,44 +1127,60 @@ impl OrderQueue {
     /// snapshot round-trip re-enqueues in this consumption order, so exact
     /// price-time priority — including the "sizing up loses time priority"
     /// demotion — is preserved across a restore.
-    #[must_use]
-    pub(crate) fn snapshot_by_seq(&self) -> Vec<Arc<OrderType<()>>> {
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if a buffer cannot be reserved.
+    pub(crate) fn snapshot_by_seq(&self) -> Result<Vec<Arc<OrderType<()>>>, PriceLevelError> {
         let mut out = Vec::new();
-        self.snapshot_by_seq_into(&mut out);
-        out
+        self.snapshot_by_seq_into(&mut out)?;
+        Ok(out)
     }
 
     /// Fill `out` with the resting orders in ascending **insertion-sequence**
     /// order — the buffer-reuse variant of [`OrderQueue::snapshot_by_seq`].
     ///
-    /// `out` is cleared first, then extended in place, so a caller can reuse one
-    /// scratch buffer across calls and avoid the per-call allocation of the
-    /// returned `Vec`. Note the internal `(seq, order)` pairs buffer plus its
-    /// sort is still paid on every call — the reuse saves only the output `Vec`
-    /// allocation, not the collect-and-sort. The duplicate-free,
-    /// committed-pair guarantees are identical to
-    /// [`OrderQueue::snapshot_by_seq`]; the only difference is where the result
-    /// lands.
-    pub(crate) fn snapshot_by_seq_into(&self, out: &mut Vec<Arc<OrderType<()>>>) {
+    /// On success `out` holds exactly the materialized orders (its previous
+    /// contents are cleared), so a caller can reuse one scratch buffer across
+    /// calls and avoid the per-call allocation of the returned `Vec`. Note the
+    /// internal `(seq, order)` pairs buffer plus its sort is still paid on
+    /// every call — the reuse saves only the output `Vec` allocation, not the
+    /// collect-and-sort. The duplicate-free, committed-pair guarantees are
+    /// identical to [`OrderQueue::snapshot_by_seq`]; the only difference is
+    /// where the result lands.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the internal buffer or `out`
+    /// cannot grow. Every reservation happens before `out` is touched, so on
+    /// `Err` `out` is left exactly as the caller passed it (issue #164).
+    pub(crate) fn snapshot_by_seq_into(
+        &self,
+        out: &mut Vec<Arc<OrderType<()>>>,
+    ) -> Result<(), PriceLevelError> {
         // Build from the `orders` map (one entry per id) so a concurrent
         // re-sequencing can never surface an order twice or at a mixed
         // priority; see `snapshot_by_seq` for the full rationale.
-        let mut pairs: Vec<(u64, Arc<OrderType<()>>)> = self
-            .orders
-            .iter()
-            .map(|entry| {
-                #[cfg(test)]
-                snapshot_hook::fire(snapshot_hook::SnapshotHookEvent::Collected(*entry.key()));
-                entry.value().clone()
-            })
-            .collect();
+        let mut pairs = self.collect_pairs()?;
         // Unstable sort is deterministic here because sequences are unique
         // across live orders (the tail-appending paths take distinct seqs from
         // the checked `try_reserve_seq`; an in-place update keeps the order's
-        // own seq).
+        // own seq). It sorts in place: no scratch allocation.
         pairs.sort_unstable_by_key(|(seq, _)| *seq);
+        // Reserve room for every pair WITHOUT clearing first: `try_reserve`
+        // guarantees `capacity >= len + additional`, so reserving
+        // `pairs.len() - out.len()` (nothing when `out` is already longer:
+        // its capacity then already covers every pair)
+        // makes the clear-and-extend below growth-free, and a refusal leaves
+        // `out` untouched.
+        if let Some(additional) = pairs.len().checked_sub(out.len()) {
+            try_reserve_vec(out, additional, CapacityResource::OrderSnapshot)?;
+        }
         out.clear();
         out.extend(pairs.into_iter().map(|(_, order)| order));
+        Ok(())
     }
 
     /// Builds a queue holding `orders` in vector order (the first element is
@@ -1152,13 +1235,19 @@ impl fmt::Debug for OrderQueue {
     /// (issue #172). A derived impl would format while iterating the shards,
     /// blocking writers to those shards for as long as the destination takes
     /// and deadlocking a destination that re-enters this queue.
+    ///
+    /// If the materialization cannot be reserved (issue #164) the `orders`
+    /// field shows the allocation-free capacity error instead: `Debug` never
+    /// reports a `fmt::Error` of its own, which would make `format!` panic.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let orders = self.snapshot_by_seq();
         let next_seq = self.next_seq.load(Ordering::Relaxed);
-        f.debug_struct("OrderQueue")
-            .field("orders", &orders)
-            .field("next_seq", &next_seq)
-            .finish_non_exhaustive()
+        let mut out = f.debug_struct("OrderQueue");
+        match &orders {
+            Ok(orders) => out.field("orders", orders),
+            Err(err) => out.field("orders", &format_args!("<unavailable: {err}>")),
+        };
+        out.field("next_seq", &next_seq).finish_non_exhaustive()
     }
 }
 
@@ -1180,7 +1269,10 @@ impl Serialize for OrderQueue {
         // own length during a concurrent re-sequencing. Insertion-sequence
         // order keeps the round-trip price-time priority (the DashMap alone has
         // no deterministic iteration order).
-        let ordered = self.snapshot_by_seq();
+        //
+        // The materialization is fallible (issue #164); a refused reservation
+        // is reported through the serializer's own error type.
+        let ordered = self.snapshot_by_seq().map_err(serde::ser::Error::custom)?;
         let mut seq = serializer.serialize_seq(Some(ordered.len()))?;
         for order in &ordered {
             seq.serialize_element(order.as_ref())?;
@@ -1215,11 +1307,21 @@ impl FromStr for OrderQueue {
     }
 }
 
+/// Writes `OrderQueue:orders=[<order>,...]` (timestamp order).
+///
+/// If the order materialization cannot be reserved (issue #164) this writes
+/// `OrderQueue:orders=!<error>` instead: `Display` must not report a
+/// `fmt::Error` of its own (`to_string` would panic), and [`FromStr`] rejects
+/// the marker, so a failed rendering is never parsed back as an empty queue.
 impl Display for OrderQueue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let orders = match self.snapshot_vec() {
+            Ok(orders) => orders,
+            Err(err) => return write!(f, "OrderQueue:orders=!{err}"),
+        };
         write!(f, "OrderQueue:orders=[")?;
         let mut first = true;
-        for order in self.snapshot_vec() {
+        for order in orders {
             if !first {
                 write!(f, ",")?;
             }
@@ -1240,6 +1342,25 @@ impl TryFrom<Vec<Arc<OrderType<()>>>> for OrderQueue {
     /// [`PriceLevelError::CounterExhausted`]. No order is silently dropped.
     fn try_from(orders: Vec<Arc<OrderType<()>>>) -> Result<Self, Self::Error> {
         Self::try_from_vec(orders)
+    }
+}
+
+/// Materializes the queue in `(timestamp, sequence)` order, like
+/// [`OrderQueue::to_vec`].
+///
+/// Fallible since v0.10 (issue #164): this replaces the infallible
+/// `From<OrderQueue> for Vec<Arc<OrderType<()>>>`, whose buffers grew
+/// infallibly (it also lived in `orders/`, which must not depend on
+/// `price_level/`).
+impl TryFrom<OrderQueue> for Vec<Arc<OrderType<()>>> {
+    type Error = PriceLevelError;
+
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the vector cannot be reserved.
+    fn try_from(queue: OrderQueue) -> Result<Self, Self::Error> {
+        queue.to_vec()
     }
 }
 

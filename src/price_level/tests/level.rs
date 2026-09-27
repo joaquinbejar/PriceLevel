@@ -63,11 +63,13 @@ mod tests {
 
         let original_ids: Vec<Id> = price_level
             .snapshot_orders()
+            .expect("materialize")
             .iter()
             .map(|order| order.id())
             .collect();
         let restored_ids: Vec<Id> = restored
             .snapshot_orders()
+            .expect("materialize")
             .iter()
             .map(|order| order.id())
             .collect();
@@ -263,8 +265,8 @@ mod tests {
         let snapshot = price_level.snapshot().expect("snapshot must succeed");
         let restored = PriceLevel::try_from(&snapshot).expect("valid snapshot restores");
 
-        let original_orders = price_level.snapshot_orders();
-        let restored_orders = restored.snapshot_orders();
+        let original_orders = price_level.snapshot_orders().expect("materialize");
+        let restored_orders = restored.snapshot_orders().expect("materialize");
 
         assert_eq!(restored_orders.len(), original_orders.len());
         assert_eq!(restored.order_count(), price_level.order_count());
@@ -307,8 +309,8 @@ mod tests {
         let restored = PriceLevel::from_snapshot_package(package)
             .expect("Failed to restore price level from snapshot package");
 
-        let original_orders = price_level.snapshot_orders();
-        let restored_orders = restored.snapshot_orders();
+        let original_orders = price_level.snapshot_orders().expect("materialize");
+        let restored_orders = restored.snapshot_orders().expect("materialize");
 
         assert_eq!(restored_orders.len(), original_orders.len());
         assert_eq!(restored.order_count(), price_level.order_count());
@@ -680,7 +682,7 @@ mod tests {
             .add_order(create_buy_iceberg_order(2, 10000, 50, 200))
             .expect("add_order should succeed");
 
-        let orders = price_level.snapshot_orders();
+        let orders = price_level.snapshot_orders().expect("materialize");
 
         assert_eq!(orders.len(), 2);
         assert_eq!(orders[0].id(), Id::from_u64(1));
@@ -2174,7 +2176,9 @@ mod tests {
         // all expose the SAME residual on the stored maker.
         assert_eq!(price_level.visible_quantity(), residual);
 
-        let resting = price_level.snapshot_by_insertion_seq();
+        let resting = price_level
+            .snapshot_by_insertion_seq()
+            .expect("materialize");
         assert_eq!(resting.len(), 1);
         assert_eq!(resting[0].id(), maker_id);
         assert_eq!(
@@ -2187,7 +2191,7 @@ mod tests {
             .snapshot_to_json()
             .expect("snapshot must serialize");
         let restored = PriceLevel::from_snapshot_json(&json).expect("snapshot must restore");
-        let restored_orders = restored.snapshot_by_insertion_seq();
+        let restored_orders = restored.snapshot_by_insertion_seq().expect("materialize");
         assert_eq!(restored_orders.len(), 1);
         assert_eq!(
             restored_orders[0].visible_quantity().as_u64(),
@@ -2223,7 +2227,12 @@ mod tests {
         // Maker fully consumed; level empty.
         assert_eq!(price_level.order_count(), 0);
         assert_eq!(price_level.visible_quantity(), 0);
-        assert!(price_level.snapshot_by_insertion_seq().is_empty());
+        assert!(
+            price_level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2286,6 +2295,7 @@ mod tests {
         // sequence, ahead of the maker queued behind it.
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|order| order.id())
             .collect();
@@ -2326,6 +2336,7 @@ mod tests {
         // Increase demotes: the resized maker moves behind the later maker.
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|order| order.id())
             .collect();
@@ -3035,7 +3046,7 @@ mod tests {
         assert!(match_result.filled_order_ids().contains(&Id::from_u64(1)));
         assert!(match_result.filled_order_ids().contains(&Id::from_u64(2)));
 
-        let orders = price_level.snapshot_orders();
+        let orders = price_level.snapshot_orders().expect("materialize");
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(3));
         assert_eq!(orders[0].visible_quantity().as_u64(), 10);
@@ -3065,7 +3076,7 @@ mod tests {
         assert_eq!(snapshot.orders().len(), 2);
 
         // Verify that orders in the snapshot match those in the price level
-        let orders_from_level = price_level.snapshot_orders();
+        let orders_from_level = price_level.snapshot_orders().expect("materialize");
         assert_eq!(snapshot.orders().len(), orders_from_level.len());
 
         // Check that all orders from the price level are in the snapshot
@@ -3308,7 +3319,7 @@ mod tests {
             .expect("iceberg decrease update should succeed");
 
         // Atomic counters must equal the sum over the live queue contents.
-        let snapshot = price_level.snapshot_orders();
+        let snapshot = price_level.snapshot_orders().expect("materialize");
         let expected_visible: u64 = snapshot.iter().map(|o| o.visible_quantity().as_u64()).sum();
         let expected_hidden: u64 = snapshot.iter().map(|o| o.hidden_quantity().as_u64()).sum();
 
@@ -3447,7 +3458,7 @@ mod tests {
             .expect("add_order should succeed");
 
         // Convert to PriceLevelData
-        let data: PriceLevelData = (&price_level).into();
+        let data = PriceLevelData::try_from(&price_level).expect("materialize");
 
         // Verify data fields
         assert_eq!(data.price, 10000);
@@ -3490,7 +3501,7 @@ mod tests {
         assert_eq!(price_level.order_count(), 2);
 
         // Verify orders
-        let orders = price_level.snapshot_orders();
+        let orders = price_level.snapshot_orders().expect("materialize");
         assert_eq!(orders.len(), 2);
 
         let order_ids: Vec<Id> = orders.iter().map(|o| o.id()).collect();
@@ -3555,7 +3566,7 @@ mod tests {
         assert_eq!(price_level.order_count(), 5);
 
         // Verify the order
-        let orders = price_level.snapshot_orders();
+        let orders = price_level.snapshot_orders().expect("materialize");
         assert_eq!(orders.len(), 5);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
@@ -3590,7 +3601,7 @@ mod tests {
         assert_eq!(deserialized.order_count(), 1);
 
         // Verify the order in the deserialized price level
-        let orders = deserialized.snapshot_orders();
+        let orders = deserialized.snapshot_orders().expect("materialize");
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id(), Id::from_u64(1));
         assert_eq!(orders[0].price(), Price::new(10000));
@@ -4016,7 +4027,7 @@ mod tests {
             .expect("add_order should succeed");
 
         // Convert to PriceLevelData
-        let data: PriceLevelData = (&price_level).into();
+        let data = PriceLevelData::try_from(&price_level).expect("materialize");
 
         // Verify data
         assert_eq!(data.price, 10000);
@@ -5654,10 +5665,16 @@ mod tests {
 
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
-        let by_ts: Vec<Id> = level.snapshot_orders().iter().map(|o| o.id()).collect();
+        let by_ts: Vec<Id> = level
+            .snapshot_orders()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect();
 
         // Insertion-sequence order is the order they were added: 1, 2.
         assert_eq!(by_seq, vec![Id::from_u64(1), Id::from_u64(2)]);
@@ -5718,7 +5735,7 @@ mod tests {
             .expect("upsize update should succeed");
         assert!(updated.is_some(), "maker 1 must still be present");
 
-        let data = PriceLevelData::from(&level);
+        let data = PriceLevelData::try_from(&level).expect("materialize");
         let json = serde_json::to_string(&data).expect("serialize PriceLevelData");
         let decoded: PriceLevelData =
             serde_json::from_str(&json).expect("deserialize PriceLevelData");
@@ -5726,6 +5743,7 @@ mod tests {
 
         let restored_ids: Vec<Id> = restored
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -5771,6 +5789,7 @@ mod tests {
         // Pre-snapshot consumption order reflects the demotion: 2, 3, then 1.
         let pre_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -5791,6 +5810,7 @@ mod tests {
         // The restored level reproduces the demoted consumption order exactly.
         let restored_ids: Vec<Id> = restored
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -5867,6 +5887,7 @@ mod tests {
         // Live consumption order reflects the replenish demotion: 2, then 1.
         let pre_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -5887,6 +5908,7 @@ mod tests {
         // The restored level reproduces the demoted consumption order exactly.
         let restored_ids: Vec<Id> = restored
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6017,7 +6039,10 @@ mod tests {
                             PriceLevel::from_snapshot(snap).expect("from_snapshot must succeed");
                         assert_eq!(
                             restored.order_count(),
-                            restored.snapshot_by_insertion_seq().len(),
+                            restored
+                                .snapshot_by_insertion_seq()
+                                .expect("materialize")
+                                .len(),
                             "restored order_count disagrees with rebuilt queue length"
                         );
 
@@ -6039,6 +6064,7 @@ mod tests {
         assert_counters_match_queue(&level);
         let final_ids: HashSet<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6052,7 +6078,12 @@ mod tests {
     #[test]
     fn test_snapshot_by_insertion_seq_empty_level() {
         let level = PriceLevel::new(10_000);
-        assert!(level.snapshot_by_insertion_seq().is_empty());
+        assert!(
+            level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -6077,6 +6108,7 @@ mod tests {
         );
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6112,6 +6144,7 @@ mod tests {
         );
         let by_seq: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6142,12 +6175,13 @@ mod tests {
 
         let owned: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
 
         let mut buf = Vec::new();
-        level.snapshot_by_seq_into(&mut buf);
+        level.snapshot_by_seq_into(&mut buf).expect("materialize");
         let into: Vec<Id> = buf.iter().map(|o| o.id()).collect();
 
         assert_eq!(
@@ -6174,7 +6208,7 @@ mod tests {
             .expect("add_order should succeed");
         big.add_order(create_standard_order(3, 10_000, 100))
             .expect("add_order should succeed");
-        let mut buf = big.snapshot_by_insertion_seq();
+        let mut buf = big.snapshot_by_insertion_seq().expect("materialize");
         assert_eq!(buf.len(), 3);
 
         // Reuse the same buffer on a SMALLER level: it must shrink to one entry
@@ -6183,7 +6217,7 @@ mod tests {
         small
             .add_order(create_standard_order(10, 10_000, 100))
             .expect("add_order should succeed");
-        small.snapshot_by_seq_into(&mut buf);
+        small.snapshot_by_seq_into(&mut buf).expect("materialize");
         let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
         assert_eq!(
             ids,
@@ -6199,7 +6233,7 @@ mod tests {
                 .add_order(create_standard_order(id, 10_000, 100))
                 .expect("add_order should succeed");
         }
-        bigger.snapshot_by_seq_into(&mut buf);
+        bigger.snapshot_by_seq_into(&mut buf).expect("materialize");
         let ids: Vec<Id> = buf.iter().map(|o| o.id()).collect();
         assert_eq!(
             ids,
@@ -6228,17 +6262,17 @@ mod tests {
 
         let taker = Id::from_u64(999);
         assert_eq!(
-            level.matchable_quantity(0, taker),
+            level.matchable_quantity(0, taker).expect("dry run"),
             0,
             "zero taker fills nothing"
         );
         assert_eq!(
-            level.matchable_quantity(120, taker),
+            level.matchable_quantity(120, taker).expect("dry run"),
             120,
             "taker below depth"
         );
         // A taker above the available depth is capped at the depth.
-        let predicted = level.matchable_quantity(200, taker);
+        let predicted = level.matchable_quantity(200, taker).expect("dry run");
         assert_eq!(predicted, 150, "taker above depth is capped at depth");
 
         // The dry run does not mutate, so the real sweep on the same level must
@@ -6263,7 +6297,9 @@ mod tests {
         let ice = PriceLevel::new(10_000);
         ice.add_order(create_iceberg_order(1, 10_000, 10, 40))
             .expect("add_order should succeed");
-        let predicted_ice = ice.matchable_quantity(100, Id::from_u64(998));
+        let predicted_ice = ice
+            .matchable_quantity(100, Id::from_u64(998))
+            .expect("dry run");
         assert_eq!(
             predicted_ice, 50,
             "matchable_quantity reaches hidden depth via replenishment"
@@ -6413,6 +6449,7 @@ mod tests {
         assert_eq!(restored.order_count(), 1);
         let ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6470,6 +6507,7 @@ mod tests {
         assert_eq!(snapshot.visible_quantity().as_u64(), u64::MAX);
         let queue_sum = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .try_fold(0u64, |acc, o| {
                 acc.checked_add(o.visible_quantity().as_u64())
@@ -6507,7 +6545,13 @@ mod tests {
         assert_eq!(level.visible_quantity(), 0);
         assert_eq!(level.hidden_quantity(), 0);
         assert_eq!(level.order_count(), 0);
-        assert_eq!(level.snapshot_by_insertion_seq().len(), 0);
+        assert_eq!(
+            level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -6527,7 +6571,13 @@ mod tests {
         assert_eq!(level.visible_quantity(), 0);
         assert_eq!(level.hidden_quantity(), 0);
         assert_eq!(level.order_count(), 0);
-        assert_eq!(level.snapshot_by_insertion_seq().len(), 0);
+        assert_eq!(
+            level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -6627,7 +6677,7 @@ mod tests {
 
         // Both makers are byte-identical, and FIFO is preserved: the younger
         // standard maker did NOT trade and the reserve is untouched.
-        let resting = level.snapshot_by_insertion_seq();
+        let resting = level.snapshot_by_insertion_seq().expect("materialize");
         assert_eq!(resting.len(), 2);
         assert_eq!(resting[0].id(), Id::from_u64(1));
         assert_eq!(resting[0].visible_quantity().as_u64(), 1);
@@ -6748,6 +6798,7 @@ mod tests {
         let before_count = level.order_count();
         let before_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6773,6 +6824,7 @@ mod tests {
         );
         let after_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -6781,6 +6833,7 @@ mod tests {
         // The original order 1 kept its quantity (100), not the rejected 999.
         let order1 = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .into_iter()
             .find(|o| o.id() == Id::from_u64(1))
             .expect("order 1 must still rest");
@@ -6812,7 +6865,7 @@ mod tests {
 
         // The original standard order 1 is intact; the level still holds one.
         assert_eq!(level.order_count(), 1);
-        let resting = level.snapshot_by_insertion_seq();
+        let resting = level.snapshot_by_insertion_seq().expect("materialize");
         assert_eq!(resting.len(), 1);
         assert_eq!(resting[0].id(), Id::from_u64(1));
         assert_eq!(resting[0].visible_quantity().as_u64(), 100);
@@ -6871,6 +6924,7 @@ mod tests {
             assert_eq!(level.order_count(), 1, "iter {iter}: order_count must be 1");
             let ids: Vec<Id> = level
                 .snapshot_by_insertion_seq()
+                .expect("materialize")
                 .iter()
                 .map(|o| o.id())
                 .collect();
@@ -7021,6 +7075,7 @@ mod tests {
         // FIFO insertion priority is unchanged, and the snapshot round-trips.
         let ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -7149,7 +7204,13 @@ mod tests {
         }
         assert_eq!(level.visible_quantity(), 30);
         assert_eq!(level.hidden_quantity(), 70);
-        assert_eq!(level.snapshot_by_insertion_seq().len(), 1);
+        assert_eq!(
+            level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -7173,7 +7234,13 @@ mod tests {
         }
         assert_eq!(level.visible_quantity(), 30);
         assert_eq!(level.hidden_quantity(), 70);
-        assert_eq!(level.snapshot_by_insertion_seq().len(), 1);
+        assert_eq!(
+            level
+                .snapshot_by_insertion_seq()
+                .expect("materialize")
+                .len(),
+            1
+        );
     }
 
     // ------------------------------------------------------------------
@@ -7311,7 +7378,7 @@ mod tests {
             level
                 .add_order(create_standard_order(3, 10_000, 50))
                 .expect("maker 3 admits");
-            let before = level.snapshot_by_insertion_seq();
+            let before = level.snapshot_by_insertion_seq().expect("materialize");
 
             let result = level.match_order(
                 1_000,
@@ -7340,7 +7407,7 @@ mod tests {
             );
 
             // The level is byte-identical: all three makers still rest in order.
-            let after = level.snapshot_by_insertion_seq();
+            let after = level.snapshot_by_insertion_seq().expect("materialize");
             assert_eq!(
                 before.iter().map(|o| o.id()).collect::<Vec<_>>(),
                 after.iter().map(|o| o.id()).collect::<Vec<_>>(),
@@ -7365,8 +7432,18 @@ mod tests {
             .add_order(create_standard_order(2, 10_000, 60))
             .expect("maker 2 admits");
 
-        assert_eq!(level.matchable_quantity(100, Id::from_u64(1)), 60);
-        assert_eq!(level.matchable_quantity(60, Id::from_u64(1)), 60);
+        assert_eq!(
+            level
+                .matchable_quantity(100, Id::from_u64(1))
+                .expect("dry run"),
+            60
+        );
+        assert_eq!(
+            level
+                .matchable_quantity(60, Id::from_u64(1))
+                .expect("dry run"),
+            60
+        );
 
         // But `match_order` is TERMINAL when the taker id already rests (issue
         // #126): it rejects up front for every TIF, dominating the FOK dry run —
@@ -7661,6 +7738,7 @@ mod tests {
 
             let is_resting = level
                 .snapshot_by_insertion_seq()
+                .expect("materialize")
                 .iter()
                 .any(|o| o.id() == id);
 
@@ -7731,6 +7809,7 @@ mod tests {
             assert_counters_match_queue(&level);
             let ids: Vec<Id> = level
                 .snapshot_by_insertion_seq()
+                .expect("materialize")
                 .iter()
                 .map(|o| o.id())
                 .collect();
@@ -7880,6 +7959,7 @@ mod tests {
         let before_json = level.snapshot_to_json().expect("snapshot before");
         let before_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
@@ -7906,12 +7986,14 @@ mod tests {
         );
         let after_ids: Vec<Id> = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .iter()
             .map(|o| o.id())
             .collect();
         assert_eq!(after_ids, before_ids);
         let m2 = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .into_iter()
             .find(|o| o.id() == Id::from_u64(2))
             .expect("maker 2 still rests");
@@ -7943,6 +8025,7 @@ mod tests {
         );
         let live = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .into_iter()
             .find(|o| o.id() == Id::from_u64(1))
             .expect("iceberg rests");
@@ -7962,6 +8045,7 @@ mod tests {
             .expect("maker present");
         let updated = level
             .snapshot_by_insertion_seq()
+            .expect("materialize")
             .into_iter()
             .find(|o| o.id() == Id::from_u64(1))
             .expect("iceberg rests");
@@ -8015,7 +8099,7 @@ mod tests {
 
             // Exactly one order rests, with one of the two requested quantities,
             // and the counters agree with the queue.
-            let resting = level.snapshot_by_insertion_seq();
+            let resting = level.snapshot_by_insertion_seq().expect("materialize");
             assert_eq!(resting.len(), 1, "iter {iter}: exactly one maker rests");
             assert_eq!(resting[0].id(), id);
             let q = resting[0].visible_quantity().as_u64();
@@ -8069,6 +8153,7 @@ mod tests {
 
             let is_resting = level
                 .snapshot_by_insertion_seq()
+                .expect("materialize")
                 .iter()
                 .any(|o| o.id() == id);
             // The cancel is the only remover; it always wins and the order is
@@ -8162,6 +8247,7 @@ mod tests {
                         // pre-#115 resurrection would fail here).
                         if let Some(o) = level
                             .snapshot_by_insertion_seq()
+                            .expect("materialize")
                             .into_iter()
                             .find(|o| o.id() == id)
                         {
@@ -8705,9 +8791,14 @@ mod tests {
         assert_eq!(level.visible_quantity(), u64::MAX, "counter at capacity");
 
         // The dry run models the abort: only maker 1's unit is reachable.
-        assert_eq!(level.matchable_quantity(2, Id::from_u64(999)), 1);
+        assert_eq!(
+            level
+                .matchable_quantity(2, Id::from_u64(999))
+                .expect("dry run"),
+            1
+        );
 
-        let before = level.snapshot_by_insertion_seq();
+        let before = level.snapshot_by_insertion_seq().expect("materialize");
         let result = level.match_order(
             2,
             Id::from_u64(999),
@@ -8724,7 +8815,7 @@ mod tests {
         assert_eq!(result.trades().len(), 0, "a killed FOK emits zero trades");
         assert_eq!(result.remaining_quantity().as_u64(), 2);
         // Level byte-identical: all three makers still rest in order.
-        let after = level.snapshot_by_insertion_seq();
+        let after = level.snapshot_by_insertion_seq().expect("materialize");
         assert_eq!(
             before.iter().map(|o| o.id()).collect::<Vec<_>>(),
             after.iter().map(|o| o.id()).collect::<Vec<_>>(),

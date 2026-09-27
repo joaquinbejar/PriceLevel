@@ -159,8 +159,18 @@ fn main() {
 
     // --- Phase 5: Verify order preservation ---
     println!("[Phase 5] Verifying order ID preservation...");
-    let original_ids: Vec<Id> = original.snapshot_orders().iter().map(|o| o.id()).collect();
-    let restored_ids: Vec<Id> = restored.snapshot_orders().iter().map(|o| o.id()).collect();
+    let original_ids: Vec<Id> = original
+        .snapshot_orders()
+        .unwrap_or_else(|e| exit_err(&format!("snapshot_orders: {e}")))
+        .iter()
+        .map(|o| o.id())
+        .collect();
+    let restored_ids: Vec<Id> = restored
+        .snapshot_orders()
+        .unwrap_or_else(|e| exit_err(&format!("snapshot_orders: {e}")))
+        .iter()
+        .map(|o| o.id())
+        .collect();
     let id_count = original_ids.len();
     assert_eq_or_exit(restored_ids, original_ids, "order IDs preserved");
     println!("  ✓ All {} order IDs preserved after restore.", id_count);

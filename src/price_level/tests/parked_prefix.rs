@@ -222,6 +222,7 @@ mod tests {
                 FrontOutcome::Empty => break,
                 FrontOutcome::Matched { result: true } => fills += 1,
                 FrontOutcome::Matched { result: false } => {}
+                FrontOutcome::ParkRefused { .. } => panic!("unexpected park refusal"),
             }
         }
         fills
@@ -325,6 +326,7 @@ mod tests {
         }) {
             FrontOutcome::Empty => None,
             FrontOutcome::Matched { result } => Some(result),
+            FrontOutcome::ParkRefused { .. } => panic!("unexpected park refusal"),
         }
     }
 

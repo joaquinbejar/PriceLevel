@@ -187,7 +187,7 @@ impl fmt::Display for TradeList {
 ///   `]` is missing, or a `[` / `]` inside the list is unbalanced.
 /// - [`PriceLevelError::ParseError`] if brackets nest deeper than 128 levels
 ///   (the enclosing list bracket included).
-/// - [`PriceLevelError::InvalidOperation`] if the trade vector cannot grow.
+/// - [`PriceLevelError::CapacityExceeded`] (resource `Text`) if the trade vector cannot grow (#164).
 /// - Any error returned by [`Trade::from_str`] for a malformed segment,
 ///   reported for the first malformed segment in input order.
 impl FromStr for TradeList {

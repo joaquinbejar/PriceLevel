@@ -1,6 +1,5 @@
 //! Limit order type definitions
 
-use crate::OrderQueue;
 use crate::errors::PriceLevelError;
 use crate::orders::{Hash32, Id, PegReferenceType, Side, TimeInForce};
 use crate::utils::text::{Fields, split_exactly_once};
@@ -9,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
-use std::sync::Arc;
 
 fn user_id_from_str(value: &str) -> Result<Hash32, PriceLevelError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
@@ -1781,12 +1779,6 @@ impl<T> fmt::Display for OrderType<T> {
                 )
             }
         }
-    }
-}
-
-impl From<OrderQueue> for Vec<Arc<OrderType<()>>> {
-    fn from(queue: OrderQueue) -> Self {
-        queue.to_vec()
     }
 }
 

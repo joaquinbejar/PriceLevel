@@ -626,7 +626,12 @@ mod tests_order_book_entry_text_and_serde_contract {
     }
 
     fn resting_ids(level: &PriceLevel) -> Vec<Id> {
-        level.snapshot_orders().iter().map(|o| o.id()).collect()
+        level
+            .snapshot_orders()
+            .expect("materialize")
+            .iter()
+            .map(|o| o.id())
+            .collect()
     }
 
     #[test]
