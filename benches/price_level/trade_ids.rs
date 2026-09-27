@@ -1,7 +1,8 @@
 //! Trade-id emission on the match path (issue #168): every emitted trade
 //! reserves one checked sequence value from the `UuidGenerator` (fill-or-kill
 //! reserves its whole block up front). The level is rebuilt in the untimed
-//! `iter_batched` setup so only the sweep itself is measured.
+//! `iter_batched` setup so only the sweep itself is measured. The
+//! `uuid_try_next_generator_only` case (issue #146) isolates the generator.
 
 use criterion::{BatchSize, Criterion};
 use pricelevel::{
@@ -61,5 +62,12 @@ pub fn register_benchmarks(c: &mut Criterion) {
             )
         });
     }
+
+    // Generator-only cost (issue #146): one checked reservation plus the
+    // counter-to-name encoding and the UUIDv5 hash, with no matching around it.
+    group.bench_function("uuid_try_next_generator_only", |b| {
+        let generator = UuidGenerator::new(namespace);
+        b.iter(|| black_box(generator.try_next()))
+    });
     group.finish();
 }

@@ -61,6 +61,8 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
     vec![
         measure_add_order(config),
         measure_match_full(config),
+        measure_uuid_try_next(config),
+        measure_match_sweep_100(config),
         measure_snapshot_capture(config),
         measure_checksum_validate(config),
         measure_restore(config),
@@ -110,6 +112,101 @@ fn measure_add_order(config: &Config) -> AllocReport {
 
     AllocReport {
         name: "add_order",
+        reps,
+        totals: after.since(before),
+    }
+}
+
+/// Measures `UuidGenerator::try_next` alone (issue #146): the checked
+/// reservation plus the counter-to-name encoding and the UUIDv5 hash. The
+/// output buffer is pre-sized before counting starts.
+fn measure_uuid_try_next(config: &Config) -> AllocReport {
+    let reps = config.alloc_reps;
+    let generator = fixtures::trade_id_generator();
+    let mut ids = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for _ in 0..reps {
+        ids.push(generator.try_next());
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+
+    assert!(
+        ids.iter().all(Result::is_ok),
+        "alloc measurement (uuid_try_next): a fresh generator must not exhaust"
+    );
+    drop(ids);
+
+    AllocReport {
+        name: "uuid_try_next",
+        reps,
+        totals: after.since(before),
+    }
+}
+
+/// Measures one `match_order` sweep that emits `SWEEP_MAKERS` trades (issue
+/// #146: "actual matching workloads with one and many trades"). Each
+/// repetition sweeps its own freshly seeded level; seeding and teardown run
+/// outside the counted window. `reps` is the number of sweeps, so the per-op
+/// figure is per SWEEP (divide by `SWEEP_MAKERS` for per-fill).
+fn measure_match_sweep_100(config: &Config) -> AllocReport {
+    const SWEEP_MAKERS: u64 = 100;
+    const QTY: u64 = 10;
+    let reps = config.alloc_reps;
+    let levels: Vec<PriceLevel> = (0..reps)
+        .map(|_| {
+            let level = PriceLevel::new(LEVEL_PRICE);
+            for i in 0..SWEEP_MAKERS {
+                level
+                    .add_order(fixtures::standard_order(
+                        i,
+                        Side::Sell,
+                        QTY,
+                        TimeInForce::Gtc,
+                    ))
+                    .expect("alloc measurement: seeding a fresh maker id must succeed");
+            }
+            level
+        })
+        .collect();
+    let generator = fixtures::trade_id_generator();
+    let mut results = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for (i, level) in levels.iter().enumerate() {
+        results.push(level.match_order(
+            SWEEP_MAKERS * QTY,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        ));
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+
+    let filled = results
+        .iter()
+        .filter(|r| {
+            r.outcome() == MatchOutcome::Filled && r.trades().len() == SWEEP_MAKERS as usize
+        })
+        .count();
+    assert_eq!(
+        filled, reps,
+        "alloc measurement (match_sweep_100): every sweep must fill all {SWEEP_MAKERS} makers"
+    );
+
+    drop(results);
+    drop(levels);
+
+    AllocReport {
+        name: "match_sweep_100",
         reps,
         totals: after.since(before),
     }
