@@ -407,3 +407,54 @@ continue to measure setup + batched operations + (for some cases)
 destruction together, as lifecycle comparisons — see the "Why a second
 harness" section above for why that is a different, and still useful,
 measurement from the per-operation numbers in this document.
+
+## Parked-maker front scans (issue #155): no change
+
+`OrderQueue::match_front` restarts its front scan at the lowest sequence on
+every step and skips the sequences the current sweep has parked. A live
+prefix of `S` parked makers ahead of `K` fills would cost about `S * K`
+extra index visits. No scenario was added to this harness and no sweep
+cursor was prototyped, because `S >= 2` is not reachable through the public
+API:
+
+- **No-progress `SetAside`: unreachable.** The sweep parks a maker only when
+  `match_against` returns `consumed == 0`, `hidden_reduced == 0`, an
+  unchanged remainder and a residual. The loop runs only while the taker
+  remainder is positive. For that remainder `Standard`, `PostOnly`,
+  `TrailingStop`, `PeggedOrder` and `MarketToLimit` consume
+  `min(quantity, remaining)` and return no residual on a full match (a
+  zero-quantity maker is removed, not parked). `IcebergOrder` consumes on a
+  partial match and, on a full visible match, either draws a positive
+  hidden tranche (a zero-visible iceberg draws all of its hidden) or is
+  removed. `ReserveOrder` does the same with a `NonZeroU64` replenish amount.
+  This holds for every field value, so it covers shapes an update or
+  snapshot restore can produce, not only admission-validated ones. The guard
+  stays as defense in depth.
+- **Self-trade skip: at most one live parked entry.** It parks a maker whose
+  id equals the taker's. `match_order` rejects the taker up front when that
+  id already rests, so the skip fires only when the taker's own order is
+  admitted after that probe, during a non-`Fok` sweep (a `Fok` sweep holds
+  the level guard exclusively, blocking admission). Order storage is keyed
+  by id and admission is insert-if-absent (`DuplicateOrderId`), so at most
+  one resting order carries the taker id. A concurrent demotion or a
+  cancel-and-readmit moves it to a fresh tail sequence and drops the old
+  index key, so the sweep may park it again later, but never holds two live
+  parked entries.
+- **`Failed`, `IdsExhausted`, `SequenceExhausted`, `Abort`** also return
+  `SetAside` but stop the sweep, so nothing is scanned again.
+- Stale index keys (`Vacant` or re-sequenced entries) are removed when the
+  scan meets them, so each one costs one visit in total.
+
+The reachable worst case is therefore `S = 1`: at most one extra visit per
+step, which is `O(K)` and not the `O(S^2 + S*K)` shape the issue describes.
+A cursor would have to preserve the stale-front resequencing checks (#119),
+tail insertion of replenished and demoted makers, and admissions landing
+behind the cursor, which is more traversal state for no reachable gain.
+
+The bound is pinned by `src/price_level/tests/parked_prefix.rs`, using a
+`#[cfg(test)]` thread-local visit counter in `match_front` that release and
+bench builds do not compile: a sweep of `K` fills with nothing parked visits
+exactly `K` entries; with the one parked self-trade maker it visits
+`2K + 2`; a demoted parked maker never forms a two-entry prefix; and an
+800-shape grid over every variant asserts the no-progress shape never
+occurs.
