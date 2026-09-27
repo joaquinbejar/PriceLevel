@@ -1,5 +1,9 @@
 use crate::errors::PriceLevelError;
 use crate::execution::trade::Trade;
+use crate::utils::text::{
+    MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
+    try_push,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -91,55 +95,51 @@ impl fmt::Display for TradeList {
     }
 }
 
+/// Parses the `Trades:[<trade>,<trade>,...]` text written by `Display`.
+///
+/// The list is split at top-level `,` separators and each segment is parsed
+/// with [`Trade::from_str`] directly from a borrowed slice of the input — no
+/// per-trade copy (issue #152). Empty segments (`,,`, a leading or trailing
+/// `,`) are skipped. A `,` nested inside `[...]` belongs to its segment.
+///
+/// # Errors
+///
+/// - [`PriceLevelError::InvalidFormat`] if the `Trades:[` prefix or the final
+///   `]` is missing, or a `[` / `]` inside the list is unbalanced.
+/// - [`PriceLevelError::ParseError`] if brackets nest deeper than 128 levels
+///   (the enclosing list bracket included).
+/// - [`PriceLevelError::InvalidOperation`] if the trade vector cannot grow.
+/// - Any error returned by [`Trade::from_str`] for a malformed segment,
+///   reported for the first malformed segment in input order.
 impl FromStr for TradeList {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with("Trades:[") || !s.ends_with("]") {
-            return Err(PriceLevelError::InvalidFormat);
-        }
-
-        let content_start = s.find('[').ok_or(PriceLevelError::InvalidFormat)?;
-        let content_end = s.rfind(']').ok_or(PriceLevelError::InvalidFormat)?;
-
-        if content_start >= content_end {
-            return Err(PriceLevelError::InvalidFormat);
-        }
-
-        let content = &s[content_start + 1..content_end];
+        let content = s
+            .strip_prefix("Trades:[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .ok_or(PriceLevelError::InvalidFormat)?;
 
         if content.is_empty() {
             return Ok(TradeList::new());
         }
 
+        // The enclosing `[` of the list counts toward the nesting limit, so
+        // segments may nest one level less than the limit.
+        let limit = MAX_TEXT_NESTING_DEPTH_INSIDE_LIST;
         let mut trades = Vec::new();
-        let mut current_trade = String::new();
-        let mut bracket_depth = 0;
-
-        for c in content.chars() {
-            match c {
-                ',' if bracket_depth == 0 => {
-                    if !current_trade.is_empty() {
-                        let trade = Trade::from_str(&current_trade)?;
-                        trades.push(trade);
-                        current_trade.clear();
-                    }
+        for segment in TopLevelSplit::new(content, b',', b"[", b"]", limit) {
+            let segment = segment.map_err(|e| match e {
+                NestingError::TooDeep { .. } => {
+                    NestingError::too_deep_error(MAX_TEXT_NESTING_DEPTH)
                 }
-                '[' => {
-                    bracket_depth += 1;
-                    current_trade.push(c);
+                NestingError::UnmatchedClose | NestingError::Unclosed => {
+                    PriceLevelError::InvalidFormat
                 }
-                ']' => {
-                    bracket_depth -= 1;
-                    current_trade.push(c);
-                }
-                _ => current_trade.push(c),
+            })?;
+            if !segment.text.is_empty() {
+                try_push(&mut trades, Trade::from_str(segment.text)?)?;
             }
-        }
-
-        if !current_trade.is_empty() {
-            let trade = Trade::from_str(&current_trade)?;
-            trades.push(trade);
         }
 
         Ok(TradeList { trades })

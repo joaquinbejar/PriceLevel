@@ -1,5 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, Side};
+use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{Price, Quantity, TimestampMs, UnixClock};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -193,27 +194,25 @@ impl FromStr for Trade {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 || parts[0] != "Trade" {
-            return Err(PriceLevelError::InvalidFormat);
-        }
-
-        let fields_str = parts[1];
-        let mut fields = std::collections::HashMap::new();
-
-        for field_pair in fields_str.split(';') {
-            let kv: Vec<&str> = field_pair.split('=').collect();
-            if kv.len() == 2 {
-                fields.insert(kv[0], kv[1]);
-            }
-        }
-
-        let get_field = |field: &str| -> Result<&str, PriceLevelError> {
-            match fields.get(field) {
-                Some(result) => Ok(*result),
-                None => Err(PriceLevelError::MissingField(field.to_string())),
-            }
+        // Exactly one `:` separates the `Trade` tag from the field list.
+        let fields_str = match split_exactly_once(s, b':') {
+            Some(("Trade", fields_str)) => fields_str,
+            _ => return Err(PriceLevelError::InvalidFormat),
         };
+
+        // `key=value` pairs: a pair without exactly one `=` is ignored and a
+        // repeated key keeps its last value (see `utils::text::Fields`).
+        const FIELD_NAMES: [&str; 7] = [
+            "trade_id",
+            "taker_order_id",
+            "maker_order_id",
+            "price",
+            "quantity",
+            "taker_side",
+            "timestamp",
+        ];
+        let fields = Fields::parse(fields_str, &FIELD_NAMES);
+        let get_field = |name: &str| fields.require(name);
 
         // Parse trade_id
         let trade_id_str = get_field("trade_id")?;
