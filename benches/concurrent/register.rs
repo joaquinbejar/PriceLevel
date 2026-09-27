@@ -1,7 +1,7 @@
 use super::support::{
     WorkerOutcome, WorkerResult, classify_match, create_standard_order, run_timed, wait_for_go,
 };
-use criterion::{BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, Throughput};
 use pricelevel::{
     Hash32, Id, OrderType, OrderUpdate, PegReferenceType, Price, PriceLevel, PriceLevelError,
     Quantity, Side, TakerKind, TimeInForce, TimestampMs, UuidGenerator,
@@ -43,6 +43,17 @@ pub fn register_benchmarks(c: &mut Criterion) {
 
     // Test with various thread counts
     for thread_count in [2, 4, 8, 16].iter() {
+        // Every workload below runs `run_timed(thread_count, ...)`: one
+        // Criterion "iteration" is one round in which every one of
+        // `thread_count` workers performs exactly one operation
+        // concurrently (see `support::run_timed`), so the returned Duration
+        // covers `thread_count * iters` total operations, not `iters`.
+        // Declaring the throughput explicitly makes Criterion report the
+        // per-operation rate instead of leaving "1 iteration" ambiguous
+        // between "one op" and "one round of `thread_count` ops" (issue
+        // #141 review).
+        group.throughput(Throughput::Elements(*thread_count as u64));
+
         group.bench_with_input(
             BenchmarkId::new("concurrent_add_standard_orders", thread_count),
             thread_count,

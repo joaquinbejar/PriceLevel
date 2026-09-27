@@ -1,7 +1,7 @@
 use super::support::{
     WorkerOutcome, WorkerResult, classify_match, create_standard_order, run_timed, wait_for_go,
 };
-use criterion::{BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, Throughput};
 use pricelevel::{
     Id, OrderUpdate, PriceLevel, PriceLevelError, Quantity, TakerKind, TimeInForce, TimestampMs,
     UuidGenerator,
@@ -10,6 +10,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
+
+/// Both contention workloads below run at a fixed 8 threads.
+const CONTENTION_THREAD_COUNT: usize = 8;
 
 /// Register benchmarks that test different contention patterns
 pub fn register_contention_benchmarks(c: &mut Criterion) {
@@ -21,18 +24,25 @@ pub fn register_contention_benchmarks(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("PriceLevel - Contention Patterns");
 
+    // Both workloads below run `run_timed(CONTENTION_THREAD_COUNT, ...)`:
+    // one Criterion "iteration" is one round in which every one of the 8
+    // workers performs exactly one operation concurrently (see
+    // `support::run_timed`), so the returned Duration covers
+    // `CONTENTION_THREAD_COUNT * iters` total operations, not `iters`.
+    // Declaring the throughput explicitly makes Criterion report the
+    // per-operation rate instead of leaving "1 iteration" ambiguous between
+    // "one op" and "one round of 8 ops" (issue #141 review).
+    group.throughput(Throughput::Elements(CONTENTION_THREAD_COUNT as u64));
+
     // Test with different read/write ratios
     for read_ratio in [0, 25, 50, 75, 95].iter() {
-        // Fixed at 8 threads which is a common server core count
-        let thread_count = 8;
-
         group.bench_with_input(
             BenchmarkId::new("read_write_ratio", read_ratio),
             read_ratio,
             |b, &read_ratio| {
                 b.iter_custom(|iters| {
                     let (duration, _outcome) =
-                        measure_read_write_contention(thread_count, iters, read_ratio)
+                        measure_read_write_contention(CONTENTION_THREAD_COUNT, iters, read_ratio)
                             .unwrap_or_else(|e| panic!("read_write_ratio({read_ratio}): {e}"));
                     duration
                 });
@@ -42,19 +52,17 @@ pub fn register_contention_benchmarks(c: &mut Criterion) {
 
     // Test with different access patterns (hot spot vs distributed)
     for hot_spot_percentage in [0, 20, 50, 80, 100].iter() {
-        // Fixed at 8 threads
-        let thread_count = 8;
-
         group.bench_with_input(
             BenchmarkId::new("hot_spot_contention", hot_spot_percentage),
             hot_spot_percentage,
             |b, &hot_spot_percentage| {
                 b.iter_custom(|iters| {
-                    let (duration, _outcome) =
-                        measure_hot_spot_contention(thread_count, iters, hot_spot_percentage)
-                            .unwrap_or_else(|e| {
-                                panic!("hot_spot_contention({hot_spot_percentage}): {e}")
-                            });
+                    let (duration, _outcome) = measure_hot_spot_contention(
+                        CONTENTION_THREAD_COUNT,
+                        iters,
+                        hot_spot_percentage,
+                    )
+                    .unwrap_or_else(|e| panic!("hot_spot_contention({hot_spot_percentage}): {e}"));
                     duration
                 });
             },
@@ -64,16 +72,30 @@ pub fn register_contention_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
+/// Fixed resting-order pool size for [`measure_read_write_contention`],
+/// deliberately independent of the requested iteration count.
+///
+/// `add` and `cancel` both recycle ids within `0..SEED_DEPTH` (the same
+/// replace-in-place pattern [`measure_hot_spot_contention`] already uses)
+/// instead of each `add` growing the book by one order: growing the book
+/// with `iterations` made `snapshot()`'s O(depth) traversal cost — and the
+/// resting depth available to the sole matcher — drift with whatever
+/// iteration count Criterion's calibration happened to pick, so "time /
+/// iters" was not a stable per-operation cost and changed with the
+/// warmup/measurement-time settings (issue #141 review). A fixed pool seeded
+/// once, outside the timed region, keeps every read and write at a constant
+/// cost regardless of `iterations`.
+const SEED_DEPTH: u64 = 500;
+
 /// Measures time for operations with different read/write ratios on one
 /// shared [`PriceLevel`].
 ///
 /// Only `thread_id == 0` calls `match_order` (the single-matcher-per-level
 /// contract — see `register.rs`'s `measure_concurrent_mixed_operations` doc
-/// comment); every other thread substitutes an equally cheap concurrent-safe
-/// read for its would-be match op. The seed order count scales with
-/// `iterations` (instead of a fixed 500) so the sole matcher's liquidity
-/// never runs dry regardless of how many iterations Criterion requests
-/// (issue #141).
+/// comment); every other thread performs a genuine concurrency-safe WRITE
+/// instead (never a read substitute) so the advertised `read_ratio` matches
+/// the real read/write mix — a read substitute here would silently inflate
+/// the actual read fraction above the labeled one (issue #141 review).
 /// `read_ratio` = percentage of read operations (0-100).
 fn measure_read_write_contention(
     thread_count: usize,
@@ -84,12 +106,8 @@ fn measure_read_write_contention(
         .map_err(|e| format!("bad transaction-id namespace uuid: {e}"))?;
     let transaction_id_gen = Arc::new(UuidGenerator::new(namespace));
 
-    // Sized so the sole matcher's worst-case demand (every one of its own
-    // iterations landing on the match branch, at quantity 2) stays well
-    // under the seeded supply.
-    let seed_count = iterations.max(1);
     let price_level = PriceLevel::new(10000);
-    for i in 0..seed_count {
+    for i in 0..SEED_DEPTH {
         let order = create_standard_order(i, 10000, 10);
         price_level
             .add_order(order)
@@ -97,8 +115,9 @@ fn measure_read_write_contention(
     }
     let price_level = Arc::new(price_level);
 
-    let new_maker_base = seed_count;
-    let taker_base = seed_count + thread_count as u64 * iterations;
+    // Only the sole matcher thread uses this block; disjoint from the fixed
+    // `0..SEED_DEPTH` pool regardless of `iterations`.
+    let taker_base = SEED_DEPTH;
 
     run_timed(thread_count, move |thread_id, ready, go| {
         let price_level = Arc::clone(&price_level);
@@ -120,14 +139,26 @@ fn measure_read_write_contention(
                     }
                     outcome.successful += 1;
                 } else {
+                    // Recycle a slot in the fixed pool rather than growing
+                    // it; another thread may already be mid-cycle on the
+                    // same slot, so a lost `add_order` race is an EXPECTED
+                    // duplicate, not a failure.
+                    let order_idx = (thread_id as u64 + i) % SEED_DEPTH;
+
                     match i % 3 {
                         0 => {
-                            let order_id = new_maker_base + thread_id as u64 * iterations + i;
-                            let order = create_standard_order(order_id, 10000, 10);
-                            price_level.add_order(order).map_err(|e| {
-                                format!("thread {thread_id} add failed at iteration {i}: {e}")
-                            })?;
-                            outcome.successful += 1;
+                            let order = create_standard_order(order_idx, 10000, 10);
+                            match price_level.add_order(order) {
+                                Ok(_) => outcome.successful += 1,
+                                Err(PriceLevelError::DuplicateOrderId(_)) => {
+                                    outcome.rejected += 1;
+                                }
+                                Err(e) => {
+                                    return Err(format!(
+                                        "thread {thread_id} add failed at iteration {i}: {e}"
+                                    ));
+                                }
+                            }
                         }
                         1 if thread_id == 0 => {
                             let taker_id = Id::from_u64(taker_base + i);
@@ -141,23 +172,23 @@ fn measure_read_write_contention(
                             );
                             classify_match(&result, &mut outcome);
                         }
-                        1 => {
-                            // Non-matcher thread: cheap read substitute.
-                            let _ = price_level.visible_quantity();
-                            outcome.successful += 1;
-                        }
-                        _ => {
-                            let order_id = Id::from_u64(i % seed_count);
-                            match price_level.update_order(OrderUpdate::Cancel { order_id }) {
-                                Ok(Some(_)) => outcome.successful += 1,
-                                Ok(None) => outcome.missing += 1,
-                                Err(e) => {
-                                    return Err(format!(
-                                        "thread {thread_id} cancel failed at iteration {i}: {e}"
-                                    ));
-                                }
+                        // Covers both `i % 3 == 1` on a non-matcher thread
+                        // (never calls `match_order`) and `i % 3 == 2`: a
+                        // cancel is an equally cheap, genuinely
+                        // concurrency-safe write — a read substitute here
+                        // would understate the real write fraction below
+                        // the labeled `read_ratio` (issue #141 review).
+                        _ => match price_level.update_order(OrderUpdate::Cancel {
+                            order_id: Id::from_u64(order_idx),
+                        }) {
+                            Ok(Some(_)) => outcome.successful += 1,
+                            Ok(None) => outcome.missing += 1,
+                            Err(e) => {
+                                return Err(format!(
+                                    "thread {thread_id} cancel failed at iteration {i}: {e}"
+                                ));
                             }
-                        }
+                        },
                     }
                 }
                 outcome.completed += 1;
@@ -176,7 +207,9 @@ fn measure_read_write_contention(
 /// another thread just re-added first; that is classified as `rejected`,
 /// not propagated as a worker failure. Only `thread_id == 0` calls
 /// `match_order`, for the same single-matcher-per-level reason as
-/// `measure_read_write_contention`.
+/// `measure_read_write_contention`; every other thread performs a
+/// concurrency-safe cancel instead of a read substitute, for the same
+/// real-mix reason.
 /// `hot_spot_percentage` = percentage of operations targeting the hot range
 /// (0-100).
 fn measure_hot_spot_contention(
@@ -274,9 +307,24 @@ fn measure_hot_spot_contention(
                         classify_match(&result, &mut outcome);
                     }
                     _ => {
-                        // Non-matcher thread: cheap read substitute.
-                        let _ = price_level.visible_quantity();
-                        outcome.successful += 1;
+                        // Non-matcher thread: cancel is an equally cheap,
+                        // genuinely concurrency-safe write — a read
+                        // substitute here would understate the real write
+                        // fraction the same way it would in
+                        // `measure_read_write_contention` (issue #141
+                        // review).
+                        match price_level.update_order(OrderUpdate::Cancel {
+                            order_id: Id::from_u64(order_idx),
+                        }) {
+                            Ok(Some(_)) => outcome.successful += 1,
+                            Ok(None) => outcome.missing += 1,
+                            Err(e) => {
+                                return Err(format!(
+                                    "thread {thread_id} hot-spot cancel (non-matcher) failed at \
+                                     iteration {i}: {e}"
+                                ));
+                            }
+                        }
                     }
                 }
                 outcome.completed += 1;
@@ -307,7 +355,9 @@ fn smoke_check_read_write_contention(iterations: u64) {
     let expected = SMOKE_THREAD_COUNT as u64 * iterations;
     assert_eq!(
         outcome.completed, expected,
-        "smoke_check_read_write_contention({iterations}): expected exactly {expected} completed ops"
+        "smoke_check_read_write_contention({iterations}): expected exactly {expected} completed \
+         ops — {expected} is thread_count * iterations, the actual op count behind the Duration \
+         `run_timed` returns for this single Criterion iteration batch"
     );
     let accounted = outcome.successful
         + outcome.missing
@@ -318,7 +368,8 @@ fn smoke_check_read_write_contention(iterations: u64) {
     assert_eq!(
         accounted, expected,
         "smoke_check_read_write_contention({iterations}): every completed op must land in exactly \
-         one outcome bucket"
+         one outcome bucket — this must keep holding now that both the add and non-matcher write \
+         branches recycle the fixed SEED_DEPTH pool and can be legitimately rejected as duplicates"
     );
 }
 
