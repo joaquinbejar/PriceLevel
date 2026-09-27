@@ -21,6 +21,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// tail-only FIFO. This lets a partially-filled maker keep its place at the
 /// front of the queue: the residual is re-inserted at its *original* sequence,
 /// instead of being appended to the tail.
+///
+/// # Concurrency
+///
+/// The ordered index is a lock-free `crossbeam-skiplist` `SkipMap`; the
+/// id-keyed order storage is a `DashMap`, whose shards are reader-writer
+/// locks. The queue as a whole is therefore **not** lock-free: admission,
+/// update, cancel and each match step take the target entry's shard write
+/// lock, and iteration takes shard read locks.
 #[derive(Debug)]
 pub struct OrderQueue {
     /// A map of order IDs to `(insertion sequence, order)` for O(1) lookups.
@@ -119,7 +127,7 @@ impl OrderQueue {
     pub(crate) fn push(&self, order: Arc<OrderType<()>>) {
         // `Relaxed` is sufficient: only the uniqueness and monotonicity of the
         // counter matter. The happens-before ordering between concurrent
-        // producers/consumers is provided by the lock-free `index`/`orders`
+        // producers/consumers is provided by the `index` (`SkipMap`) / `orders` (`DashMap`)
         // structures, not by this counter, so no synchronization rides on it.
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
         let order_id = order.id();

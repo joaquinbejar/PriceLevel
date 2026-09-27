@@ -4,21 +4,23 @@
 
 //!  # PriceLevel
 //!
-//!  A high-performance price level implementation for limit order books in Rust. The `Gtc` / `Ioc` / `Day` match path is lock-free (atomics + sharded / skiplist structures); admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (see below). This library provides the building blocks for creating efficient trading systems with support for multiple order types and concurrent access patterns.
+//!  A price level implementation for limit order books in Rust. A [`PriceLevel`] owns every order resting at one price: it matches an incoming taker against that queue in strict price-time order, tracks visible / hidden quantity counters, records execution statistics, and round-trips through checksum-protected snapshots. It is the building block an order book composes across prices, not a full order book.
+//!
+//!  The crate is synchronous and built from lock-free components (a `crossbeam-skiplist` ordered index and atomic counters) plus a small number of documented locks. The complete public methods are **not** lock-free: see [Concurrency Model](#concurrency-model) for which method takes which lock.
 //!
 //!  ## Features
 //!
-//!  - Lock-free `Gtc` / `Ioc` / `Day` match path for high-throughput trading; admissions and updates (cancel / resize) are shared-lock mutators — one normally-uncontended shared acquisition that can block behind an `O(depth)` fill-or-kill match holding the exclusive side (issue #112)
+//!  - Strict price-time (FIFO) matching at a single price, with deterministic trade emission
 //!  - Support for diverse order types including standard limit orders, iceberg orders, post-only, fill-or-kill, and more
-//!  - Thread-safe operations built on atomic counters and lock-free data structures (with the fill-or-kill guard noted above)
-//!  - Efficient order matching and execution logic
+//!  - Thread-safe concurrent admissions, updates (cancel / resize) and reads alongside one logical matcher per level (see [Concurrency Model](#concurrency-model))
+//!  - Lock-free ordered index (`crossbeam-skiplist`) and atomic quantity / statistics counters; order storage is a sharded `DashMap`
+//!  - Checked arithmetic on the quantity / value accessors (`total_quantity`, `executed_quantity`, `executed_value`) with typed errors; removing the remaining production panic paths (for example the `snapshot()` aggregate assertions) is tracked in #161
+//!  - Checksum-protected (SHA-256) snapshots for persistence and recovery
 //!  - Designed with domain-driven principles for financial markets
-//!  - Comprehensive test suite demonstrating concurrent usage scenarios
-//!  - Built with crossbeam's lock-free data structures (`crossbeam-skiplist`)
+//!  - Comprehensive test suite, including concurrent usage scenarios
 //!  - Optimized statistics tracking for each price level
-//!  - Memory-efficient implementations suitable for high-frequency trading systems
 //!
-//!  Perfect for building matching engines, market data systems, algorithmic trading platforms, and financial exchanges where performance and correctness are critical.
+//!  Intended as a building block for matching engines, market data systems, algorithmic trading platforms, and financial exchanges.
 //!
 //!  ## Supported Order Types
 //!
@@ -44,11 +46,11 @@
 //!
 //!  ## Implementation Details
 //!
-//!  - **Thread Safety**: Uses atomic operations and lock-free data structures. The `Gtc` / `Ioc` / `Day` match path takes no lock; admissions and updates (cancel / resize) take the shared side of a per-level guard — normally uncontended, but they can block behind an `O(depth)` fill-or-kill match that holds the exclusive side (issue #112)
-//!  - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index
+//!  - **Thread Safety**: Lock-free ordered index and atomic counters, a sharded `DashMap` for order storage (per-shard locks), and a per-level reader-writer guard used to make fill-or-kill all-or-nothing. See [Concurrency Model](#concurrency-model)
+//!  - **Order Queue Management**: Specialized order queue keeping strict price-time priority via a lock-free `crossbeam-skiplist` ordered index keyed by insertion sequence
 //!  - **Statistics Tracking**: Each price level tracks execution statistics in real-time
 //!  - **Snapshot Capabilities**: Create point-in-time snapshots of price levels for market data distribution
-//!  - **Efficient Matching**: Optimized algorithms for matching incoming orders against existing orders
+//!  - **Efficient Matching**: Matching walks the ordered index from the front in price-time order
 //!  - **Support for Special Order Types**: Custom handling for iceberg orders, reserve orders, and other special types
 //!
 //!  ## Price Level Features
@@ -59,81 +61,101 @@
 //!  - **Performance Monitoring**: Built-in statistics for monitoring execution performance
 //!  - **Order Matching Logic**: Sophisticated algorithms for matching orders at each price level
 //!
-//! ## Performance Benchmark Results
+//! ## Concurrency Model
 //!
-//! The `pricelevel` library has been thoroughly tested for performance in high-frequency trading scenarios. Below are the results from recent simulations conducted on an M4 Max processor, demonstrating the library's capability to handle intensive concurrent trading operations.
+//! "Lock-free" describes **components**, not complete public methods.
 //!
-//! ### High-Frequency Trading Simulation
+//! | Component | Progress |
+//! |-----------|----------|
+//! | Ordered index (`crossbeam-skiplist` `SkipMap`, insertion sequence to order id) | Lock-free |
+//! | Quantity, count, topology and most statistics counters (`std` atomics) | Lock-free |
+//! | `value_executed` statistics accumulator (`portable_atomic::AtomicU128`) | Lock-free where the CPU has a native 128-bit CAS (aarch64; x86_64 with `cmpxchg16b`); elsewhere `portable-atomic` falls back to a global lock for this one counter |
+//! | Order storage (`dashmap::DashMap`, order id to order) | Sharded reader-writer locks, one per shard |
+//! | Fill-or-kill guard (`std::sync::RwLock<()>`, one per level) | Blocking reader-writer lock |
 //!
-//! #### Simulation Parameters
-//! - **Price Level**: 10000
-//! - **Duration**: 5002 ms (5.002 seconds)
-//! - **Threads**: 30 total
-//!   - 10 maker threads (adding orders)
-//!   - 10 taker threads (executing matches)
-//!   - 10 canceller threads (cancelling orders)
-//! - **Initial Orders**: 1000 orders seeded before simulation
+//! What each public method acquires:
 //!
-//! #### Performance Metrics
+//! | Method | Locks taken |
+//! |--------|-------------|
+//! | [`PriceLevel::match_order`], `Gtc` / `Ioc` / `Gtd` / `Day` taker | The `DashMap` shard **write** lock of each maker entry it fills, one at a time (the internal `OrderQueue::match_front` step). No level-wide guard |
+//! | [`PriceLevel::match_order`], `Fok` taker | The level-wide fill-or-kill guard's **exclusive** side across its `O(depth)` feasibility dry-run and sweep, plus the per-maker shard write locks above |
+//! | [`PriceLevel::match_order`], post-only taker | No sweep and no maker write lock; its depth scan iterates order storage under `DashMap` shard **read** locks |
+//! | [`PriceLevel::add_order`] | Fill-or-kill guard's **shared** side, plus the shard write lock of the new id |
+//! | [`PriceLevel::update_order`] (every [`OrderUpdate`] variant) | Fill-or-kill guard's **shared** side, plus the shard write lock of the target id |
+//! | [`PriceLevel::snapshot`] | Fill-or-kill guard's **shared** side, plus `DashMap` shard read locks while it materializes the orders |
+//! | Counter accessors ([`PriceLevel::visible_quantity`], [`PriceLevel::order_count`], statistics) | Atomic loads only (advisory, eventually consistent; `value_executed` subject to the fallback above) |
 //!
-//! | Metric | Total Operations | Rate (per second) |
-//! |--------|-----------------|-------------------|
-//! | Orders Added | 715,814 | 143,095.10 |
-//! | Matches Executed | 374,910 | 74,946.54 |
-//! | Cancellations | 96,575 | 19,305.87 |
-//! | **Total Operations** | **1,187,299** | **237,347.51** |
+//! The supported execution model:
 //!
-//! #### Final State After Simulation
-//! - **Price**: 10000
-//! - **Visible Quantity**: 4,590,308
-//! - **Hidden Quantity**: 4,032,155
-//! - **Total Quantity**: 8,622,463
-//! - **Order Count**: 704,156
+//! - **One logical matcher per level.** Two concurrent [`PriceLevel::match_order`]
+//!   calls on the same level are not made safe by the crate; the caller must
+//!   serialize them (an order book typically matches a level from one thread).
+//! - **Concurrent mutators are supported.** [`PriceLevel::add_order`] and
+//!   [`PriceLevel::update_order`] may run from any number of threads, concurrently
+//!   with the matcher and with each other.
+//! - **The maker entry is the serialization point.** The matcher applies each fill
+//!   while holding that maker's `DashMap` shard write lock, the same lock a cancel
+//!   or resize of that order takes, so a cancel racing the fill either fully wins
+//!   or fully loses; it is never lost. Admissions, cancels and resizes of other
+//!   orders that hash to the same shard also wait on that lock.
+//! - **Fill-or-kill excludes every mutator on the level.** A `Fok` match holds the
+//!   level guard exclusively for its whole dry-run and sweep, so admissions,
+//!   updates and snapshots on that level block for an `O(depth)` section. The
+//!   other time-in-force paths skip that guard, but skipping it is **not** the
+//!   absence of locking: they still take the per-maker shard lock.
+//! - **Readers are always allowed.** Counter reads never block. A
+//!   [`PriceLevel::snapshot`] waits only behind an in-flight fill-or-kill or a
+//!   held shard lock; it walks the shards without a transaction over the whole
+//!   level, so under concurrent same-side resizes it is not a linearizable
+//!   point-in-time view (tracked in #162).
 //!
-//! #### Price Level Statistics
-//! - **Orders Added**: 716,814
-//! - **Orders Removed**: 215
-//! - **Orders Executed**: 401,864
-//! - **Quantity Executed**: 1,124,714
-//! - **Value Executed**: 11,247,140,000
-//! - **Average Execution Price**: 10,000.00
-//! - **Average Waiting Time**: 1,788.31 ms
-//! - **Time Since Last Execution**: 1 ms
+//! ## Performance Evidence
 //!
-//! ### Contention Pattern Analysis
+//! This crate currently publishes **no** throughput or latency figures. The
+//! Criterion benchmarks under `benches/` (`make bench`) are the supported way to
+//! measure the build you run, on your hardware and toolchain.
 //!
-//! #### Hot Spot Contention Test
-//! Performance under different levels of contention targeting specific price levels:
+//! ### Withdrawn historical figures
 //!
-//! | Hot Spot % | Operations/second |
-//! |------------|-------------------|
-//! | 0% | 7,548,438.05 |
-//! | 25% | 7,752,860.57 |
-//! | 50% | 7,584,981.59 |
-//! | 75% | 7,267,749.39 |
-//! | 100% | 6,970,720.77 |
+//! Releases up to 0.9.x printed a "High-Frequency Trading Simulation" table and a
+//! contention table produced by the `hft_simulation` and `contention_test`
+//! examples. Those numbers are withdrawn and excluded from any current performance
+//! conclusion:
 //!
-//! #### Read/Write Ratio Test
-//! Performance under different read/write operation ratios:
+//! - They have no provenance: no commit, compiler version, build profile, or
+//!   workload manifest was recorded.
+//! - They were internally inconsistent: the table reported 237,347.51 total
+//!   operations per second, while the analysis below it claimed more than 264,000.
+//! - The simulation ran ten taker threads calling `match_order` on one shared
+//!   level, outside the single-matcher contract above.
+//! - The example's periodic counter flush over-counted matches and cancellations
+//!   whenever a thread's success count sat on a flush boundary, and the contention
+//!   tables counted rejected and missing-order calls as operations.
+//! - Aggregate throughput is not an operation latency, so the figures never
+//!   supported the "microsecond-level" or production-suitability claims made
+//!   alongside them.
 //!
-//! | Read % | Operations/second |
-//! |--------|-------------------|
-//! | 0% | 6,353,202.47 |
-//! | 25% | 34,727.89 |
-//! | 50% | 28,783.28 |
-//! | 75% | 31,936.73 |
-//! | 95% | 54,316.57 |
+//! No replacement run is published in their place.
 //!
-//! ### Analysis
+//! ### Operation accounting for future results
 //!
-//! The simulation demonstrates the library's exceptional performance capabilities:
+//! Any number published for this crate must state which of these distinct metrics
+//! it measures, together with the commit, toolchain, build profile, hardware and
+//! workload (thread roles, id ranges, order mix, run length):
 //!
-//! - **High-Frequency Trading**: Over **264,000 operations per second** in realistic mixed workloads
-//! - **Hot Spot Performance**: Up to **7.75 million operations per second** under optimal conditions
-//! - **Write-Heavy Workloads**: Over **6.3 million operations per second** for pure write operations
-//! - **Lock-Free Match Path**: The `Gtc` / `Ioc` / `Day` match runs lock-free with minimal contention overhead; admissions / updates take a normally-uncontended shared lock that can block behind an `O(depth)` fill-or-kill match
+//! - **Attempted calls**: every call to a public method, whatever its outcome.
+//! - **Successful admissions / cancels / updates**: calls that changed the level,
+//!   reported separately from calls that were rejected (for example a duplicate id)
+//!   or that targeted a missing order.
+//! - **Successful takers**: `match_order` calls that executed a non-zero quantity.
+//! - **Emitted fills**: the number of [`Trade`] values produced; one taker may emit
+//!   many.
+//! - **Whole-lifecycle throughput**: complete order lifecycles (admit, then fill or
+//!   cancel) per second.
 //!
-//! The performance characteristics demonstrate that the `pricelevel` library is suitable for production use in high-performance trading systems, matching engines, and other financial applications where microsecond-level performance is critical.
+//! Throughput of any kind is not an operation-latency percentile; a latency claim
+//! needs per-operation timing and a reported distribution (for example p50 / p99 /
+//! p99.9 / max).
 //!
 //! ## Changes in v0.8.0
 //!

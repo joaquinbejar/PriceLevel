@@ -376,7 +376,7 @@ impl PriceLevelStatistics {
     /// the sticky [`stats_degraded`](Self::stats_degraded) flag is set: the
     /// dropped execution is then observable, even though the caller
     /// (`PriceLevel::match_order`) cannot fail the already-committed trade.
-    /// Because these are independent lock-free atomics, a *concurrent* reader may
+    /// Because these are independent atomics, a *concurrent* reader may
     /// still glimpse a prefix transiently before its rollback (the same window
     /// the #111 reserve-then-rollback admission has); the guarantee is on the
     /// committed final state, not on the transient.

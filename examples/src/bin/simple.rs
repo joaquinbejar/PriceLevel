@@ -1,4 +1,13 @@
-// examples/src/bin/multi_threaded_price_level.rs
+// examples/src/bin/simple.rs
+//
+// Several threads working one shared price level.
+//
+// `PriceLevel::match_order` supports a single logical matcher per level: two
+// concurrent `match_order` calls on the same level must be serialized by the
+// caller. Exactly one thread (`MATCHER_THREAD_ID`) matches here; the others
+// add, cancel and resize orders, which the level supports concurrently.
+// Cancels and resizes that find no resting order are reported as missing,
+// not as successes.
 
 use pricelevel::{
     Hash32, Id, OrderType, OrderUpdate, Price, PriceLevel, Quantity, Side, TakerKind, TimeInForce,
@@ -11,6 +20,34 @@ use std::time::{Duration, Instant};
 use tracing::info;
 use uuid::Uuid;
 
+/// The only thread allowed to call `match_order` on the shared level.
+const MATCHER_THREAD_ID: usize = 1;
+/// Taker ids live in a disjoint high range, so a taker id can never equal a
+/// resting maker id (a self-fill, impossible for a real order).
+const TAKER_ID_BASE: u64 = 1 << 40;
+
+/// What a worker thread does with the shared level.
+#[derive(Debug, Clone, Copy)]
+enum Role {
+    Add,
+    Match,
+    Cancel,
+    Resize,
+}
+
+fn role_for(thread_id: usize) -> Role {
+    if thread_id == MATCHER_THREAD_ID {
+        return Role::Match;
+    }
+    match thread_id % 4 {
+        0 => Role::Add,
+        2 => Role::Cancel,
+        // Any other thread that would have matched resizes instead, so the
+        // level never sees two concurrent matchers.
+        _ => Role::Resize,
+    }
+}
+
 fn main() {
     setup_logger().expect("Failed to initialize logger");
     info!("Multi-threaded Price Level Example");
@@ -21,7 +58,7 @@ fn main() {
     // Create a shared price level at price 10000
     let price_level = Arc::new(PriceLevel::new(10000));
 
-    // Transaction ID generator shared across threads
+    // Trade id generator, used only by the matcher thread
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
     let tx_id_generator = Arc::new(UuidGenerator::new(namespace));
 
@@ -45,48 +82,55 @@ fn main() {
 
         // Spawn a thread
         let handle = thread::spawn(move || {
-            // Each thread will perform a different operation based on its ID
-            match thread_id % 4 {
-                0 => {
-                    // This thread adds orders
-                    thread_barrier.wait(); // Wait for all threads to be ready
+            thread_barrier.wait(); // Wait for all threads to be ready
 
+            match role_for(thread_id) {
+                Role::Add => {
+                    let (mut admitted, mut rejected) = (0u64, 0u64);
                     for i in 0..50 {
                         // Offset past the ids seeded by setup_initial_orders
-                        // (0..240): admission now rejects a duplicate id
-                        // (issue #113) instead of silently overwriting.
+                        // (0..240): admission rejects a duplicate id (issue
+                        // #113) instead of silently overwriting.
                         let order_id = 10_000 + thread_id as u64 * 1000 + i;
                         let order = create_order(thread_id, order_id);
-                        thread_price_level
-                            .add_order(order)
-                            .expect("add_order should succeed");
+                        match thread_price_level.add_order(order) {
+                            Ok(_) => admitted += 1,
+                            Err(_) => rejected += 1,
+                        }
 
                         // Simulate some work
                         thread::sleep(Duration::from_millis(1));
                     }
 
-                    info!("Thread {} completed: Added 50 orders", thread_id);
+                    info!(
+                        "Thread {} (add): 50 attempted, {} admitted, {} rejected",
+                        thread_id, admitted, rejected
+                    );
                 }
-                1 => {
-                    // This thread matches orders
-                    thread_barrier.wait(); // Wait for all threads to be ready
-
+                Role::Match => {
+                    let (mut successful_takers, mut fills) = (0u64, 0usize);
                     for i in 0..20 {
-                        let taker_id = Id::from_u64(thread_id as u64 * 1000 + i);
+                        let taker_id = Id::from_u64(TAKER_ID_BASE + i);
                         let match_result = thread_price_level.match_order(
                             5, // Match 5 units each time
                             taker_id,
                             TimeInForce::Gtc,
                             TakerKind::Standard,
-                            TimestampMs::new(1_716_000_000_000),
+                            TimestampMs::new(now_ms()),
                             &thread_tx_id_gen,
                         );
+
+                        let executed = match_result.executed_quantity().unwrap_or(Quantity::ZERO);
+                        if executed.as_u64() > 0 {
+                            successful_takers += 1;
+                        }
+                        fills += match_result.trades().len();
 
                         if i % 5 == 0 {
                             info!(
                                 "Thread {} match result: executed={}, remaining={}, complete={}",
                                 thread_id,
-                                match_result.executed_quantity().unwrap_or(Quantity::ZERO),
+                                executed,
                                 match_result.remaining_quantity(),
                                 match_result.is_complete()
                             );
@@ -97,27 +141,20 @@ fn main() {
                     }
 
                     info!(
-                        "Thread {} completed: Executed 20 match operations",
-                        thread_id
+                        "Thread {} (match): 20 calls, {} successful takers, {} fills",
+                        thread_id, successful_takers, fills
                     );
                 }
-                2 => {
-                    // This thread cancels orders
-                    thread_barrier.wait(); // Wait for all threads to be ready
-
+                Role::Cancel => {
+                    let (mut cancelled, mut missing, mut errors) = (0u64, 0u64, 0u64);
                     for i in 0..30 {
-                        // Try to cancel orders created by thread 0
+                        // Try to cancel seeded orders; another canceller or
+                        // the matcher may already have removed them.
                         let order_id = Id::from_u64(i);
-                        let result =
-                            thread_price_level.update_order(OrderUpdate::Cancel { order_id });
-
-                        if i % 10 == 0 {
-                            info!(
-                                "Thread {} cancel result for order {}: {:?}",
-                                thread_id,
-                                order_id,
-                                result.is_ok()
-                            );
+                        match thread_price_level.update_order(OrderUpdate::Cancel { order_id }) {
+                            Ok(Some(_)) => cancelled += 1,
+                            Ok(None) => missing += 1,
+                            Err(_) => errors += 1,
                         }
 
                         // Simulate some work
@@ -125,29 +162,22 @@ fn main() {
                     }
 
                     info!(
-                        "Thread {} completed: Attempted to cancel 30 orders",
-                        thread_id
+                        "Thread {} (cancel): 30 attempted, {} cancelled, {} missing, {} errors",
+                        thread_id, cancelled, missing, errors
                     );
                 }
-                _ => {
-                    // This thread updates order quantities
-                    thread_barrier.wait(); // Wait for all threads to be ready
-
+                Role::Resize => {
+                    let (mut resized, mut missing, mut errors) = (0u64, 0u64, 0u64);
                     for i in 0..40 {
-                        // Try to update orders created by thread 0
+                        // Try to resize seeded orders
                         let order_id = Id::from_u64(100 + i);
-                        let result = thread_price_level.update_order(OrderUpdate::UpdateQuantity {
+                        match thread_price_level.update_order(OrderUpdate::UpdateQuantity {
                             order_id,
                             new_quantity: Quantity::new(20), // Update to quantity 20
-                        });
-
-                        if i % 10 == 0 {
-                            info!(
-                                "Thread {} update result for order {}: {:?}",
-                                thread_id,
-                                order_id,
-                                result.is_ok()
-                            );
+                        }) {
+                            Ok(Some(_)) => resized += 1,
+                            Ok(None) => missing += 1,
+                            Err(_) => errors += 1,
                         }
 
                         // Simulate some work
@@ -155,8 +185,8 @@ fn main() {
                     }
 
                     info!(
-                        "Thread {} completed: Attempted to update 40 orders",
-                        thread_id
+                        "Thread {} (resize): 40 attempted, {} resized, {} missing, {} errors",
+                        thread_id, resized, missing, errors
                     );
                 }
             }
@@ -328,4 +358,12 @@ fn print_price_level_info(price_level: &PriceLevel) {
     info!("Hidden quantity: {}", price_level.hidden_quantity());
     info!("Total quantity: {:?}", price_level.total_quantity());
     info!("Order count: {}", price_level.order_count());
+}
+
+// Current wall-clock time in milliseconds
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }

@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v2, v3 and v4 packages all restore; legacy packages keep their original
   checksum. Pinned by v2 (0.8.4) and v3 (0.9.2) fixtures stored verbatim.
 
+### Documentation
+
+- **Concurrency and performance claims corrected (#156).** The crate docs,
+  README, rustdoc and package description no longer call the `Gtc` / `Ioc` /
+  `Day` match path lock-free: each fill is committed under the maker's
+  `DashMap` shard write lock, and `Fok` also holds the level-wide guard
+  exclusively. Only the `SkipMap` index and the atomic counters are described
+  as lock-free (`value_executed` with its platform fallback). A new
+  "Concurrency Model" section documents the per-method locks and the one
+  logical matcher per level contract, superseding the 0.9.0 wording below.
+  The unprovenanced throughput tables (237,347.51 vs "over 264,000" ops/s,
+  measured with ten concurrent takers on one level) are withdrawn, and an
+  operation-accounting guide for future results is added.
+- **Examples respect one matcher per level (#156).** `hft_simulation`,
+  `contention_test` and `simple` now run a single matcher thread per shared
+  level, keep maker and taker ids disjoint, and report successful operations
+  separately from rejected and missing-order calls.
+
 ## [0.9.2] - 2026-09-18
 
 ### Changed
