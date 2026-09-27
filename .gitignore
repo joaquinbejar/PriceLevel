@@ -27,4 +27,12 @@ src/.DS_Store
 /cobertura.xml
 /tarpaulin-report.html
 .secrets
-/scripts/
+# `/scripts/` holds untracked personal helper scripts (e.g. the
+# `check-spanish` target's `spanish.py`). The `check_panic_policy.sh`
+# enforcement gate (issue #173) and its fixtures ARE tracked — Cargo.toml's
+# `include` list has no `scripts/**` glob, so they never ship in the
+# published crate either way.
+/scripts/*
+!/scripts/check_panic_policy.py
+!/scripts/panic_policy_fixtures/
+!/scripts/panic_policy_fixtures/*.rs
