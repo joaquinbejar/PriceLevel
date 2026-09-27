@@ -22,7 +22,7 @@
  - Support for diverse order types including standard limit orders, iceberg orders, post-only, fill-or-kill, and more
  - Thread-safe concurrent admissions, updates (cancel / resize) and reads alongside one logical matcher per level (see [Concurrency Model](#concurrency-model))
  - Lock-free ordered index (`crossbeam-skiplist`) and atomic quantity / statistics counters; order storage is a sharded `DashMap`
- - Checked arithmetic on quantities and values, with typed errors instead of panics
+ - Checked arithmetic on the quantity / value accessors (`total_quantity`, `executed_quantity`, `executed_value`) with typed errors; removing the remaining production panic paths (for example the `snapshot()` aggregate assertions) is tracked in #161
  - Checksum-protected (SHA-256) snapshots for persistence and recovery
  - Designed with domain-driven principles for financial markets
  - Comprehensive test suite, including concurrent usage scenarios

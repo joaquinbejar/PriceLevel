@@ -205,6 +205,10 @@ fn test_read_write_ratio() {
                             let _quantity = level.visible_quantity();
                         }
                         _ => {
+                            // Two public calls: count both so `attempted` and
+                            // `reads` stay per-call, not per-iteration.
+                            tally.attempted += 1;
+                            tally.reads += 1;
                             let _total = level.total_quantity();
                             let _count = level.order_count();
                         }
