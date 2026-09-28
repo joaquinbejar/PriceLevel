@@ -209,8 +209,24 @@ fn counter_transition_failure(price: u128, counter: &'static str) -> PriceLevelE
 /// `delta`: only possible once the counter already disagrees with the queue.
 /// Never wraps and never saturates. `Relaxed`, like every other RMW on these
 /// advisory counters (issue #68).
+///
+/// A zero `delta` skips the read-modify-write entirely (issue #214), the
+/// same way admission skips a zero hidden reservation (issue #145): a
+/// standard order's hidden component, for instance, is always zero, so its
+/// cancel no longer pays a compare-exchange loop on the hidden counter.
+/// The test is on this operation's OWN delta, never on a loaded counter
+/// value, so no check-then-act window opens: `checked_sub(0)` can never be
+/// refused and never changes the counter, so the skip changes neither the
+/// outcome nor the value. It drops no synchronization either: every access
+/// to these counters is `Relaxed`, so the skipped RMW headed no release
+/// sequence and no reader could synchronize with it. A nonzero decrement
+/// is still one atomic `fetch_update` (a CAS loop) that refuses rather than
+/// wraps.
 #[inline]
-fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
+pub(crate) fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
+    if delta == 0 {
+        return true;
+    }
     counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
             c.checked_sub(delta)

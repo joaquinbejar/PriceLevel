@@ -2,6 +2,7 @@ mod bounded_fok;
 mod caller_boundaries;
 mod checked_rollbacks;
 mod counter_exhaustion;
+mod counter_zero_delta;
 mod entry;
 mod fallible_growth;
 mod fok_fairness;
