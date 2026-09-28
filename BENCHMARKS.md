@@ -69,7 +69,7 @@ established by this benchmark**:
 
 | Area | Change | Hypothesis (not isolated) |
 |---|---|---|
-| `add_orders_batch_100/standard` | **+2.6%** | possibly the checked-arithmetic / epoch-headroom guards added across issues #163–#165, but this was not isolated (no before/after profiling of just those code paths) — treat as unresolved |
+| `add_orders_batch_100/standard` (superseded: see below) | **+2.6%** as originally measured against `a5a94fc`; **+16.0%** against current `main` (`bb7ab71`) | originally unresolved; still not fully isolated, but narrowed: see "Pre-release hardening recheck" below (candidates are `DeferredEvents` restructuring / inlining, not `checked_counter_sub`, since a successful `add_order` never runs that CAS loop) |
 | `matching/iceberg` | **+8.4%** (borderline: round-to-round spread 9.96 pp, just under the 10 pp noise threshold) | unresolved, same caveat |
 | `matching/mixed_100` | **+4.5%** | unresolved, same caveat |
 | `matching/partial_fill_churn_10x10` | **+8.4%** | unresolved, same caveat |
@@ -89,13 +89,29 @@ are close to the wins above in magnitude.
 **Noisy — not claimed as a difference either way** (round-to-round sign
 disagreement or >10 percentage-point spread across the 3 rounds, at
 Criterion's default sample size, on a shared host — see Methodology):
-`add_orders_batch_100/reserve`, `isolated_updates/cancel`,
+`isolated_updates/cancel`,
 `isolated_updates/replace_same_price`, `isolated_updates/update_quantity_decrease`,
 `iter_orders/depth_100`, `match_result_analytics/n_256`,
 `matching/ioc_partial`, `matching/partial_fill_reinsert`,
 `matching/post_only_reject`, `matching/sweep_100_makers`. Full round-by-round
 numbers for every scenario (noisy or not) are in
 [`benches/compare/results/criterion_0.9.2_vs_0.10.0.csv`](./benches/compare/results/criterion_0.9.2_vs_0.10.0.csv).
+
+**Update (see "Pre-release hardening recheck" below):** the pre-release
+hardening merged after this document was first written (#211, #212;
+baseline `a5a94fc` vs candidate `bb7ab71`) measurably regressed
+`add_orders_batch_100/standard` (+10.35%) and `/iceberg` (+12.79%) against
+`a5a94fc`, both beyond the noise policy. `/reserve` is inconclusive against
+`a5a94fc` (spread 11.23pp, noisy by this document's own policy) though it
+passes (not noisy) against 0.9.2, see below. The main crate's own `PriceLevel
+- Add Orders` absolute numbers regressed the same way and are not confounded;
+the `Match Orders`/`Update Orders` absolute numbers also regressed but those
+benchmarks build 100 orders inside the timed closure before the operation
+under test, so they mostly reflect admission cost and do not on their own
+establish a per-match or per-cancel/update regression. Those rows below have
+been updated to `bb7ab71` (current `main`) and are marked accordingly. Every
+other number in this document is unaffected and still reflects the original
+`3b05d81`/`a5a94fc` tree.
 
 **Not compared**: `match_order`'s inner hot path itself (the sweep, FIFO
 consumption, atomic counters) has an *identical public signature* on both
@@ -333,8 +349,9 @@ results as a "flip").
 | `matching/mixed_100` | 22,922 | 23,962 | +4.5% | 2.96 | no |
 | `matching/iceberg` | 822 | 891 | +8.4% | 9.96 | no (borderline: just under the 10pp threshold) |
 | `matching/partial_fill_churn_10x10` | 2,533 | 2,745 | +8.4% | 6.93 | no |
-| `add_orders_batch_100/standard` | 8,982 | 9,219 | +2.6% | 1.19 | no |
-| `add_orders_batch_100/iceberg` | 9,230 | 9,249 | +0.2% | 4.92 | no |
+| `add_orders_batch_100/standard`† | 8,890 | 10,315 | **+16.0%** | 7.27 | no |
+| `add_orders_batch_100/iceberg`† | 9,064 | 10,420 | **+15.0%** | 6.07 | no |
+| `add_orders_batch_100/reserve`† | 9,022 | 10,169 | **+12.7%** | 8.74 | no |
 | `isolated_updates/update_quantity_increase` | 8,985 | 8,340 | -7.2% | 7.45 | no |
 | `isolated_updates/replace_diff_price` | 8,638 | 8,575 | -0.7% | 8.06 | no |
 | `iter_orders/depth_10000` | 88,893 | 89,461 | +0.6% | 3.79 | no |
@@ -344,7 +361,6 @@ from the table above — see the CSV for every round's raw number):
 
 | Scenario | 0.9.2 median (ns) | 0.10.0 median (ns) | Median change | Spread (pp) | Round %changes |
 |---|---|---|---|---|---|
-| `add_orders_batch_100/reserve` | 9,338 | 9,323 | -0.2% | 7.80 | -3.23 / +0.75 / +4.58 |
 | `isolated_updates/cancel` | 9,130 | 8,463 | -7.3% | 25.30 | -15.70 / -7.44 / +9.60 |
 | `isolated_updates/replace_same_price` | 8,721 | 8,632 | -1.0% | 13.51 | +2.76 / -10.74 / -0.97 |
 | `isolated_updates/update_quantity_decrease` | 8,759 | 8,238 | -6.0% | 13.77 | -6.85 / -15.25 / -1.47 |
@@ -354,6 +370,15 @@ from the table above — see the CSV for every round's raw number):
 | `matching/partial_fill_reinsert` | 948 | 1,015 | +7.1% | 21.49 | +17.59 / +5.95 / -3.90 |
 | `matching/post_only_reject` | 1,054 | 1,076 | +2.1% | 11.01 | -3.62 / -6.64 / +4.36 |
 | `matching/sweep_100_makers` | 18,716 | 19,902 | +6.3% | 13.02 | +15.30 / +2.28 / +2.71 |
+
+†: these three rows were remeasured after this document was first written,
+against current `main` (`bb7ab71`, post pre-release hardening #211/#212)
+rather than the `a5a94fc`/`3b05d81` tree every other row in this table still
+reflects — see "Pre-release hardening recheck" below for the full
+before/after and the isolated cause. `add_orders_batch_100/reserve` moved
+out of the noisy-rows table below into this one: it is no longer noisy
+against the fresh 0.9.2 rerun paired with it (spread 8.74pp, no sign
+disagreement).
 
 `matching/ioc_partial`'s round 3 (+33.75%) is the most striking single
 outlier in the whole dataset and is almost certainly host noise (the other
@@ -449,10 +474,10 @@ not a comparison):
 
 | Benchmark | Result |
 |---|---|
-| `Add Orders/add_standard_order` | 9,307 ns |
-| `Match Orders/match_standard_orders` | 9,958 ns |
-| `Match Orders/match_mixed_orders` | 12,870 ns |
-| `Update Orders/cancel_order` | 13,071 ns |
+| `Add Orders/add_standard_order`† | 10,315 ns (was 9,307 ns; **+10.8%**, `bb7ab71`) |
+| `Match Orders/match_standard_orders`‡ | 11,318 ns (was 9,958 ns; **+13.7%**, `bb7ab71`) |
+| `Match Orders/match_mixed_orders`‡ | 13,526 ns (was 12,870 ns; **+5.1%**, `bb7ab71`) |
+| `Update Orders/cancel_order`‡ | 14,100 ns (was 13,071 ns; **+7.9%**, `bb7ab71`) |
 | `Snapshot Recovery/snapshot_full_roundtrip` | 129,598 ns |
 | `FOK depth/fok_rejected/10000` | 167,118 ns |
 | `FOK depth/fok_first_maker/10000` | 276 ns |
@@ -463,9 +488,21 @@ not a comparison):
 | `Lifecycle/full_lifecycle` | 12,339 ns |
 | `Special Order Matching/match_special_mixed_scaling/500` | 51,544 ns |
 | `Concurrent Operations/concurrent_add_standard_orders/2` (2 threads) | 491 ns (thread-count sweep 2/4/8/16 all ran; this is the 2-thread point) |
-| `Concurrent Operations/concurrent_cancel_orders/16` (16 threads) | 4,175 ns |
+| `Concurrent Operations/concurrent_cancel_orders/16` (16 threads)† | 4,676 ns (was 4,175 ns; **+12.0%**, `bb7ab71`; regressed at every thread count 2/4/8/16, see recheck below) |
 | `Contention Patterns/read_write_ratio/95` (95% reads) | 43,769 ns |
-| `Contention Patterns/hot_spot_contention/100` | 1,803 ns |
+| `Contention Patterns/hot_spot_contention/100`† | 1,885 ns (was 1,803 ns; **+4.6%**, `bb7ab71`) |
+
+†: these four rows were remeasured against current `main` (`bb7ab71`, post
+pre-release hardening #211/#212), single run, same convention as the rest of
+this table; every other row is unchanged from the original `3b05d81`/`a5a94fc`
+run. See "Pre-release hardening recheck" below.
+
+‡: `Match Orders/match_standard_orders`, `match_mixed_orders` and `Update
+Orders/cancel_order` build 100 orders inside the timed `b.iter` closure
+before the match/cancel under test runs (see
+`benches/price_level/match_orders.rs`/`update_orders.rs`); these rows mostly
+reflect admission cost, not a per-match or per-cancel regression on their
+own. See "Pre-release hardening recheck" below.
 
 Every group that ran, in registration order: `Data Operations`,
 `PriceLevel - Add Orders`, `PriceLevel - Iter Orders`, `PriceLevel - Match
@@ -520,9 +557,9 @@ regardless of sample count and is omitted here for brevity.
 | `fok_rejected@10000` | 10,000 | 5,000 | 165,083 | 188,500 | 200,375 |
 | `fok_replenish@10000` | 10,000 | 5,000 | 625 | 1,500 | 1,792 |
 | `writer_add_during_fok_rejected@10000` | 10,000 | 5,000 | 125 | 184,667 | 208,167 |
-| `writer_add_during_gtc@10000` | 10,000 | 5,000 | 458 | 750 | 1,459 |
-| `contention_gtc_matcher` | 1 | 5,000 | 625 | 1,458 | 3,334 (matcher 448,437 ops/s; writers 6,906,265 ops/s) |
-| `contention_fok_matcher` | 1 | 5,000 | 25,500 | 161,541 | 272,333 (matcher 26,193 ops/s; writers 7,617,031 ops/s) |
+| `writer_add_during_gtc@10000`† | 10,000 | 5,000 | 500 (was 458; **+9.0%**, `bb7ab71`, median of 2 runs, borderline) | 875 | 2,958 |
+| `contention_gtc_matcher`† | 1 | 5,000 | 708 (was 625; **+13.3%**, `bb7ab71`, reproducible in 2/2 repeated full runs) | 1,958–2,792 (inconclusive; see recheck below) | 13,542–92,375 (inconclusive; matcher 366,127–391,946 ops/s; writers 5,905,067–6,659,340 ops/s) |
+| `contention_fok_matcher`† | 1 | 5,000 | ~33,625, `bb7ab71` (original single run 25,500; this recheck's 2 baseline reruns gave 27,416/28,917; paired change **+12% to +27% across the 2 runs, avg +19%**, reproducible in 2/2) | 179,583–232,000 (inconclusive; see recheck below) | 249,291–392,083 (inconclusive; matcher 19,074–20,757 ops/s; writers 6,651,519–6,805,408 ops/s) |
 | `statsc_ok_single` | 23,000 | 20,000 | 250 | 750 | 1,083 |
 | `statsc_ok_same_mixed` | 23,000 | 20,000 | 625 | 2,833 | 9,500 |
 | `statsc_overflow_same_mixed` | 23,000 | 20,000 | 666 | 2,125 | 9,333 |
@@ -539,8 +576,18 @@ Allocation pass (2,000 reps/op, the harness default):
 | `checksum_validate` | 1.00 | 64.00 |
 | `restore` | 3,334.39 | 468,214.97 |
 
-`contention_fok_matcher`'s p50 here (25,500 ns) is roughly 41x
-`contention_gtc_matcher`'s (625 ns) at the same load — consistent with
+†: `writer_add_during_gtc@10000`, `contention_gtc_matcher` and
+`contention_fok_matcher` were remeasured (2 full harness runs each) against
+current `main` (`bb7ab71`, post pre-release hardening #211/#212); every
+other row in this table is unchanged from the original single run on
+`3b05d81`/`a5a94fc`. See "Pre-release hardening recheck" below. (Before this
+recheck, `contention_fok_matcher`'s p50 was 25,500 ns and
+`contention_gtc_matcher`'s was 625 ns — the ~41x ratio noted below was
+computed from those original numbers and still holds at essentially the same
+order of magnitude against the updated ones, ~33,625 / 708 ≈ 47x.)
+
+`contention_fok_matcher`'s original p50 (25,500 ns, `a5a94fc`) is roughly 41x
+`contention_gtc_matcher`'s original p50 (625 ns) at the same load — consistent with
 `BENCH.md`'s own documented "GTC-vs-FOK under identical load" finding
 (there: ~42x on its own 300-sample example run). `fok_rejected@10000`'s cost
 (p50 165 µs) vs `fok_first_maker@10000` (p50 292 ns) is the depth-scaling
@@ -621,6 +668,270 @@ porting a benchmark or workload from 0.9.2:
   reading the fix commit's description. This is why "Current absolute
   results" below runs the `Concurrent`/`Contention Patterns` groups only
   against 0.10 (where the fix already landed).
+
+## Pre-release hardening recheck (#211, #212)
+
+Targeted recheck of the two pre-release hardening PRs merged after this
+document was first written. **#211** ("harden-prerelease-orders"): `FromStr`
+/ `Display` for `Side`, `TimeInForce`, `OrderStatus`, `OrderType`, `Hash32`;
+commits `d3370af`, `7275be1`, `a8ad6bb`. **#212** ("harden-prerelease-engine"):
+checked level-counter decrements, guard-free event emission in
+`add_order`/`update_order`/`snapshot`, checked statistics rollbacks,
+non-panicking `cfg(test)` thread-local access; commits `2380eef`, `38090de`,
+`d2bcd27`, `b607a5d`. Baseline `a5a94fc` (main as merged in PR #210, i.e.
+exactly the `3b05d81` tree this whole document otherwise measures) vs
+candidate `bb7ab71` (current `main`, after both PRs). `git diff --stat
+a5a94fc..bb7ab71` touches only `src/`; `benches/`, `Makefile`, `Cargo.toml`
+and this document are byte-for-byte identical between the two commits, so
+every harness below ran the SAME source against two different `pricelevel`
+trees, via two `git worktree`s with separate `CARGO_TARGET_DIR`s on the same
+machine documented in "System information" above. Confirmed: Mac Studio,
+Apple M5 Max, `rustc 1.98.1 (48a229cea 2026-09-01)`, same as the original
+run; measured 2026-09-28, one day after the original 2026-09-27 run, load
+average 3.9 to 14.6 across the session, the same shared, multi-user host
+caveat as the rest of this document; no parallel builds ran during any timed
+measurement. A follow-up, optimization-focused pass is tracked as issue
+#214; that issue will append improved numbers once any fix lands, it does
+not replace the measurements recorded here.
+
+**Scope check on #211**: the task assumption going in was that #211's
+`FromStr`/`Display` hardening probably isn't on any benched path. That
+turned out to be wrong in one place: `TradeList::from_str` (exercised by
+`trade_list_parse/*`) DOES call through the hardened parser stack, and
+allocation count dropped **47 to 15 allocs/op at n=32** (a further ~68% cut
+on top of the win already recorded above), with a small, consistent timing
+**improvement**, not a regression: n=32 10.64µs to 10.23µs (**-3.9%**),
+n=1024 341.2µs to 332.8µs (**-2.5%**), single run each side. Every other
+`FromStr`/`Display` surface #211 touches (`Side`, `TimeInForce`,
+`OrderStatus`, `Hash32::from_hex`) is not on any Criterion/latency path in
+this repo's own suites, confirming the rest of the original assumption.
+
+**#212's changes considered below.** Three related changes, all in
+`src/price_level/level.rs` / `statistics.rs`:
+
+1. Level visible/hidden quantity counter decrements (sweep fill, iceberg/
+   reserve replenish, cancel/price-move removal, statistics rollback) moved
+   from a single `AtomicU64::fetch_sub(Relaxed)` to `checked_counter_sub`:
+   `fetch_update(Relaxed, Relaxed, checked_sub)`, a compare-and-swap loop,
+   never wrapping. This is a DECREMENT-only helper. A successful `add_order`
+   that admits without filling anything never calls it; admission's own
+   visible/hidden counter increments already used a checked
+   `fetch_update`/`checked_add` before #212 too (unchanged by this PR, per
+   `git diff a5a94fc..bb7ab71 -- src/price_level/level.rs`, which adds
+   exactly one new `fetch_update` call site: `checked_counter_sub` itself).
+2. `add_order`/`update_order`/`PriceLevel::snapshot()` were restructured to
+   record any warning/error into a small on-stack `DeferredEvents` struct
+   (`Default`, no allocation, five `Option` fields) and call `events.emit()`
+   only after the fill-or-kill guard is dropped, rather than logging
+   in-place. See `add_order_guarded`'s doc comment (issue #172). This adds a
+   function-call boundary (`add_order` now calls a separate
+   `add_order_guarded`) and struct construction/branching on every call,
+   whether or not anything is actually logged.
+3. The statistics seqlock entry path gained one extra bound check
+   (`38090de`).
+
+### Uncontended hot path: a real, reproducible regression; cause not fully isolated
+
+`benches/compare`'s `add_orders_batch_100/*` (adds 100 orders per iteration,
+so this is `add_order` itself, timed) regressed against `a5a94fc` for
+`/standard` (**+10.35%**, spread 3.04pp) and `/iceberg` (**+12.79%**, spread
+1.96pp), median of 3 interleaved rounds, same protocol and noise policy as
+the rest of this document; neither is noisy. `/reserve` is **noisy against
+`a5a94fc`** (spread 11.23pp, all 3 rounds positive but past the 10pp
+threshold), so no claim is made for it against `a5a94fc`; it IS not noisy
+against 0.9.2 (**+12.71%**, spread 8.74pp; see the updated Comparison table
+above). A fourth confirmatory single round for `/standard` and `/iceberg`
+reproduced the same ~11-12% gap on each side.
+
+This is corroborated, for admission specifically, by the main crate's own
+`PriceLevel - Add Orders` group (`cargo bench --bench benches`, single run
+each side, same convention as "Current absolute results" above), which is
+NOT confounded: each benchmark function builds a fresh `PriceLevel` and adds
+orders, nothing else, inside the timed closure.
+
+| Benchmark | `a5a94fc` | `bb7ab71` | Change |
+|---|---|---|---|
+| `Add Orders/add_standard_order` | 9,142 ns | 10,315 ns | **+12.8%** |
+| `Add Orders/add_iceberg_order` | 9,121 ns | 10,579 ns | **+16.0%** |
+| `Add Orders/add_reserve_order` | 9,155 ns | 10,352 ns | **+13.1%** |
+| `Add Orders/add_mixed_orders` | 9,121 ns | 10,096 ns | **+10.7%** |
+| `Add Orders/order_count_scaling/1000` | 98,687 ns | 109,440 ns | **+10.9%** |
+
+**The `Match Orders/*` and `Update Orders/*` rows are confounded and do not
+independently establish a per-match or per-cancel/update regression.**
+`benches/price_level/match_orders.rs` and `update_orders.rs` build a fresh
+`PriceLevel` and seed it with 100 orders inside the SAME timed `b.iter`
+closure (via `setup_standard_orders(100)`), then run one `match_order` call
+or, for `Update Orders`, 50 update/cancel calls (`for i in 25..75`), and
+drop the level, all inside the same measured iteration. Their point
+estimates are dominated by the same 100-order admission cost already
+measured above, not isolated to the match/cancel/update operation itself.
+Reported for completeness, with this caveat attached:
+
+| Benchmark | `a5a94fc` | `bb7ab71` | Change |
+|---|---|---|---|
+| `Match Orders/match_standard_orders` | 10,002 ns | 11,318 ns | +13.2% (confounded by 100-order admission; see caveat above) |
+| `Match Orders/match_iceberg_orders` | 12,591 ns | 13,805 ns | +9.6% (confounded) |
+| `Match Orders/match_reserve_orders` | 11,922 ns | 13,232 ns | +11.0% (confounded) |
+| `Match Orders/match_mixed_orders` | 12,392 ns | 13,526 ns | +9.1% (confounded) |
+| `Update Orders/cancel_order` | 12,359 ns | 14,100 ns | +14.1% (confounded; 50 cancels/sample) |
+| `Update Orders/update_quantity` | 14,498 ns | 16,351 ns | +12.8% (confounded; 50 updates/sample) |
+| `Update Orders/replace_order_same_price` | 14,668 ns | 16,452 ns | +12.2% (confounded; 50 replaces/sample) |
+| `Update Orders/replace_order_different_price` | 12,470 ns | 14,094 ns | +13.0% (confounded) |
+| `Update Orders/cancel_order_count_scaling/1000` | 119,150 ns | 130,880 ns | +9.9% (confounded; also seeds N orders/sample) |
+
+These rows are consistent with, but do not add independent evidence beyond,
+the admission-cost regression already established by `Add Orders`/
+`add_orders_batch_100` above. The `isolated_updates/*` group in
+`benches/compare` (cancel, update-quantity, replace) is the harness's own
+unconfounded measurement of update/cancel alone (fixture built in a separate
+`iter_batched` setup closure, excluded from timing); it is **noisy** by this
+document's own policy at this sample size, same as in the original
+0.9.2-vs-0.10 pass, so no per-operation update/cancel regression is claimed
+from `benches/compare` either. Whether `update_order`/`match_order`
+themselves regressed independently of admission remains an open question
+for issue #214.
+
+**Cause: a hypothesis, not fully isolated.** Allocation counts are unchanged,
+confirmed independently by both allocation harnesses this repo has:
+
+| Operation | Harness | `a5a94fc` allocs/op | `bb7ab71` allocs/op |
+|---|---|---|---|
+| `add_order_standard` | `benches/compare/alloc_compare` | 5.00 | 5.00 |
+| `match_full` | `benches/compare/alloc_compare` | 8.02 | 8.02 |
+| `match_sweep_100` | `benches/compare/alloc_compare` | 272.66 | 272.67 |
+| `add_order` | `benches/latency/alloc.rs` | 2.10 | 2.11 |
+| `match_full` | `benches/latency/alloc.rs` | 2.02 | 2.02 |
+| `match_sweep_100` | `benches/latency/alloc.rs` | 8.20 | 8.22 |
+
+This only rules out an increase in the COUNT of counted allocation calls; it
+says nothing about allocation sizes, object lifetimes, allocator latency
+variance, extra stack traffic, inlining changes, struct layout, or added
+synchronization, any of which could also contribute and were not measured
+here. As noted above, a successful `add_order` never runs the new
+`checked_counter_sub` decrement CAS loop (that helper is decrement-only, and
+admission's own checked increment was already present before #212), so for
+the `add_order`/`add_orders_batch_100` regression specifically, the more
+likely candidates are the `DeferredEvents` restructuring and the
+`add_order_guarded` function-call split (item 2 above), possibly with an
+inlining or codegen shape change, not `checked_counter_sub`. For operations
+that DO decrement on the hot path (a filling `match_order`, a `cancel`/
+`update_order` that removes or shrinks an order), `checked_counter_sub`
+remains a plausible additional contributor, but this recheck cannot
+attribute a regression to it independently, because the only main-crate
+absolute numbers available for those operations are the confounded
+`Match Orders`/`Update Orders` rows above. This recheck has no disassembly
+or flamegraph diff for any of it; issue #214 is the place to isolate this
+further.
+
+The iceberg/reserve replenish path IS on the `checked_counter_sub` decrement
+path and is the one place that change was expected to matter most; it
+largely does not show a regression: `fok_depth/replenish_depth_10000` moved
+only **+1.11%** against `a5a94fc` (not noisy, spread 7.59pp) and **-8.1%**
+against 0.9.2 (still a net win, not noisy). The replenish path's own cost
+(walking and refilling a 10,000-deep book) dwarfs any per-counter CAS-loop
+overhead.
+
+### Contended paths: p50 regressions reproduce; tails are inconclusive
+
+Under real thread contention the picture is smaller and noisier: the fixed
+per-call overhead above is a much smaller fraction of wall time once
+synchronization cost dominates. Criterion's own `Concurrent Operations` /
+`Contention Patterns` groups (single run each side, same convention as
+"Current absolute results"; `concurrent_add_*` / `concurrent_match_*` /
+`read_write_ratio` are flat, no consistent sign, and are not reported row by
+row here):
+
+| Benchmark | Threads/level | `a5a94fc` | `bb7ab71` | Change |
+|---|---|---|---|---|
+| `Concurrent Operations/concurrent_cancel_orders` | 2 | 397 ns | 429 ns | +8.0% |
+| `Concurrent Operations/concurrent_cancel_orders` | 4 | 837 ns | 931 ns | +11.2% |
+| `Concurrent Operations/concurrent_cancel_orders` | 8 | 2,297 ns | 2,529 ns | +10.2% |
+| `Concurrent Operations/concurrent_cancel_orders` | 16 | 4,180 ns | 4,676 ns | **+11.9%** |
+| `Contention Patterns/hot_spot_contention` | 0% | 1,715 ns | 1,809 ns | +5.5% |
+| `Contention Patterns/hot_spot_contention` | 20% | 1,704 ns | 1,803 ns | +5.8% |
+| `Contention Patterns/hot_spot_contention` | 50% | 1,709 ns | 1,804 ns | +5.6% |
+| `Contention Patterns/hot_spot_contention` | 80% | 1,766 ns | 1,865 ns | +5.6% |
+| `Contention Patterns/hot_spot_contention` | 100% | 1,796 ns | 1,885 ns | +5.0% |
+
+`concurrent_cancel_orders` is consistent (same direction, similar magnitude)
+at all four thread counts and reaches **+11.9% at 16 threads**: single run,
+but four independent points agreeing this tightly is itself evidence, and
+this is one contended case in this recheck that clears the ">10% beyond
+noise on a concurrent/contended case" flag: **flagged**. `hot_spot_contention`
+is a smaller, also-consistent ~5-6% regression across all five contention
+levels, below the flag threshold, reported for completeness.
+
+`benches/latency`'s contention scenarios, p50 across 2 full repeated runs
+each side, reproduce in the same direction both times:
+
+| Scenario | `a5a94fc` p50 (2 runs) | `bb7ab71` p50 (2 runs) | Change |
+|---|---|---|---|
+| `writer_add_during_gtc@10000` | 458, 459 ns | 500, 500 ns | **+9.0%** (borderline) |
+| `contention_gtc_matcher` | 625, 625 ns | 708, 708 ns | **+13.3%**: **flagged** |
+| `contention_fok_matcher` | 27,416, 28,917 ns | 34,750, 32,500 ns | **+12% to +27%** across the 2 runs, avg +19%: **flagged** |
+
+**p99 and p99.9 for these same scenarios are inconclusive and are NOT used
+as evidence of a regression or its absence**: they varied run-to-run at
+fixed code on both sides, consistent with this being a shared, multi-user
+host, the same caveat the rest of this document discloses; only the p50
+figures above are treated as reproducible. `isolated_add_gtc`,
+`isolated_cancel_success`, `match_full`, `match_maker_partial` and
+`fok_replenish@10000`'s p50s were flat across both repeated runs on both
+sides (no reproducible regression) despite showing inflated p99/p99.9 in the
+FIRST run only; a second run on both sides did not reproduce that tail
+inflation, so it is treated as host noise, not a code effect. Separately,
+the standalone `contention_compare` binary (GTC/FOK matcher vs 3 writers,
+not Criterion, single run per the existing convention) was run twice per
+side as a sanity check and **disagreed in sign** for `GTC@depth=100` between
+its two runs (-30% then +10%), consistent with this harness's own
+documented "directional, not proof" caveat; no claim is made from it either
+way.
+
+### Verdict summary
+
+| Case | vs `a5a94fc` | Noisy? | Verdict |
+|---|---|---|---|
+| `add_orders_batch_100/standard`, `/iceberg` (+ main-crate `Add Orders`, unconfounded) | +9% to +16% | No | **Regression, beyond noise; cause a hypothesis** (`DeferredEvents`/`add_order_guarded` restructuring and/or inlining; NOT `checked_counter_sub`, which admission never calls; allocation call counts unchanged, other allocation/codegen effects not ruled out) |
+| `add_orders_batch_100/reserve` | +11.46% | **Yes, vs `a5a94fc`** (spread 11.23pp) | No claim vs `a5a94fc`; not noisy vs 0.9.2 (+12.71%) |
+| `Match Orders/*`, `Update Orders/*` (main crate) | +9% to +14% | Single run, confounded by 100-order admission per sample | Regression observed but does not independently establish a per-match/cancel/update effect |
+| `fok_depth/replenish_depth_10000` (iceberg/reserve replenish; on the `checked_counter_sub` path) | +1.1% | No | No meaningful change |
+| `matching/*` (uncontended match, `benches/compare`, unconfounded) | -0.5% to +4.4% | Mostly yes | No claim: same noise character as the original 0.9.2-vs-0.10 pass |
+| `Concurrent Operations/concurrent_cancel_orders` | +8.0% to **+11.9%** | Single run, 4/4 consistent | **Regression, contended case: flagged** (p50-equivalent point estimate only) |
+| `Contention Patterns/hot_spot_contention` | +5.0% to +5.8% | Single run, 5/5 consistent | Small regression, below flag threshold |
+| `Concurrent Operations` (add/match/mixed) | within ±6%, no consistent sign | Yes | No claim |
+| `contention_gtc_matcher` / `contention_fok_matcher` p50 (latency harness) | +13.3% / +12 to +27% (avg +19%) | 2/2 runs consistent | **Regression, contended case: flagged** |
+| `contention_gtc_matcher` / `contention_fok_matcher` p99/p99.9 | varied run-to-run | Yes | Inconclusive; no claim |
+| `contention_compare` (GTC/FOK matcher vs writers) | sign disagreement between runs | Yes | No claim (harness's own documented caveat) |
+| `TradeList::from_str` (PR #211, benched path found) | -2.5% to -3.9%, -68% allocs (n=32) | No | Improvement, not a regression |
+| Allocation call counts (`add_order`, `match_full`, `match_sweep_100`) | 0% (both harnesses) | N/A | Unchanged; rules out an increase in the number of counted allocations, not other allocation or codegen effects |
+
+**Net read**: this recheck establishes a real, reproducible ~10-16%
+regression on uncontended `add_order` admission itself (`Add Orders` and
+`add_orders_batch_100/standard,iceberg`), with the cause narrowed to a
+hypothesis (`DeferredEvents`/`add_order_guarded` restructuring or inlining,
+not the decrement-only `checked_counter_sub`) rather than fully isolated.
+Whether `match_order`/`update_order`/`cancel` regressed independently of
+admission is NOT established by this recheck: the only main-crate absolute
+numbers available for them are confounded by 100-order admission per
+sample, and the unconfounded `benches/compare` scenarios for those
+operations are noisy at this sample size. Under real contention the
+admission-side cost is mostly absorbed into synchronization overhead, except
+`concurrent_cancel_orders` and the latency harness's `contention_gtc_matcher`/
+`contention_fok_matcher` p50, which still show a consistent, flag-worthy
+regression; their p99/p99.9 are inconclusive. Issue #214 tracks the
+follow-up: an unconfounded `match_order`/`update_order` benchmark, a
+disassembly/flamegraph diff to isolate the admission-side cause, and any
+resulting fix. Results there will be APPENDED alongside these measurements,
+not used to replace them.
+
+Raw data behind every table in this section:
+[`benches/compare/results/prerelease_recheck/`](./benches/compare/results/prerelease_recheck/)
+(3-round Criterion txt/CSV for `a5a94fc` vs `bb7ab71` and for 0.9.2 vs
+`bb7ab71`, main-crate `Add/Match/Update Orders`/`Concurrent`/`Contention`
+txt for both commits, 2 latency-harness full runs per commit, 2
+`contention_compare` runs per commit, and `alloc_compare` output for both
+commits).
 
 ## Reproduction
 

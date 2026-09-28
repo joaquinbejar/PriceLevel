@@ -1,0 +1,12 @@
+   Compiling pricelevel v0.10.0 (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/wt-candidate)
+   Compiling pricelevel-compare v0.0.0 (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/wt-candidate/benches/compare)
+    Finished `release` profile [optimized] target(s) in 2.60s
+     Running `/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/target-compare-candidate/release/alloc_compare`
+add_order_standard           version=0.10.0   reps=2000   alloc_count/op=5.00       alloc_bytes/op=16926.51     dealloc_count/op=5.00       dealloc_bytes/op=16924.00    
+match_full                   version=0.10.0   reps=2000   alloc_count/op=8.02       alloc_bytes/op=17232.12     dealloc_count/op=7.99       dealloc_bytes/op=17229.61    
+match_sweep_100              version=0.10.0   reps=2000   alloc_count/op=272.62     alloc_bytes/op=54054.04     dealloc_count/op=272.62     dealloc_bytes/op=54054.04    
+snapshot_capture_100         version=0.10.0   reps=2000   alloc_count/op=402.60     alloc_bytes/op=59515.31     dealloc_count/op=402.60     dealloc_bytes/op=59515.31    
+snapshot_to_json_100         version=0.10.0   reps=2000   alloc_count/op=412.56     alloc_bytes/op=124977.89    dealloc_count/op=412.56     dealloc_bytes/op=124977.89   
+restore_100                  version=0.10.0   reps=2000   alloc_count/op=796.06     alloc_bytes/op=185167.86    dealloc_count/op=796.06     dealloc_bytes/op=185167.86   
+match_result_analytics_256   version=0.10.0   reps=2000   alloc_count/op=2.00       alloc_bytes/op=45056.00     dealloc_count/op=2.00       dealloc_bytes/op=45056.00    
+trade_list_parse_32          version=0.10.0   reps=2000   alloc_count/op=15.00      alloc_bytes/op=25009.00     dealloc_count/op=15.00      dealloc_bytes/op=25009.00    
