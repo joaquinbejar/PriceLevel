@@ -167,6 +167,7 @@ fn build_manifest_json(
             "strict_fifo": config.strict_fifo,
             "contention_threads": config.contention_threads,
             "contention_ops": config.contention_ops,
+            "contention_batch": config.contention_batch,
             "stats_producers": config.stats_producers,
             "stats_readers": config.stats_readers,
             "stats_ops": config.stats_ops,

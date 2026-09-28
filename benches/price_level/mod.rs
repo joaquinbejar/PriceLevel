@@ -2,6 +2,7 @@
 pub mod add_orders;
 pub mod checked_arithmetic;
 pub mod fok_depth;
+pub mod isolated_ops;
 pub mod iter_orders;
 pub mod lifecycle;
 pub mod match_orders;
@@ -34,4 +35,5 @@ pub fn register_benchmarks(c: &mut criterion::Criterion) {
     match_result_analytics::register_benchmarks(c);
     result_capacity::register_benchmarks(c);
     residual_reuse::register_benchmarks(c);
+    isolated_ops::register_benchmarks(c);
 }

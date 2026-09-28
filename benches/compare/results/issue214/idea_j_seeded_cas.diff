@@ -1,0 +1,36 @@
+Diagnostic variant "e3" (NOT committed; measured only). Applied on top of
+dfc27a0. Replaces the fetch_update in checked_counter_sub with a
+compare_exchange_weak loop whose first attempt guesses that the counter
+holds exactly `delta`, so the first RMW also fetches the live value with
+the cache line held exclusively, instead of a plain load followed by a CAS.
+Every write is still a checked value (never wraps, refusal leaves the
+counter unchanged). See BENCHMARKS.md, "Issue #214: hot-path recovery".
+
+--- a/src/price_level/level.rs
++++ b/src/price_level/level.rs
+@@ pub(crate) fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
+     if delta == 0 {
+         return true;
+     }
+-    counter
+-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+-            c.checked_sub(delta)
+-        })
+-        .is_ok()
++    let mut current = delta;
++    loop {
++        let Some(next) = current.checked_sub(delta) else {
++            return false;
++        };
++        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
++            Ok(_) => return true,
++            Err(actual) => current = actual,
++        }
++    }
+ }
+
+Diagnostic variants "e1" / "e2" (NOT committed; they reintroduce an
+unchecked fetch_sub and violate the no-wrap rule; used only to attribute
+the contended GTC p50):
+- e1: the match sweep's visible decrement is a plain fetch_sub.
+- e2: every checked_counter_sub is a plain fetch_sub.

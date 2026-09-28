@@ -1,0 +1,8 @@
+add_order_standard           version=0.10.0   reps=2000   alloc_count/op=5.00       alloc_bytes/op=16926.51     dealloc_count/op=5.00       dealloc_bytes/op=16924.00    
+match_full                   version=0.10.0   reps=2000   alloc_count/op=8.02       alloc_bytes/op=17232.12     dealloc_count/op=7.99       dealloc_bytes/op=17229.61    
+match_sweep_100              version=0.10.0   reps=2000   alloc_count/op=272.67     alloc_bytes/op=54060.55     dealloc_count/op=272.67     dealloc_bytes/op=54060.55    
+snapshot_capture_100         version=0.10.0   reps=2000   alloc_count/op=402.66     alloc_bytes/op=59525.15     dealloc_count/op=402.66     dealloc_bytes/op=59525.15    
+snapshot_to_json_100         version=0.10.0   reps=2000   alloc_count/op=412.53     alloc_bytes/op=124975.58    dealloc_count/op=412.53     dealloc_bytes/op=124975.58   
+restore_100                  version=0.10.0   reps=2000   alloc_count/op=796.16     alloc_bytes/op=185193.01    dealloc_count/op=796.16     dealloc_bytes/op=185193.01   
+match_result_analytics_256   version=0.10.0   reps=2000   alloc_count/op=2.00       alloc_bytes/op=45056.00     dealloc_count/op=2.00       dealloc_bytes/op=45056.00    
+trade_list_parse_32          version=0.10.0   reps=2000   alloc_count/op=15.00      alloc_bytes/op=25009.00     dealloc_count/op=15.00      dealloc_bytes/op=25009.00    

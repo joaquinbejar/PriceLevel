@@ -1,0 +1,2366 @@
+==== crit_Ar1_base.txt ====
+# uptime before: 10:54  up 2 days, 22:43, 15 users, load averages: 7.67 7.23 6.38
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0330 s (515k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.5860 µs 9.6728 µs 9.7699 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0200 s (515k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.7664 µs 9.8736 µs 9.9920 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0051 s (515k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4406 µs 9.4952 µs 9.5594 µs]
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0241 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.4512 µs 9.5029 µs 9.5536 µs]
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0022 s (3.7M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.4137 µs 1.4370 µs 1.4620 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0272 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.3003 µs 9.3567 µs 9.4252 µs]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.1565 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [102.06 µs 103.24 µs 104.60 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0044 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [82.914 ns 83.492 ns 84.141 ns]
+                        change: [+3.7252% +4.5002% +5.2788%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0069 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [78.594 ns 78.878 ns 79.183 ns]
+                        change: [−3.2961% −2.6245% −1.9744%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0039 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [231.34 ns 233.23 ns 235.06 ns]
+                        change: [−0.2799% +0.4871% +1.2016%] (p = 0.22 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0027 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [66.152 ns 66.704 ns 67.388 ns]
+                        change: [+0.7719% +1.8642% +2.9113%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0089 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [65.198 ns 65.490 ns 65.807 ns]
+                        change: [−1.4418% −0.5082% +0.3564%] (p = 0.27 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0026 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [54.272 ns 54.769 ns 55.316 ns]
+                        change: [−3.8437% −2.5777% −1.2927%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0064 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [66.473 ns 67.362 ns 68.412 ns]
+                        change: [+0.7342% +1.7432% +2.7901%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0042 s (5.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [421.04 ns 427.51 ns 433.73 ns]
+                        thrpt:  [4.6112 Melem/s 4.6782 Melem/s 4.7501 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0013 s (2.9M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [848.14 ns 861.31 ns 876.53 ns]
+                        thrpt:  [4.5635 Melem/s 4.6441 Melem/s 4.7162 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  3 (3.00%) high mild
+  9 (9.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0079 s (1.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.2651 µs 2.2847 µs 2.3028 µs]
+                        thrpt:  [3.4740 Melem/s 3.5015 Melem/s 3.5319 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0095 s (682k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.1357 µs 4.1451 µs 4.1546 µs]
+                        thrpt:  [3.8511 Melem/s 3.8600 Melem/s 3.8688 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+# uptime after: 10:57  up 2 days, 22:46, 15 users, load averages: 10.59 7.88 6.73
+
+==== crit_Ar1_c2.txt ====
+# uptime before: 11:00  up 2 days, 22:48, 15 users, load averages: 6.30 6.60 6.37
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0435 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.5037 µs 9.5495 µs 9.6021 µs]
+Found 12 outliers among 100 measurements (12.00%)
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0125 s (495k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.5574 µs 9.6266 µs 9.7070 µs]
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0479 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4884 µs 9.5380 µs 9.5925 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  8 (8.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0013 s (535k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.4008 µs 9.4658 µs 9.5327 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  8 (8.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0045 s (3.4M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3351 µs 1.3432 µs 1.3530 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0455 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.4735 µs 9.5130 µs 9.5562 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  8 (8.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0931 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [99.656 µs 99.918 µs 100.22 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0126 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [76.613 ns 76.879 ns 77.188 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0133 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [79.425 ns 79.786 ns 80.166 ns]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low mild
+  9 (9.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0166 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [225.71 ns 226.63 ns 227.62 ns]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0093 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [64.827 ns 65.189 ns 65.588 ns]
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0115 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [64.737 ns 65.081 ns 65.467 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0145 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [51.650 ns 51.867 ns 52.123 ns]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0076 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [65.303 ns 65.750 ns 66.210 ns]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0042 s (5.5M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [417.82 ns 420.44 ns 423.39 ns]
+                        thrpt:  [4.7238 Melem/s 4.7569 Melem/s 4.7868 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0021 s (3.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [892.98 ns 896.02 ns 899.75 ns]
+                        thrpt:  [4.4457 Melem/s 4.4642 Melem/s 4.4794 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0137 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.3429 µs 2.3661 µs 2.3901 µs]
+                        thrpt:  [3.3471 Melem/s 3.3811 Melem/s 3.4146 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0298 s (641k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.5157 µs 4.5413 µs 4.5581 µs]
+                        thrpt:  [3.5102 Melem/s 3.5232 Melem/s 3.5432 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+
+# uptime after: 11:02  up 2 days, 22:51, 15 users, load averages: 5.83 5.83 6.07
+
+==== crit_Ar1_c3.txt ====
+# uptime before: 11:02  up 2 days, 22:51, 15 users, load averages: 5.83 5.83 6.07
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0431 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.4120 µs 9.4424 µs 9.4758 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0178 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.3896 µs 9.4251 µs 9.4642 µs]
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0427 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4024 µs 9.4340 µs 9.4699 µs]
+Found 14 outliers among 100 measurements (14.00%)
+  2 (2.00%) low mild
+  12 (12.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0304 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.4122 µs 9.4444 µs 9.4818 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  8 (8.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0034 s (3.8M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3118 µs 1.3152 µs 1.3193 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0229 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.4410 µs 9.4792 µs 9.5211 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low mild
+  6 (6.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0910 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [99.667 µs 99.937 µs 100.25 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0094 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [78.417 ns 78.641 ns 78.886 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0059 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [76.959 ns 77.258 ns 77.600 ns]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0169 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [220.79 ns 221.67 ns 222.64 ns]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0083 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [63.652 ns 63.988 ns 64.336 ns]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low mild
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0061 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [64.143 ns 64.453 ns 64.786 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0149 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [53.221 ns 53.485 ns 53.775 ns]
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low mild
+  6 (6.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0000 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [63.673 ns 63.900 ns 64.144 ns]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0040 s (5.8M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [404.57 ns 407.45 ns 410.53 ns]
+                        thrpt:  [4.8717 Melem/s 4.9086 Melem/s 4.9435 Melem/s]
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0076 s (3.1M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [834.37 ns 836.00 ns 837.81 ns]
+                        thrpt:  [4.7744 Melem/s 4.7847 Melem/s 4.7940 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0020 s (1.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.2755 µs 2.2954 µs 2.3126 µs]
+                        thrpt:  [3.4593 Melem/s 3.4852 Melem/s 3.5157 Melem/s]
+Found 14 outliers among 100 measurements (14.00%)
+  3 (3.00%) low severe
+  10 (10.00%) low mild
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0061 s (667k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.2685 µs 4.2749 µs 4.2809 µs]
+                        thrpt:  [3.7375 Melem/s 3.7428 Melem/s 3.7484 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  5 (5.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 11:05  up 2 days, 22:54, 15 users, load averages: 4.19 4.93 5.64
+
+==== crit_Ar1_head.txt ====
+# uptime before: 10:57  up 2 days, 22:46, 15 users, load averages: 10.59 7.88 6.73
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0370 s (480k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [10.498 µs 10.532 µs 10.569 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0006 s (470k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [10.539 µs 10.590 µs 10.642 µs]
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0296 s (475k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [10.492 µs 10.524 µs 10.561 µs]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0118 s (485k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [10.202 µs 10.245 µs 10.295 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0035 s (3.6M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3759 µs 1.3842 µs 1.3925 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  9 (9.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0152 s (480k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [10.478 µs 10.538 µs 10.603 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0465 s (45k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [110.97 µs 111.33 µs 111.73 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0057 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [82.957 ns 83.267 ns 83.618 ns]
+                        change: [−0.8476% −0.2382% +0.4087%] (p = 0.45 > 0.05)
+                        No change in performance detected.
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0086 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [84.470 ns 84.859 ns 85.288 ns]
+                        change: [−0.7280% −0.1161% +0.5031%] (p = 0.72 > 0.05)
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  10 (10.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0141 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [225.42 ns 226.87 ns 228.37 ns]
+                        change: [−1.7365% −1.0849% −0.5009%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0028 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [71.789 ns 72.379 ns 73.027 ns]
+                        change: [+2.1116% +2.9192% +3.7157%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0054 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [69.568 ns 69.917 ns 70.301 ns]
+                        change: [−0.7930% −0.1268% +0.5828%] (p = 0.74 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0099 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [60.430 ns 61.746 ns 63.104 ns]
+                        change: [+1.9196% +3.4705% +5.1259%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0013 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [70.528 ns 71.195 ns 71.972 ns]
+                        change: [+1.7291% +3.1096% +4.6138%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0040 s (5.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [428.53 ns 431.86 ns 435.72 ns]
+                        thrpt:  [4.5901 Melem/s 4.6312 Melem/s 4.6671 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0040 s (2.8M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [920.71 ns 923.30 ns 926.33 ns]
+                        thrpt:  [4.3181 Melem/s 4.3323 Melem/s 4.3445 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0003 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.4385 µs 2.4634 µs 2.4865 µs]
+                        thrpt:  [3.2174 Melem/s 3.2475 Melem/s 3.2807 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0035 s (636k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.4262 µs 4.4517 µs 4.4772 µs]
+                        thrpt:  [3.5737 Melem/s 3.5941 Melem/s 3.6148 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high severe
+
+# uptime after: 11:00  up 2 days, 22:48, 15 users, load averages: 6.30 6.60 6.37
+
+==== crit_Ar2_base.txt ====
+# uptime before: 11:16  up 2 days, 23:05, 15 users, load averages: 10.47 6.55 5.70
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0414 s (510k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.3505 µs 9.4249 µs 9.5120 µs]
+                        change: [−2.2317% −1.1058% +0.1091%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0196 s (520k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [10.136 µs 10.289 µs 10.454 µs]
+                        change: [+2.6162% +4.3608% +6.0661%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0505 s (505k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.8474 µs 9.9717 µs 10.108 µs]
+                        change: [+1.1466% +2.2418% +3.3907%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0008 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.6183 µs 9.7421 µs 9.8668 µs]
+                        change: [+1.9700% +3.2059% +4.2766%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0026 s (3.6M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3737 µs 1.3936 µs 1.4117 µs]
+                        change: [−8.2647% −6.7684% −5.2624%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0325 s (510k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.2753 µs 9.3244 µs 9.3781 µs]
+                        change: [−1.4950% −0.7578% −0.0336%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  8 (8.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.1111 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [104.41 µs 106.47 µs 108.60 µs]
+                        change: [+0.0816% +1.6460% +3.1221%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0112 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [92.032 ns 93.017 ns 94.098 ns]
+                        change: [+11.055% +12.419% +13.797%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0007 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [97.780 ns 99.511 ns 101.37 ns]
+                        change: [+19.538% +21.082% +22.671%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0071 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [233.44 ns 234.52 ns 235.80 ns]
+                        change: [+2.5373% +3.4242% +4.3341%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0151 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [80.688 ns 81.366 ns 82.109 ns]
+                        change: [+19.020% +20.397% +21.723%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0037 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [80.300 ns 81.189 ns 82.339 ns]
+                        change: [+32.575% +36.301% +40.138%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0036 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [67.130 ns 67.455 ns 67.792 ns]
+                        change: [+22.451% +23.850% +25.217%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0155 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [79.744 ns 80.082 ns 80.466 ns]
+                        change: [+18.398% +19.420% +20.414%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0016 s (5.9M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [404.65 ns 413.85 ns 423.71 ns]
+                        thrpt:  [4.7202 Melem/s 4.8327 Melem/s 4.9426 Melem/s]
+                 change:
+                        time:   [−4.3304% −2.6298% −0.8622%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.8697% +2.7008% +4.5264%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0071 s (2.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [901.88 ns 918.10 ns 936.56 ns]
+                        thrpt:  [4.2709 Melem/s 4.3568 Melem/s 4.4352 Melem/s]
+                 change:
+                        time:   [+6.7981% +9.1339% +11.629%] (p = 0.00 < 0.05)
+                        thrpt:  [−10.418% −8.3695% −6.3653%]
+                        Performance has regressed.
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0090 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.1871 µs 2.2149 µs 2.2430 µs]
+                        thrpt:  [3.5666 Melem/s 3.6120 Melem/s 3.6578 Melem/s]
+                 change:
+                        time:   [−4.0823% −3.0562% −1.9673%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.0067% +3.1526% +4.2560%]
+                        Performance has improved.
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0056 s (651k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.1188 µs 4.1357 µs 4.1529 µs]
+                        thrpt:  [3.8527 Melem/s 3.8688 Melem/s 3.8846 Melem/s]
+                 change:
+                        time:   [−0.2516% +0.4181% +1.1016%] (p = 0.23 > 0.05)
+                        thrpt:  [−1.0896% −0.4163% +0.2522%]
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high severe
+
+# uptime after: 11:19  up 2 days, 23:08, 15 users, load averages: 4.87 5.67 5.48
+
+==== crit_Ar2_c2.txt ====
+# uptime before: 11:11  up 2 days, 22:59, 15 users, load averages: 3.93 4.18 5.03
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0317 s (510k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.4325 µs 9.4810 µs 9.5377 µs]
+                        change: [−0.7762% −0.0369% +0.6445%] (p = 0.91 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0005 s (510k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.8197 µs 9.9312 µs 10.063 µs]
+                        change: [+0.4769% +1.7435% +2.9647%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0125 s (520k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4841 µs 9.5253 µs 9.5734 µs]
+                        change: [+2.3219% +3.8820% +5.4722%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0189 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.3755 µs 9.4098 µs 9.4468 µs]
+                        change: [+0.0606% +0.6936% +1.3717%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0059 s (3.8M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.2979 µs 1.3020 µs 1.3065 µs]
+                        change: [−5.5936% −4.7351% −3.8752%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0476 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.6178 µs 9.7169 µs 9.8332 µs]
+                        change: [+2.0942% +3.0159% +3.8774%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0774 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [99.216 µs 99.572 µs 99.981 µs]
+                        change: [−1.6043% −0.9372% −0.3097%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0028 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [75.376 ns 75.800 ns 76.255 ns]
+                        change: [−2.0774% −1.4353% −0.8209%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0067 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [85.971 ns 86.842 ns 87.771 ns]
+                        change: [+5.4769% +6.8099% +8.0234%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0153 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [222.23 ns 223.21 ns 224.34 ns]
+                        change: [−2.5540% −2.0113% −1.4682%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0031 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [64.333 ns 64.749 ns 65.188 ns]
+                        change: [−1.9048% −1.2647% −0.6355%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0012 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [64.716 ns 65.064 ns 65.464 ns]
+                        change: [+0.3057% +1.2908% +2.3735%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0128 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [51.628 ns 51.956 ns 52.370 ns]
+                        change: [+2.4231% +3.7368% +5.1062%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0076 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [64.338 ns 64.608 ns 64.929 ns]
+                        change: [−1.6736% −0.9666% −0.2754%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0011 s (5.7M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [420.82 ns 423.95 ns 427.12 ns]
+                        thrpt:  [4.6825 Melem/s 4.7176 Melem/s 4.7527 Melem/s]
+                 change:
+                        time:   [−0.8117% −0.1085% +0.6590%] (p = 0.77 > 0.05)
+                        thrpt:  [−0.6547% +0.1087% +0.8183%]
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0029 s (3.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [883.55 ns 889.88 ns 898.53 ns]
+                        thrpt:  [4.4517 Melem/s 4.4950 Melem/s 4.5272 Melem/s]
+                 change:
+                        time:   [−0.9377% −0.3629% +0.2161%] (p = 0.26 > 0.05)
+                        thrpt:  [−0.2156% +0.3642% +0.9466%]
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0203 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.4057 µs 2.4339 µs 2.4601 µs]
+                        thrpt:  [3.2519 Melem/s 3.2869 Melem/s 3.3254 Melem/s]
+                 change:
+                        time:   [+0.9131% +1.9856% +3.0902%] (p = 0.00 < 0.05)
+                        thrpt:  [−2.9976% −1.9469% −0.9048%]
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  4 (4.00%) low severe
+  5 (5.00%) low mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0044 s (651k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.5446 µs 4.5509 µs 4.5568 µs]
+                        thrpt:  [3.5112 Melem/s 3.5158 Melem/s 3.5206 Melem/s]
+                 change:
+                        time:   [+0.3586% +0.9372% +1.5623%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.5383% −0.9285% −0.3573%]
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 11:14  up 2 days, 23:02, 15 users, load averages: 5.71 4.52 4.99
+
+==== crit_Ar2_c3.txt ====
+# uptime before: 11:14  up 2 days, 23:02, 15 users, load averages: 5.71 4.52 4.99
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0258 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.3673 µs 9.3912 µs 9.4183 µs]
+                        change: [−0.6583% −0.1236% +0.3770%] (p = 0.65 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  10 (10.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0121 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.3868 µs 9.4408 µs 9.5031 µs]
+                        change: [−1.2775% −0.6068% +0.0837%] (p = 0.09 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0395 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4609 µs 9.4969 µs 9.5361 µs]
+                        change: [+0.2307% +0.8310% +1.4691%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0428 s (515k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [10.175 µs 10.328 µs 10.491 µs]
+                        change: [+9.8153% +11.216% +12.608%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0030 s (3.7M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3390 µs 1.3484 µs 1.3587 µs]
+                        change: [+2.3865% +3.1892% +4.0369%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0106 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.3853 µs 9.4293 µs 9.4792 µs]
+                        change: [−0.7440% −0.1705% +0.4045%] (p = 0.57 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0433 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [98.859 µs 99.142 µs 99.467 µs]
+                        change: [−1.0850% −0.6276% −0.1410%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  10 (10.00%) high mild
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0106 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [77.037 ns 77.302 ns 77.614 ns]
+                        change: [−2.9177% −2.1024% −1.3404%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 11 outliers among 100 measurements (11.00%)
+  7 (7.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0052 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [76.111 ns 76.452 ns 76.851 ns]
+                        change: [−1.4325% −0.7074% −0.0183%] (p = 0.06 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  10 (10.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0086 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [234.16 ns 238.19 ns 243.17 ns]
+                        change: [+12.723% +15.332% +18.550%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0140 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [63.471 ns 63.822 ns 64.189 ns]
+                        change: [−0.7641% −0.2093% +0.3440%] (p = 0.46 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0164 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [63.841 ns 64.106 ns 64.383 ns]
+                        change: [−0.9495% +0.0660% +1.5127%] (p = 0.95 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0157 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [57.482 ns 58.528 ns 59.528 ns]
+                        change: [+5.2572% +6.7342% +8.1124%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0161 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [63.234 ns 63.478 ns 63.761 ns]
+                        change: [+0.0059% +0.5739% +1.2059%] (p = 0.06 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0034 s (5.7M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [399.32 ns 403.06 ns 407.15 ns]
+                        thrpt:  [4.9122 Melem/s 4.9620 Melem/s 5.0085 Melem/s]
+                 change:
+                        time:   [−1.8895% −1.0785% −0.2658%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.2665% +1.0903% +1.9259%]
+                        Change within noise threshold.
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0022 s (3.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [830.29 ns 831.96 ns 833.75 ns]
+                        thrpt:  [4.7976 Melem/s 4.8079 Melem/s 4.8176 Melem/s]
+                 change:
+                        time:   [−0.7934% −0.5049% −0.2235%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.2240% +0.5074% +0.7997%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0179 s (1.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.2875 µs 2.3016 µs 2.3147 µs]
+                        thrpt:  [3.4561 Melem/s 3.4759 Melem/s 3.4973 Melem/s]
+                 change:
+                        time:   [+0.3713% +1.1928% +2.0266%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.9863% −1.1787% −0.3699%]
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  4 (4.00%) low severe
+  8 (8.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0208 s (677k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.1254 µs 4.1563 µs 4.1906 µs]
+                        thrpt:  [3.8181 Melem/s 3.8496 Melem/s 3.8784 Melem/s]
+                 change:
+                        time:   [−2.2749% −1.4729% −0.7740%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.7800% +1.4949% +2.3279%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 11:16  up 2 days, 23:05, 15 users, load averages: 10.47 6.55 5.70
+
+==== crit_Ar2_head.txt ====
+# uptime before: 11:08  up 2 days, 22:56, 15 users, load averages: 3.95 4.40 5.29
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0193 s (470k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [10.633 µs 10.668 µs 10.705 µs]
+                        change: [+0.9473% +1.3978% +1.8668%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0224 s (470k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [10.625 µs 10.685 µs 10.758 µs]
+                        change: [+0.8091% +1.4643% +2.1594%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0146 s (470k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [10.624 µs 10.669 µs 10.720 µs]
+                        change: [−0.0752% +0.5434% +1.1471%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0399 s (480k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [10.443 µs 10.494 µs 10.556 µs]
+                        change: [+2.7515% +3.3872% +4.0795%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0042 s (3.6M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3856 µs 1.3909 µs 1.3968 µs]
+                        change: [+1.0135% +1.5671% +2.1166%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0485 s (475k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [10.936 µs 11.120 µs 11.385 µs]
+                        change: [+3.0620% +4.3214% +6.1158%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.1485 s (45k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [112.10 µs 112.66 µs 113.28 µs]
+                        change: [+0.5048% +1.1200% +1.7900%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0004 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [84.926 ns 85.769 ns 86.659 ns]
+                        change: [+1.0803% +1.9344% +3.0442%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0158 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [84.826 ns 85.632 ns 86.589 ns]
+                        change: [−0.0787% +0.9477% +1.9960%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0188 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [222.18 ns 223.39 ns 224.72 ns]
+                        change: [−1.5373% −0.9706% −0.4040%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0146 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [70.267 ns 70.943 ns 71.769 ns]
+                        change: [+0.6700% +2.3848% +4.2412%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0181 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [71.902 ns 73.034 ns 74.340 ns]
+                        change: [+2.4435% +3.9345% +5.7471%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0095 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [56.555 ns 56.810 ns 57.103 ns]
+                        change: [−4.7351% −3.1534% −1.6328%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0146 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [69.332 ns 69.701 ns 70.079 ns]
+                        change: [−5.3270% −4.0080% −2.7638%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0024 s (5.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [413.25 ns 416.10 ns 419.02 ns]
+                        thrpt:  [4.7730 Melem/s 4.8065 Melem/s 4.8397 Melem/s]
+                 change:
+                        time:   [−5.9652% −4.9388% −3.8518%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.0061% +5.1953% +6.3436%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0054 s (2.9M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [918.97 ns 921.78 ns 925.20 ns]
+                        thrpt:  [4.3234 Melem/s 4.3394 Melem/s 4.3527 Melem/s]
+                 change:
+                        time:   [−0.9018% −0.5176% −0.1389%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.1391% +0.5203% +0.9100%]
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0182 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.3920 µs 2.4193 µs 2.4440 µs]
+                        thrpt:  [3.2733 Melem/s 3.3067 Melem/s 3.3445 Melem/s]
+                 change:
+                        time:   [−7.6048% −6.0793% −4.5559%] (p = 0.00 < 0.05)
+                        thrpt:  [+4.7734% +6.4728% +8.2308%]
+                        Performance has improved.
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0024 s (626k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.6181 µs 4.6299 µs 4.6426 µs]
+                        thrpt:  [3.4464 Melem/s 3.4558 Melem/s 3.4646 Melem/s]
+                 change:
+                        time:   [+4.1269% +4.8404% +5.6064%] (p = 0.00 < 0.05)
+                        thrpt:  [−5.3088% −4.6169% −3.9634%]
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 11:11  up 2 days, 22:59, 15 users, load averages: 3.93 4.18 5.03
+
+==== crit_Ar3_base.txt ====
+# uptime before: 11:27  up 2 days, 23:16, 15 users, load averages: 6.14 5.24 5.33
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0109 s (515k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [10.004 µs 10.093 µs 10.192 µs]
+                        change: [+4.3726% +5.5655% +6.6753%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0077 s (500k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [10.068 µs 10.149 µs 10.237 µs]
+                        change: [−3.7006% −2.3663% −1.0533%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0342 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4049 µs 9.4647 µs 9.5284 µs]
+                        change: [−5.7430% −4.8870% −4.0290%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0414 s (500k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.3792 µs 9.4667 µs 9.5584 µs]
+                        change: [−3.9746% −2.8121% −1.5837%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0055 s (3.7M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3426 µs 1.3568 µs 1.3725 µs]
+                        change: [−0.9625% +0.2620% +1.5092%] (p = 0.68 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0107 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.6052 µs 9.7330 µs 9.8615 µs]
+                        change: [+1.8946% +2.8298% +3.8678%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.1768 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [102.24 µs 103.56 µs 104.98 µs]
+                        change: [−2.5647% −1.1121% +0.3507%] (p = 0.15 > 0.05)
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0017 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [83.230 ns 83.977 ns 84.874 ns]
+                        change: [−11.262% −10.072% −8.9613%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 11 outliers among 100 measurements (11.00%)
+  7 (7.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0129 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [79.964 ns 80.662 ns 81.449 ns]
+                        change: [−16.015% −14.675% −13.352%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0123 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [225.82 ns 228.72 ns 232.16 ns]
+                        change: [−5.7325% −4.5490% −3.2178%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0044 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [64.461 ns 64.828 ns 65.253 ns]
+                        change: [−20.052% −19.209% −18.335%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0030 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [66.261 ns 67.067 ns 67.995 ns]
+                        change: [−27.054% −24.811% −22.564%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0087 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [52.262 ns 52.575 ns 52.941 ns]
+                        change: [−20.721% −19.742% −18.375%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0023 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [65.300 ns 65.758 ns 66.252 ns]
+                        change: [−19.581% −19.013% −18.441%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0013 s (5.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [403.43 ns 406.77 ns 410.45 ns]
+                        thrpt:  [4.8727 Melem/s 4.9168 Melem/s 4.9575 Melem/s]
+                 change:
+                        time:   [+0.5423% +2.1282% +3.5765%] (p = 0.01 < 0.05)
+                        thrpt:  [−3.4530% −2.0839% −0.5394%]
+                        Change within noise threshold.
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0010 s (3.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [831.53 ns 832.73 ns 834.04 ns]
+                        thrpt:  [4.7959 Melem/s 4.8035 Melem/s 4.8104 Melem/s]
+                 change:
+                        time:   [−13.044% −11.482% −9.9103%] (p = 0.00 < 0.05)
+                        thrpt:  [+11.000% +12.971% +15.000%]
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0142 s (1.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.3322 µs 2.3472 µs 2.3603 µs]
+                        thrpt:  [3.3894 Melem/s 3.4083 Melem/s 3.4303 Melem/s]
+                 change:
+                        time:   [+3.4754% +4.7006% +5.9242%] (p = 0.00 < 0.05)
+                        thrpt:  [−5.5929% −4.4896% −3.3587%]
+                        Performance has regressed.
+Found 22 outliers among 100 measurements (22.00%)
+  15 (15.00%) low severe
+  6 (6.00%) low mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0252 s (697k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.1394 µs 4.1473 µs 4.1548 µs]
+                        thrpt:  [3.8510 Melem/s 3.8579 Melem/s 3.8653 Melem/s]
+                 change:
+                        time:   [−0.6677% −0.0134% +0.6092%] (p = 0.96 > 0.05)
+                        thrpt:  [−0.6055% +0.0134% +0.6722%]
+                        No change in performance detected.
+Found 14 outliers among 100 measurements (14.00%)
+  5 (5.00%) low mild
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 11:30  up 2 days, 23:19, 15 users, load averages: 6.94 5.50 5.39
+
+==== crit_Ar3_c2.txt ====
+# uptime before: 11:22  up 2 days, 23:10, 15 users, load averages: 6.62 6.10 5.68
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0256 s (535k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.2629 µs 9.3125 µs 9.3689 µs]
+                        change: [−3.3343% −2.6737% −2.0455%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0236 s (535k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.3687 µs 9.4269 µs 9.4927 µs]
+                        change: [−6.9687% −5.8933% −4.7871%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0032 s (535k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.2896 µs 9.3464 µs 9.4104 µs]
+                        change: [−6.9961% −5.6682% −4.3853%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0297 s (545k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.1988 µs 9.2407 µs 9.2865 µs]
+                        change: [−2.5651% −1.9866% −1.4285%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0026 s (3.9M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.2956 µs 1.3021 µs 1.3096 µs]
+                        change: [−1.5113% −0.8876% −0.2254%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0455 s (540k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.2527 µs 9.3036 µs 9.3623 µs]
+                        change: [−5.6762% −4.8314% −3.9919%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.0030 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [97.463 µs 97.911 µs 98.420 µs]
+                        change: [−2.2057% −1.7292% −1.2350%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0105 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [75.761 ns 77.118 ns 78.809 ns]
+                        change: [−0.1021% +0.8195% +1.8587%] (p = 0.13 > 0.05)
+                        No change in performance detected.
+Found 19 outliers among 100 measurements (19.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  11 (11.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0123 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [77.081 ns 77.345 ns 77.675 ns]
+                        change: [−9.7629% −8.6743% −7.5654%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 18 outliers among 100 measurements (18.00%)
+  2 (2.00%) low mild
+  9 (9.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0006 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [220.97 ns 221.81 ns 222.80 ns]
+                        change: [−1.0480% −0.5892% −0.1402%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  7 (7.00%) high mild
+  8 (8.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0006 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [63.720 ns 63.963 ns 64.234 ns]
+                        change: [−1.2217% −0.6273% −0.0489%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0122 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [63.878 ns 64.204 ns 64.587 ns]
+                        change: [−3.0867% −1.9823% −0.9260%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0007 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [51.202 ns 51.441 ns 51.714 ns]
+                        change: [−5.9063% −4.5651% −3.2700%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 15 outliers among 100 measurements (15.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  10 (10.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0078 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [64.383 ns 64.696 ns 65.055 ns]
+                        change: [−0.7211% +0.0748% +0.9405%] (p = 0.86 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) high mild
+  7 (7.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0009 s (5.8M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [412.88 ns 414.61 ns 416.53 ns]
+                        thrpt:  [4.8015 Melem/s 4.8238 Melem/s 4.8441 Melem/s]
+                 change:
+                        time:   [−1.6921% −0.9810% −0.2334%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.2339% +0.9907% +1.7212%]
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0051 s (3.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [881.09 ns 882.17 ns 883.24 ns]
+                        thrpt:  [4.5288 Melem/s 4.5343 Melem/s 4.5398 Melem/s]
+                 change:
+                        time:   [−1.5620% −0.9628% −0.4806%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.4829% +0.9722% +1.5868%]
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0072 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.4699 µs 2.4835 µs 2.4949 µs]
+                        thrpt:  [3.2066 Melem/s 3.2212 Melem/s 3.2390 Melem/s]
+                 change:
+                        time:   [−0.8212% +0.1037% +1.0298%] (p = 0.83 > 0.05)
+                        thrpt:  [−1.0193% −0.1036% +0.8280%]
+                        No change in performance detected.
+Found 22 outliers among 100 measurements (22.00%)
+  16 (16.00%) low severe
+  5 (5.00%) low mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0179 s (656k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.5417 µs 4.5585 µs 4.5755 µs]
+                        thrpt:  [3.4969 Melem/s 3.5099 Melem/s 3.5229 Melem/s]
+                 change:
+                        time:   [−0.3951% +0.2305% +0.7717%] (p = 0.46 > 0.05)
+                        thrpt:  [−0.7658% −0.2300% +0.3967%]
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low severe
+  4 (4.00%) low mild
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 11:24  up 2 days, 23:13, 15 users, load averages: 7.67 5.79 5.56
+
+==== crit_Ar3_c3.txt ====
+# uptime before: 11:24  up 2 days, 23:13, 15 users, load averages: 7.67 5.79 5.56
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0221 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [9.4200 µs 9.4692 µs 9.5241 µs]
+                        change: [−0.7151% −0.1831% +0.3139%] (p = 0.50 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0004 s (525k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [9.4727 µs 9.5199 µs 9.5735 µs]
+                        change: [−0.3612% +0.2422% +0.8427%] (p = 0.44 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) low severe
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0374 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [9.4934 µs 9.5439 µs 9.6001 µs]
+                        change: [−0.7457% −0.1567% +0.4239%] (p = 0.61 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) low mild
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0053 s (535k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [9.3479 µs 9.3867 µs 9.4294 µs]
+                        change: [−12.061% −10.976% −9.9340%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) high mild
+  9 (9.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0056 s (3.8M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3082 µs 1.3141 µs 1.3209 µs]
+                        change: [−4.4646% −3.6543% −2.8925%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0304 s (530k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [9.4437 µs 9.4896 µs 9.5422 µs]
+                        change: [−0.5611% −0.0339% +0.5177%] (p = 0.90 > 0.05)
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.4964 s (56k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [98.411 µs 98.933 µs 99.525 µs]
+                        change: [−1.1872% −0.7174% −0.1964%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) high mild
+  9 (9.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0111 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [78.172 ns 78.395 ns 78.633 ns]
+                        change: [−0.2634% +0.3571% +0.9451%] (p = 0.25 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) low mild
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0004 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [77.020 ns 77.320 ns 77.667 ns]
+                        change: [+0.0694% +0.8560% +1.5840%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  12 (12.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0152 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [219.36 ns 220.08 ns 220.92 ns]
+                        change: [−15.905% −13.861% −11.864%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0047 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [62.482 ns 62.811 ns 63.212 ns]
+                        change: [−1.6023% −0.9904% −0.3830%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  6 (6.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0001 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [63.203 ns 63.571 ns 63.990 ns]
+                        change: [−3.1866% −1.5366% −0.4196%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 14 outliers among 100 measurements (14.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  8 (8.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0127 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [52.363 ns 52.630 ns 52.923 ns]
+                        change: [−9.2752% −8.0482% −6.8886%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  1 (1.00%) low severe
+  7 (7.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0083 s (1.5M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [62.669 ns 62.869 ns 63.082 ns]
+                        change: [−2.0085% −1.3128% −0.6536%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  8 (8.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0024 s (5.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [397.43 ns 399.43 ns 401.47 ns]
+                        thrpt:  [4.9817 Melem/s 5.0072 Melem/s 5.0323 Melem/s]
+                 change:
+                        time:   [−1.4585% −0.3655% +0.7873%] (p = 0.54 > 0.05)
+                        thrpt:  [−0.7812% +0.3668% +1.4801%]
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0064 s (3.1M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [830.00 ns 843.46 ns 861.97 ns]
+                        thrpt:  [4.6405 Melem/s 4.7424 Melem/s 4.8193 Melem/s]
+                 change:
+                        time:   [−0.6039% +0.2778% +1.1880%] (p = 0.62 > 0.05)
+                        thrpt:  [−1.1741% −0.2770% +0.6075%]
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0067 s (1.3M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.2467 µs 2.2667 µs 2.2846 µs]
+                        thrpt:  [3.5017 Melem/s 3.5294 Melem/s 3.5607 Melem/s]
+                 change:
+                        time:   [−2.0299% −1.2829% −0.4963%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.4988% +1.2995% +2.0720%]
+                        Change within noise threshold.
+Found 17 outliers among 100 measurements (17.00%)
+  13 (13.00%) low severe
+  3 (3.00%) low mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0321 s (621k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.2658 µs 4.2770 µs 4.2882 µs]
+                        thrpt:  [3.7312 Melem/s 3.7410 Melem/s 3.7508 Melem/s]
+                 change:
+                        time:   [+0.8899% +1.6765% +2.4718%] (p = 0.00 < 0.05)
+                        thrpt:  [−2.4121% −1.6489% −0.8820%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 11:27  up 2 days, 23:16, 15 users, load averages: 6.14 5.24 5.33
+
+==== crit_Ar3_head.txt ====
+# uptime before: 11:30  up 2 days, 23:19, 15 users, load averages: 6.94 5.50 5.39
+Benchmarking PriceLevel - Add Orders/add_standard_order
+Benchmarking PriceLevel - Add Orders/add_standard_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_standard_order: Collecting 100 samples in estimated 5.0399 s (465k iterations)
+Benchmarking PriceLevel - Add Orders/add_standard_order: Analyzing
+PriceLevel - Add Orders/add_standard_order
+                        time:   [10.940 µs 11.110 µs 11.312 µs]
+                        change: [+5.7791% +7.4603% +9.1114%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Add Orders/add_iceberg_order
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Collecting 100 samples in estimated 5.0293 s (480k iterations)
+Benchmarking PriceLevel - Add Orders/add_iceberg_order: Analyzing
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [10.585 µs 10.695 µs 10.812 µs]
+                        change: [−1.8143% −0.8616% +0.1379%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_reserve_order
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Collecting 100 samples in estimated 5.0079 s (460k iterations)
+Benchmarking PriceLevel - Add Orders/add_reserve_order: Analyzing
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [10.400 µs 10.452 µs 10.516 µs]
+                        change: [+1.1380% +2.8424% +4.5009%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking PriceLevel - Add Orders/add_mixed_orders
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Collecting 100 samples in estimated 5.0452 s (495k iterations)
+Benchmarking PriceLevel - Add Orders/add_mixed_orders: Analyzing
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [10.135 µs 10.188 µs 10.248 µs]
+                        change: [−3.5968% −2.7793% −2.0031%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Collecting 100 samples in estimated 5.0064 s (3.6M iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/10: Analyzing
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.3723 µs 1.3805 µs 1.3897 µs]
+                        change: [−1.7278% −1.1749% −0.5973%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 12 outliers among 100 measurements (12.00%)
+  8 (8.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Collecting 100 samples in estimated 5.0232 s (475k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/100: Analyzing
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [10.522 µs 10.632 µs 10.751 µs]
+                        change: [−3.8100% −2.1028% −0.6318%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Warming up for 3.0000 s
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Collecting 100 samples in estimated 5.5350 s (50k iterations)
+Benchmarking PriceLevel - Add Orders/order_count_scaling/1000: Analyzing
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [110.34 µs 111.44 µs 112.66 µs]
+                        change: [−1.6598% −0.8878% −0.1113%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Collecting 100 samples in estimated 5.0060 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/standard
+                        time:   [83.925 ns 84.184 ns 84.489 ns]
+                        change: [−2.4210% −1.4634% −0.6115%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Collecting 100 samples in estimated 5.0088 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/add_order_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/add_order_seeded/iceberg
+                        time:   [84.014 ns 84.383 ns 84.824 ns]
+                        change: [−2.1178% −1.0535% −0.0920%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0064 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [221.28 ns 222.37 ns 223.58 ns]
+                        change: [−1.0366% −0.5295% −0.0120%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Collecting 100 samples in estimated 5.0174 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/standard: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/standard
+                        time:   [69.326 ns 69.662 ns 70.030 ns]
+                        change: [−7.5261% −5.8440% −4.2226%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Collecting 100 samples in estimated 5.0040 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/cancel_seeded/iceberg: Analyzing
+PriceLevel - Isolated Ops/cancel_seeded/iceberg
+                        time:   [68.963 ns 69.211 ns 69.483 ns]
+                        change: [−5.7212% −4.2382% −2.8646%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Collecting 100 samples in estimated 5.0125 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/update_quantity_seeded/decrease: Analyzing
+PriceLevel - Isolated Ops/update_quantity_seeded/decrease
+                        time:   [54.439 ns 54.641 ns 54.870 ns]
+                        change: [−4.8433% −4.1381% −3.4472%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) low mild
+  10 (10.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Collecting 100 samples in estimated 5.0148 s (1.4M iterations)
+Benchmarking PriceLevel - Isolated Ops/replace_seeded/different_price: Analyzing
+PriceLevel - Isolated Ops/replace_seeded/different_price
+                        time:   [69.232 ns 69.500 ns 69.813 ns]
+                        change: [−0.5526% +0.1496% +0.9304%] (p = 0.69 > 0.05)
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) low mild
+  10 (10.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0037 s (5.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [412.24 ns 414.46 ns 417.00 ns]
+                        thrpt:  [4.7962 Melem/s 4.8256 Melem/s 4.8516 Melem/s]
+                 change:
+                        time:   [−2.5254% −1.6282% −0.7245%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.7298% +1.6552% +2.5909%]
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0069 s (2.9M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [905.83 ns 907.37 ns 909.20 ns]
+                        thrpt:  [4.3995 Melem/s 4.4084 Melem/s 4.4158 Melem/s]
+                 change:
+                        time:   [−1.7921% −1.4900% −1.2097%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.2245% +1.5125% +1.8248%]
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0142 s (1.2M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.4882 µs 2.5051 µs 2.5200 µs]
+                        thrpt:  [3.1746 Melem/s 3.1935 Melem/s 3.2151 Melem/s]
+                 change:
+                        time:   [+6.7289% +8.2869% +9.9659%] (p = 0.00 < 0.05)
+                        thrpt:  [−9.0627% −7.6527% −6.3047%]
+                        Performance has regressed.
+Found 15 outliers among 100 measurements (15.00%)
+  5 (5.00%) low severe
+  7 (7.00%) low mild
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0140 s (611k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.5316 µs 4.5423 µs 4.5544 µs]
+                        thrpt:  [3.5131 Melem/s 3.5224 Melem/s 3.5307 Melem/s]
+                 change:
+                        time:   [−2.6138% −2.0432% −1.4991%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.5219% +2.0858% +2.6839%]
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 11:33  up 2 days, 23:21, 15 users, load averages: 5.89 5.49 5.40
+

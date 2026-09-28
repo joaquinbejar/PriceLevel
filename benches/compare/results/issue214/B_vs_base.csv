@@ -1,0 +1,136 @@
+scenario,side,vs,r1,r2,r3,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,spread_pp,noisy,runs
+cmp:add_orders_batch_100/iceberg,base,base,9404.3,9201.8,9180.0,9201.8,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/iceberg,head,base,10335.0,10632.0,10247.0,10335.0,12.31,9.90,15.54,11.62,5.65,False,3
+cmp:add_orders_batch_100/iceberg,c2,base,9058.0,9029.3,8939.7,9029.3,-1.87,-3.68,-1.87,-2.62,1.81,False,3
+cmp:add_orders_batch_100/iceberg,c3,base,9133.1,8926.0,9102.8,9102.8,-1.08,-2.88,-3.00,-0.84,2.16,False,3
+cmp:add_orders_batch_100/iceberg,e3,base,9110.0,8876.7,8943.5,8943.5,-2.81,-3.13,-3.53,-2.58,0.96,False,3
+cmp:add_orders_batch_100/reserve,base,base,9398.3,9184.7,9211.3,9211.3,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/reserve,head,base,10302.0,10335.0,10113.0,10302.0,11.84,9.62,12.52,9.79,2.91,False,3
+cmp:add_orders_batch_100/reserve,c2,base,9119.8,9025.6,9074.8,9074.8,-1.48,-2.96,-1.73,-1.48,1.48,False,3
+cmp:add_orders_batch_100/reserve,c3,base,9114.3,8942.8,9045.7,9045.7,-1.80,-3.02,-2.63,-1.80,1.22,False,3
+cmp:add_orders_batch_100/reserve,e3,base,9075.6,8944.6,8929.8,8944.6,-2.90,-3.43,-2.61,-3.06,0.82,False,3
+cmp:add_orders_batch_100/standard,base,base,9360.7,9133.6,9118.7,9133.6,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/standard,head,base,10435.0,10448.0,10066.0,10435.0,14.25,11.48,14.39,10.39,4.00,False,3
+cmp:add_orders_batch_100/standard,c2,base,9006.1,8971.4,8892.5,8971.4,-1.78,-3.79,-1.78,-2.48,2.01,False,3
+cmp:add_orders_batch_100/standard,c3,base,8955.3,8864.0,9024.2,8955.3,-1.95,-4.33,-2.95,-1.04,3.29,False,3
+cmp:add_orders_batch_100/standard,e3,base,9158.1,8868.2,8810.9,8868.2,-2.91,-2.16,-2.91,-3.38,1.21,False,3
+crit:PriceLevel - Add Orders/add_iceberg_order,base,base,9316.3,9321.7,9263.5,9316.3,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/add_iceberg_order,head,base,10380.0,10464.0,10286.0,10380.0,11.42,11.42,12.25,11.04,1.22,False,3
+crit:PriceLevel - Add Orders/add_iceberg_order,c2,base,9470.3,9355.2,9428.1,9428.1,1.20,1.65,0.36,1.78,1.42,False,3
+crit:PriceLevel - Add Orders/add_iceberg_order,c3,base,9613.7,9491.1,9351.4,9491.1,1.88,3.19,1.82,0.95,2.24,False,3
+crit:PriceLevel - Add Orders/add_iceberg_order,e3,base,9397.6,9504.7,9293.1,9397.6,0.87,0.87,1.96,0.32,1.64,False,3
+crit:PriceLevel - Add Orders/add_mixed_orders,base,base,9700.9,9266.7,9228.5,9266.7,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/add_mixed_orders,head,base,10382.0,10273.0,9994.3,10273.0,10.86,7.02,10.86,8.30,3.84,False,3
+crit:PriceLevel - Add Orders/add_mixed_orders,c2,base,9593.6,9598.4,9235.8,9593.6,3.53,-1.11,3.58,0.08,4.69,False,3
+crit:PriceLevel - Add Orders/add_mixed_orders,c3,base,9428.0,9421.1,9304.9,9421.1,1.67,-2.81,1.67,0.83,4.48,False,3
+crit:PriceLevel - Add Orders/add_mixed_orders,e3,base,9368.4,9299.9,9238.9,9299.9,0.36,-3.43,0.36,0.11,3.79,False,3
+crit:PriceLevel - Add Orders/add_reserve_order,base,base,9628.1,9522.2,9358.8,9522.2,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/add_reserve_order,head,base,10405.0,10417.0,10228.0,10405.0,9.27,8.07,9.40,9.29,1.33,False,3
+crit:PriceLevel - Add Orders/add_reserve_order,c2,base,9449.3,9443.4,9431.6,9443.4,-0.83,-1.86,-0.83,0.78,2.63,False,3
+crit:PriceLevel - Add Orders/add_reserve_order,c3,base,9582.9,9496.6,9657.0,9582.9,0.64,-0.47,-0.27,3.19,3.66,False,3
+crit:PriceLevel - Add Orders/add_reserve_order,e3,base,9327.7,9467.1,9435.1,9435.1,-0.91,-3.12,-0.58,0.82,3.94,False,3
+crit:PriceLevel - Add Orders/add_standard_order,base,base,9511.1,9556.8,9234.5,9511.1,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/add_standard_order,head,base,10528.0,10397.0,10295.0,10397.0,9.31,10.69,8.79,11.48,2.69,False,3
+crit:PriceLevel - Add Orders/add_standard_order,c2,base,9772.1,9465.8,9331.8,9465.8,-0.48,2.74,-0.95,1.05,3.70,False,3
+crit:PriceLevel - Add Orders/add_standard_order,c3,base,9521.2,9723.7,9331.8,9521.2,0.11,0.11,1.75,1.05,1.64,False,3
+crit:PriceLevel - Add Orders/add_standard_order,e3,base,9490.3,9439.6,9371.3,9439.6,-0.75,-0.22,-1.23,1.48,2.71,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/10,base,base,1310.3,1326.0,1297.3,1310.3,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/10,head,base,1388.8,1388.5,1351.1,1388.5,5.97,5.99,4.71,4.15,1.84,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/10,c2,base,1303.5,1324.2,1285.5,1303.5,-0.52,-0.52,-0.14,-0.91,0.77,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/10,c3,base,1296.0,1339.0,1297.5,1297.5,-0.98,-1.09,0.98,0.02,2.07,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/10,e3,base,1298.6,1369.6,1290.9,1298.6,-0.89,-0.89,3.29,-0.49,4.18,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/100,base,base,9501.6,9595.3,9245.3,9501.6,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/100,head,base,11491.0,10265.0,10267.0,10267.0,8.06,20.94,6.98,11.05,13.96,True,3
+crit:PriceLevel - Add Orders/order_count_scaling/100,c2,base,9581.5,9485.0,9390.5,9485.0,-0.17,0.84,-1.15,1.57,2.72,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/100,c3,base,9453.1,9559.6,9336.7,9453.1,-0.51,-0.51,-0.37,0.99,1.50,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/100,e3,base,9319.9,9297.3,9356.4,9319.9,-1.91,-1.91,-3.11,1.20,4.31,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/1000,base,base,98375.0,98850.0,98298.0,98375.0,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/1000,head,base,111950.0,111010.0,108720.0,111010.0,12.84,13.80,12.30,10.60,3.20,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/1000,c2,base,107490.0,103210.0,98529.0,103210.0,4.91,9.27,4.41,0.23,9.03,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/1000,c3,base,101190.0,100870.0,99944.0,100870.0,2.54,2.86,2.04,1.67,1.19,False,3
+crit:PriceLevel - Add Orders/order_count_scaling/1000,e3,base,99154.0,99583.0,98897.0,99154.0,0.79,0.79,0.74,0.61,0.18,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/16,base,base,4166.1,4158.6,4203.0,4166.1,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/16,head,base,4633.1,4673.9,4627.8,4633.1,11.21,11.21,12.39,10.11,2.28,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/16,c2,base,4535.1,4483.2,4572.5,4535.1,8.86,8.86,7.81,8.79,1.05,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/16,c3,base,4268.1,4211.8,4317.3,4268.1,2.45,2.45,1.28,2.72,1.44,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/16,e3,base,4302.6,4320.8,4319.6,4319.6,3.68,3.28,3.90,2.77,1.13,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/2,base,base,407.0,403.5,396.2,403.5,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/2,head,base,453.7,425.6,421.2,425.6,5.47,11.47,5.47,6.30,6.00,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/2,c2,base,432.6,423.2,416.4,423.2,4.87,6.28,4.87,5.10,1.42,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/2,c3,base,432.7,412.0,414.4,414.4,2.70,6.31,2.09,4.60,4.22,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/2,e3,base,420.9,460.1,415.6,420.9,4.29,3.40,14.02,4.90,10.62,True,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/4,base,base,833.4,824.0,827.5,827.5,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/4,head,base,963.9,919.0,929.7,929.7,12.35,15.66,11.53,12.35,4.13,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/4,c2,base,893.3,879.0,886.5,886.5,7.13,7.19,6.67,7.13,0.52,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/4,c3,base,835.2,830.6,833.0,833.0,0.67,0.22,0.80,0.67,0.58,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/4,e3,base,804.8,817.3,806.4,806.4,-2.55,-3.43,-0.82,-2.55,2.61,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/8,base,base,2332.7,2335.8,2352.1,2335.8,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/8,head,base,2525.2,2515.3,2533.3,2525.2,8.11,8.25,7.68,7.70,0.57,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/8,c2,base,2437.6,2452.6,2476.2,2452.6,5.00,4.50,5.00,5.28,0.78,False,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/8,c3,base,2323.4,2006.1,2301.8,2301.8,-1.46,-0.40,-14.12,-2.14,13.72,True,3
+crit:PriceLevel - Concurrent Operations/concurrent_cancel_orders/8,e3,base,2276.6,2111.3,2315.8,2276.6,-2.53,-2.40,-9.61,-1.54,8.07,False,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,base,base,86.1,78.7,83.7,83.7,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,head,base,86.7,83.4,82.7,83.4,-0.36,0.72,5.92,-1.21,7.12,False,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,c2,base,78.1,79.8,78.2,78.2,-6.59,-9.33,1.39,-6.59,10.72,True,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,c3,base,78.1,80.1,76.7,78.1,-6.72,-9.30,1.76,-8.35,11.07,True,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,e3,base,78.5,77.1,77.5,77.5,-7.46,-8.85,-2.05,-7.46,6.80,False,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,base,base,91.9,77.3,89.3,89.3,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,head,base,90.1,83.4,82.2,83.4,-6.58,-1.96,7.84,-7.87,15.72,True,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,c2,base,78.6,77.7,75.7,77.7,-13.01,-14.48,0.43,-15.15,15.58,True,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,c3,base,78.5,80.7,77.8,78.5,-12.08,-14.62,4.36,-12.85,18.98,True,3
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,e3,base,76.8,79.3,76.4,76.8,-13.96,-16.45,2.51,-14.46,18.96,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,base,base,73.1,65.4,72.4,72.4,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,head,base,71.6,69.4,69.3,69.4,-4.17,-2.03,6.11,-4.25,10.36,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,c2,base,66.6,65.1,64.5,65.1,-10.12,-8.95,-0.49,-10.86,10.37,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,c3,base,64.4,64.7,64.1,64.4,-11.06,-11.95,-0.98,-11.52,10.98,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,e3,base,92.3,88.7,89.0,89.0,23.00,26.21,35.64,23.00,12.64,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,base,base,88.2,64.8,78.9,78.9,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,head,base,73.7,69.4,69.1,69.4,-11.97,-16.41,7.06,-12.34,23.47,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,c2,base,66.4,64.8,64.6,64.8,-17.77,-24.69,0.01,-18.07,24.70,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,c3,base,63.2,66.9,63.2,63.2,-19.89,-28.38,3.24,-19.89,31.62,True,3
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,e3,base,79.3,77.5,76.8,77.5,-1.74,-10.04,19.50,-2.67,29.54,True,3
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,base,base,234.6,220.1,235.2,234.6,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,head,base,226.4,218.5,222.2,222.2,-5.32,-3.49,-0.71,-5.56,4.85,False,3
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,c2,base,227.3,238.8,223.0,227.3,-3.13,-3.13,8.51,-5.22,13.73,True,3
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,c3,base,228.8,224.6,221.8,224.6,-4.27,-2.51,2.07,-5.71,7.78,True,3
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,e3,base,234.1,234.5,242.4,234.5,-0.08,-0.25,6.53,3.04,6.79,False,3
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,base,base,79.7,65.7,79.4,79.4,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,head,base,72.4,69.7,69.3,69.7,-12.19,-9.16,6.07,-12.64,18.70,True,3
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,c2,base,66.9,64.8,64.6,64.8,-18.28,-16.13,-1.30,-18.65,17.36,True,3
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,c3,base,63.7,64.6,63.9,63.9,-19.48,-20.11,-1.74,-19.48,18.37,True,3
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,e3,base,79.4,83.0,77.2,79.4,0.01,-0.47,26.30,-2.74,29.03,True,3
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,base,base,63.4,52.9,66.1,63.4,0.00,0.00,0.00,0.00,0.00,False,3
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,head,base,56.2,57.5,56.7,56.7,-10.69,-11.46,8.77,-14.34,23.11,True,3
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,c2,base,53.0,53.9,52.0,53.0,-16.50,-16.50,1.87,-21.33,23.20,True,3
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,c3,base,54.8,53.9,53.0,53.9,-14.96,-13.55,2.04,-19.85,21.88,True,3
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,e3,base,54.5,52.6,52.5,52.6,-17.07,-14.06,-0.49,-20.67,20.18,True,3
+lat:contention_fok_matcher p50,base,base,30250.0,31208.0,34833.0,31208.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p50,head,base,35291.0,35625.0,31458.0,35291.0,13.08,16.66,14.15,-9.69,26.35,True,15
+lat:contention_fok_matcher p50,c2,base,35583.0,36750.0,31250.0,35583.0,14.02,17.63,17.76,-10.29,28.04,True,15
+lat:contention_fok_matcher p50,c3,base,37292.0,36875.0,36500.0,36875.0,18.16,23.28,18.16,4.79,18.49,True,15
+lat:contention_fok_matcher p50,e3,base,33833.0,33667.0,32458.0,33667.0,7.88,11.84,7.88,-6.82,18.66,True,15
+lat:contention_fok_matcher p99,base,base,185292.0,195583.0,211208.0,195583.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p99,head,base,229292.0,244334.0,205750.0,229292.0,17.24,23.75,24.93,-2.58,27.51,True,15
+lat:contention_fok_matcher p99,c2,base,231542.0,215417.0,193459.0,215417.0,10.14,24.96,10.14,-8.40,33.36,True,15
+lat:contention_fok_matcher p99,c3,base,238834.0,215542.0,213666.0,215542.0,10.20,28.90,10.20,1.16,27.73,True,15
+lat:contention_fok_matcher p99,e3,base,224167.0,207167.0,208791.0,208791.0,6.75,20.98,5.92,-1.14,22.12,True,15
+lat:contention_fok_matcher p999,base,base,273584.0,310125.0,331458.0,310125.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p999,head,base,368208.0,371250.0,320208.0,368208.0,18.73,34.59,19.71,-3.39,37.98,True,15
+lat:contention_fok_matcher p999,c2,base,326666.0,330375.0,285583.0,326666.0,5.33,19.40,6.53,-13.84,33.24,True,15
+lat:contention_fok_matcher p999,c3,base,341542.0,329208.0,294417.0,329208.0,6.15,24.84,6.15,-11.18,36.02,True,15
+lat:contention_fok_matcher p999,e3,base,340625.0,315291.0,315792.0,315792.0,1.83,24.50,1.67,-4.73,29.23,True,15
+lat:contention_gtc_matcher p50,base,base,667.0,667.0,667.0,667.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p50,head,base,709.0,709.0,709.0,709.0,6.30,6.30,6.30,6.30,0.00,False,15
+lat:contention_gtc_matcher p50,c2,base,708.0,708.0,709.0,708.0,6.15,6.15,6.15,6.30,0.15,False,15
+lat:contention_gtc_matcher p50,c3,base,708.0,708.0,708.0,708.0,6.15,6.15,6.15,6.15,0.00,False,15
+lat:contention_gtc_matcher p50,e3,base,625.0,625.0,625.0,625.0,-6.30,-6.30,-6.30,-6.30,0.00,False,15
+lat:contention_gtc_matcher p99,base,base,1750.0,1708.0,1708.0,1708.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p99,head,base,1792.0,1666.0,1792.0,1792.0,4.92,2.40,-2.46,4.92,7.38,True,15
+lat:contention_gtc_matcher p99,c2,base,1834.0,1791.0,1792.0,1792.0,4.92,4.80,4.86,4.92,0.12,False,15
+lat:contention_gtc_matcher p99,c3,base,1834.0,1708.0,1750.0,1750.0,2.46,4.80,0.00,2.46,4.80,False,15
+lat:contention_gtc_matcher p99,e3,base,1666.0,1667.0,1750.0,1667.0,-2.40,-4.80,-2.40,2.46,7.26,True,15
+lat:contention_gtc_matcher p999,base,base,4542.0,3750.0,4334.0,4334.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p999,head,base,5083.0,3625.0,4000.0,4000.0,-7.71,11.91,-3.33,-7.71,19.62,True,15
+lat:contention_gtc_matcher p999,c2,base,4583.0,3958.0,3583.0,3958.0,-8.68,0.90,5.55,-17.33,22.87,True,15
+lat:contention_gtc_matcher p999,c3,base,3875.0,4292.0,4167.0,4167.0,-3.85,-14.69,14.45,-3.85,29.14,True,15
+lat:contention_gtc_matcher p999,e3,base,3708.0,4042.0,3875.0,3875.0,-10.59,-18.36,7.79,-10.59,26.15,True,15

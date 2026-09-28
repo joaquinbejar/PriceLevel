@@ -1,0 +1,19 @@
+scenario,side,vs,r1,r2,r3,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,spread_pp,noisy,runs
+lat:contention_fok_matcher p50,base,base,36209.0,36625.0,34166.0,36209.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p50,c3,base,34667.0,39166.0,38250.0,38250.0,5.64,-4.26,6.94,11.95,16.21,True,15
+lat:contention_fok_matcher p50,e3,base,40292.0,35708.0,37000.0,37000.0,2.18,11.28,-2.50,8.29,13.78,True,15
+lat:contention_fok_matcher p99,base,base,223083.0,221833.0,217334.0,221833.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p99,c3,base,205083.0,247583.0,230750.0,230750.0,4.02,-8.07,11.61,6.17,19.68,True,15
+lat:contention_fok_matcher p99,e3,base,234791.0,238333.0,223542.0,234791.0,5.84,5.25,7.44,2.86,4.58,False,15
+lat:contention_fok_matcher p999,base,base,328292.0,310125.0,317333.0,317333.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p999,c3,base,322750.0,346666.0,355959.0,346666.0,9.24,-1.69,11.78,12.17,13.86,True,15
+lat:contention_fok_matcher p999,e3,base,325042.0,390000.0,330209.0,330209.0,4.06,-0.99,25.76,4.06,26.75,True,15
+lat:contention_gtc_matcher p50,base,base,667.0,667.0,667.0,667.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p50,c3,base,708.0,708.0,708.0,708.0,6.15,6.15,6.15,6.15,0.00,False,15
+lat:contention_gtc_matcher p50,e3,base,625.0,625.0,625.0,625.0,-6.30,-6.30,-6.30,-6.30,0.00,False,15
+lat:contention_gtc_matcher p99,base,base,1792.0,1709.0,1750.0,1750.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p99,c3,base,1833.0,1917.0,1750.0,1833.0,4.74,2.29,12.17,0.00,12.17,True,15
+lat:contention_gtc_matcher p99,e3,base,1792.0,1750.0,1833.0,1792.0,2.40,0.00,2.40,4.74,4.74,False,15
+lat:contention_gtc_matcher p999,base,base,6458.0,3750.0,3833.0,3833.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p999,c3,base,4458.0,4250.0,4000.0,4250.0,10.88,-30.97,13.33,4.36,44.30,True,15
+lat:contention_gtc_matcher p999,e3,base,5708.0,3791.0,4709.0,4709.0,22.85,-11.61,1.09,22.85,34.47,True,15

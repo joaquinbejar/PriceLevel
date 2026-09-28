@@ -101,6 +101,13 @@ pub struct Config {
     pub contention_threads: usize,
     /// Matcher-thread operation count for the contention scenario.
     pub contention_ops: usize,
+    /// Matcher calls timed per contention sample (`PL_LATENCY_CONTENTION_BATCH`,
+    /// default 1). Above 1, each sample times that many consecutive
+    /// `match_order` calls with one clock pair and records the per-call mean,
+    /// so a shift smaller than one timer tick (41.67 ns on Apple silicon)
+    /// becomes visible (issue #214 review). The scenario name gains an
+    /// `_x<batch>` suffix.
+    pub contention_batch: usize,
     /// Repetitions per operation in the allocation-measurement pass.
     pub alloc_reps: usize,
     /// Producer (add/cancel) threads per statistics-contention case (#154).
@@ -189,6 +196,7 @@ impl Config {
                 DEFAULT_CONTENTION_THREADS,
             ),
             contention_ops: env_usize("PL_LATENCY_CONTENTION_OPS", default_contention_ops),
+            contention_batch: env_usize("PL_LATENCY_CONTENTION_BATCH", 1),
             alloc_reps: env_usize("PL_LATENCY_ALLOC_REPS", default_alloc_reps),
             stats_producers: env_usize("PL_LATENCY_STATS_PRODUCERS", DEFAULT_STATS_PRODUCERS),
             stats_readers: env_usize("PL_LATENCY_STATS_READERS", DEFAULT_STATS_READERS),

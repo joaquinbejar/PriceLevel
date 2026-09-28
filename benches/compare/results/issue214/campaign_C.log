@@ -1,0 +1,62 @@
+campaign C start Mon 28 Sep 2026 12:31:07 CEST sides=base head c2 c3
+round 1 order base head c2 c3 Mon 28 Sep 2026 12:31:07 CEST 12:31  up 3 days, 19 mins, 15 users, load averages: 4.00 4.57 4.96
+round Cr1 done
+round Cr1k1 done
+round Cr1k1 done
+round Cr1k1 done
+round Cr1k1 done
+round Cr1k0 done
+round Cr1k0 done
+round Cr1k0 done
+round Cr1k0 done
+round 2 order head c2 c3 base Mon 28 Sep 2026 12:37:28 CEST 12:37  up 3 days, 26 mins, 15 users, load averages: 6.45 5.42 5.22
+round Cr2 done
+round Cr2k1 done
+round Cr2k1 done
+round Cr2k1 done
+round Cr2k1 done
+round Cr2k0 done
+round Cr2k0 done
+round Cr2k0 done
+round Cr2k0 done
+round 3 order c2 c3 base head Mon 28 Sep 2026 12:43:49 CEST 12:43  up 3 days, 32 mins, 15 users, load averages: 5.28 4.96 5.02
+round Cr3 done
+round Cr3k1 done
+round Cr3k1 done
+round Cr3k1 done
+round Cr3k1 done
+round Cr3k0 done
+round Cr3k0 done
+round Cr3k0 done
+round Cr3k0 done
+round 4 order c3 base head c2 Mon 28 Sep 2026 12:50:10 CEST 12:50  up 3 days, 38 mins, 15 users, load averages: 6.32 5.49 5.17
+round Cr4 done
+round Cr4k1 done
+round Cr4k1 done
+round Cr4k1 done
+round Cr4k1 done
+round Cr4k0 done
+round Cr4k0 done
+round Cr4k0 done
+round Cr4k0 done
+round 5 order base head c2 c3 Mon 28 Sep 2026 12:56:30 CEST 12:56  up 3 days, 45 mins, 15 users, load averages: 5.64 6.38 5.76
+round Cr5 done
+round Cr5k1 done
+round Cr5k1 done
+round Cr5k1 done
+round Cr5k1 done
+round Cr5k0 done
+round Cr5k0 done
+round Cr5k0 done
+round Cr5k0 done
+round 6 order head c2 c3 base Mon 28 Sep 2026 13:02:57 CEST 13:02  up 3 days, 51 mins, 15 users, load averages: 7.32 6.53 6.00
+round Cr6 done
+round Cr6k1 done
+round Cr6k1 done
+round Cr6k1 done
+round Cr6k1 done
+round Cr6k0 done
+round Cr6k0 done
+round Cr6k0 done
+round Cr6k0 done
+campaign C end Mon 28 Sep 2026 13:09:21 CEST 13:09  up 3 days, 57 mins, 15 users, load averages: 6.04 5.97 5.92

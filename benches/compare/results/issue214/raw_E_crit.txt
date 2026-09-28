@@ -1,0 +1,463 @@
+==== crit_Er1_base2.txt ====
+# uptime before: 14:14  up 3 days,  2:03, 15 users, load averages: 4.18 3.51 3.55
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0119 s (525k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.5519 µs 9.6026 µs 9.6558 µs]
+                        change: [+0.1014% +0.7983% +1.5319%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0531 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.569 µs 12.631 µs 12.701 µs]
+                        change: [−1.1002% −0.5796% −0.0192%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 16 outliers among 100 measurements (16.00%)
+  8 (8.00%) high mild
+  8 (8.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0133 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [247.27 ns 248.98 ns 250.95 ns]
+                        change: [+0.5130% +1.1995% +1.9500%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+# uptime after: 14:14  up 3 days,  2:03, 15 users, load averages: 3.74 3.45 3.53
+
+==== crit_Er1_c3b.txt ====
+# uptime before: 14:14  up 3 days,  2:03, 15 users, load averages: 3.74 3.45 3.53
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0357 s (530k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.4266 µs 9.4566 µs 9.4934 µs]
+                        change: [−0.8985% −0.2397% +0.4702%] (p = 0.48 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0133 s (394k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.599 µs 12.637 µs 12.683 µs]
+                        change: [−1.3532% −1.0012% −0.6596%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  11 (11.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0192 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [244.43 ns 245.53 ns 246.86 ns]
+                        change: [−0.1405% +0.4094% +0.9822%] (p = 0.17 > 0.05)
+                        No change in performance detected.
+Found 19 outliers among 100 measurements (19.00%)
+  1 (1.00%) low mild
+  10 (10.00%) high mild
+  8 (8.00%) high severe
+
+# uptime after: 14:15  up 3 days,  2:03, 15 users, load averages: 3.24 3.35 3.49
+
+==== crit_Er1_final.txt ====
+# uptime before: 14:15  up 3 days,  2:03, 15 users, load averages: 3.24 3.35 3.49
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0349 s (535k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.4270 µs 9.4644 µs 9.5092 µs]
+                        change: [−0.1615% +0.3566% +0.8461%] (p = 0.16 > 0.05)
+                        No change in performance detected.
+Found 15 outliers among 100 measurements (15.00%)
+  5 (5.00%) low mild
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0063 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.570 µs 12.628 µs 12.693 µs]
+                        change: [−0.7300% −0.2116% +0.3372%] (p = 0.44 > 0.05)
+                        No change in performance detected.
+Found 15 outliers among 100 measurements (15.00%)
+  7 (7.00%) high mild
+  8 (8.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0050 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.59 ns 246.77 ns 248.13 ns]
+                        change: [−0.9685% −0.3561% +0.2137%] (p = 0.24 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  7 (7.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 14:15  up 3 days,  2:04, 15 users, load averages: 3.31 3.36 3.49
+
+==== crit_Er2_base2.txt ====
+# uptime before: 14:19  up 3 days,  2:08, 15 users, load averages: 3.18 3.67 3.62
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0336 s (535k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.3782 µs 9.4215 µs 9.4699 µs]
+                        change: [−3.2604% −2.6191% −1.9659%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 15 outliers among 100 measurements (15.00%)
+  4 (4.00%) low mild
+  2 (2.00%) high mild
+  9 (9.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0049 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.498 µs 12.564 µs 12.638 µs]
+                        change: [−1.2518% −0.7646% −0.2916%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  2 (2.00%) high mild
+  13 (13.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0164 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [244.71 ns 245.91 ns 247.18 ns]
+                        change: [−2.0665% −1.3876% −0.7404%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+# uptime after: 14:20  up 3 days,  2:08, 15 users, load averages: 2.85 3.54 3.57
+
+==== crit_Er2_c3b.txt ====
+# uptime before: 14:18  up 3 days,  2:07, 15 users, load averages: 4.92 4.01 3.73
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0214 s (515k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.7000 µs 9.7516 µs 9.8057 µs]
+                        change: [+1.4822% +2.1637% +2.8946%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0254 s (394k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.610 µs 12.642 µs 12.682 µs]
+                        change: [+0.2430% +0.6247% +1.0180%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 22 outliers among 100 measurements (22.00%)
+  2 (2.00%) high mild
+  20 (20.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0128 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.29 ns 246.14 ns 247.16 ns]
+                        change: [−0.0903% +0.5181% +1.1397%] (p = 0.10 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 14:19  up 3 days,  2:07, 15 users, load averages: 3.53 3.77 3.65
+
+==== crit_Er2_final.txt ====
+# uptime before: 14:19  up 3 days,  2:07, 15 users, load averages: 3.53 3.77 3.65
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0147 s (525k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.3585 µs 9.3969 µs 9.4430 µs]
+                        change: [−0.7928% −0.2445% +0.3448%] (p = 0.39 > 0.05)
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0586 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.618 µs 12.659 µs 12.711 µs]
+                        change: [−0.0077% +0.5945% +1.1668%] (p = 0.05 < 0.05)
+                        Change within noise threshold.
+Found 17 outliers among 100 measurements (17.00%)
+  13 (13.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0157 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [244.31 ns 245.50 ns 246.82 ns]
+                        change: [−1.1382% −0.6037% −0.0639%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 11 outliers among 100 measurements (11.00%)
+  10 (10.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 14:19  up 3 days,  2:08, 15 users, load averages: 3.18 3.67 3.62
+
+==== crit_Er3_base2.txt ====
+# uptime before: 14:23  up 3 days,  2:12, 15 users, load averages: 4.63 4.37 3.94
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0362 s (530k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.4087 µs 9.4492 µs 9.4967 µs]
+                        change: [+0.2645% +0.8753% +1.4465%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 20 outliers among 100 measurements (20.00%)
+  3 (3.00%) low mild
+  10 (10.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0321 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.514 µs 12.567 µs 12.628 µs]
+                        change: [−0.0677% +0.4258% +0.9141%] (p = 0.09 > 0.05)
+                        No change in performance detected.
+Found 16 outliers among 100 measurements (16.00%)
+  6 (6.00%) high mild
+  10 (10.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0042 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.13 ns 246.46 ns 248.00 ns]
+                        change: [−0.0149% +0.5274% +1.0962%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+# uptime after: 14:23  up 3 days,  2:12, 15 users, load averages: 3.73 4.17 3.88
+
+==== crit_Er3_c3b.txt ====
+# uptime before: 14:23  up 3 days,  2:12, 15 users, load averages: 3.73 4.17 3.88
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0031 s (525k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.4652 µs 9.5181 µs 9.5759 µs]
+                        change: [−3.3503% −2.7723% −2.1879%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 14 outliers among 100 measurements (14.00%)
+  2 (2.00%) low mild
+  8 (8.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0064 s (394k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.601 µs 12.638 µs 12.684 µs]
+                        change: [−0.8714% −0.3974% +0.1067%] (p = 0.10 > 0.05)
+                        No change in performance detected.
+Found 18 outliers among 100 measurements (18.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+  12 (12.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0089 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.45 ns 246.37 ns 247.44 ns]
+                        change: [−0.7574% −0.1901% +0.3940%] (p = 0.52 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+
+# uptime after: 14:24  up 3 days,  2:12, 15 users, load averages: 3.52 4.09 3.86
+
+==== crit_Er3_final.txt ====
+# uptime before: 14:23  up 3 days,  2:11, 15 users, load averages: 5.16 4.45 3.95
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0096 s (525k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.6003 µs 9.6834 µs 9.7689 µs]
+                        change: [+1.4719% +2.2225% +3.0004%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0466 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.576 µs 12.627 µs 12.684 µs]
+                        change: [−1.4484% −0.9369% −0.4163%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  1 (1.00%) high mild
+  12 (12.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0122 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [243.72 ns 244.65 ns 245.72 ns]
+                        change: [−0.4772% +0.0869% +0.6713%] (p = 0.78 > 0.05)
+                        No change in performance detected.
+Found 15 outliers among 100 measurements (15.00%)
+  7 (7.00%) high mild
+  8 (8.00%) high severe
+
+# uptime after: 14:23  up 3 days,  2:12, 15 users, load averages: 4.63 4.37 3.94
+
+==== crit_Er4_base2.txt ====
+# uptime before: 14:27  up 3 days,  2:15, 15 users, load averages: 7.97 5.29 4.36
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0067 s (505k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.5542 µs 9.6138 µs 9.6806 µs]
+                        change: [+1.3582% +2.2278% +3.1094%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0140 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.601 µs 12.662 µs 12.730 µs]
+                        change: [−0.0071% +0.4899% +1.0178%] (p = 0.06 > 0.05)
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0078 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [246.58 ns 248.08 ns 249.69 ns]
+                        change: [+0.0678% +0.6633% +1.2816%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+
+# uptime after: 14:27  up 3 days,  2:16, 15 users, load averages: 5.82 5.02 4.29
+
+==== crit_Er4_c3b.txt ====
+# uptime before: 14:27  up 3 days,  2:16, 15 users, load averages: 5.82 5.02 4.29
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0445 s (530k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.5213 µs 9.5748 µs 9.6328 µs]
+                        change: [+0.0923% +0.5897% +1.1293%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  3 (3.00%) low mild
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0302 s (399k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.585 µs 12.621 µs 12.665 µs]
+                        change: [−0.7209% −0.2918% +0.1289%] (p = 0.19 > 0.05)
+                        No change in performance detected.
+Found 15 outliers among 100 measurements (15.00%)
+  4 (4.00%) high mild
+  11 (11.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0076 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.02 ns 245.86 ns 246.83 ns]
+                        change: [−0.8083% −0.2226% +0.3318%] (p = 0.44 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+# uptime after: 14:28  up 3 days,  2:16, 15 users, load averages: 5.41 4.98 4.30
+
+==== crit_Er4_final.txt ====
+# uptime before: 14:28  up 3 days,  2:16, 15 users, load averages: 5.41 4.98 4.30
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Collecting 100 samples in estimated 5.0170 s (530k iterations)
+Benchmarking PriceLevel - Match Orders/match_partial_fill_reinsert: Analyzing
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [9.3540 µs 9.3854 µs 9.4235 µs]
+                        change: [−3.1909% −2.4962% −1.8048%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Warming up for 3.0000 s
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Collecting 100 samples in estimated 5.0256 s (394k iterations)
+Benchmarking PriceLevel - Match Orders/match_quantity_scaling_standard/500: Analyzing
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [12.536 µs 12.566 µs 12.603 µs]
+                        change: [−0.6770% −0.2859% +0.0811%] (p = 0.14 > 0.05)
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) high mild
+  10 (10.00%) high severe
+
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Warming up for 3.0000 s
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Collecting 100 samples in estimated 5.0108 s (1.3M iterations)
+Benchmarking PriceLevel - Isolated Ops/match_order_seeded/full_front_maker: Analyzing
+PriceLevel - Isolated Ops/match_order_seeded/full_front_maker
+                        time:   [245.94 ns 247.09 ns 248.42 ns]
+                        change: [+0.9927% +1.7040% +2.4454%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  9 (9.00%) high mild
+
+# uptime after: 14:28  up 3 days,  2:17, 15 users, load averages: 4.26 4.74 4.23
+

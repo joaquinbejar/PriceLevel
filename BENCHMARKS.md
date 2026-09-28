@@ -651,3 +651,304 @@ For the latency harness's own methodology, tail-latency numbers, allocation
 measurements and the individual performance investigations (issues #140,
 #143, #148, #149, #150, #154, #155) behind specific 0.10 changes, see
 [`BENCH.md`](./BENCH.md).
+
+## Issue #214: hot-path recovery
+
+Goal: recover the admission and cancel cost that the pre-release hardening
+(#211, #212; `main` at `bb7ab71`) added over the pre-hardening baseline
+`a5a94fc`, without weakening any #212 guarantee. Raw data, per-campaign
+CSVs, the analysis script and the uncommitted diagnostic variants are in
+[`benches/compare/results/issue214/`](./benches/compare/results/issue214/)
+(each `raw_*` file concatenates the per-run outputs, each preceded by a
+`==== <file> ====` line).
+
+### Sides and protocol
+
+| Label | Tree | What it is |
+|---|---|---|
+| `base` | `a5a94fc` + the bench commit `f2bc151` | pre-hardening baseline |
+| `head` | `f2bc151` (`bb7ab71` + the bench commit) | current `main` |
+| `c2` | `e3fd792` | compact deferred events (below) |
+| `c3` | `dfc27a0` | `c2` + zero-delta skip; the final candidate |
+| `v092` | crates.io `0.9.2` | `benches/compare` only |
+
+Same Mac Studio (Apple M5 Max, 18 cores), rustc 1.98.1, one `git worktree`
+and one `CARGO_TARGET_DIR` per side, prebuilt executables run in
+interleaved rounds whose side order rotates every round, no build running
+during timing, Criterion defaults (100 samples, 3 s warm-up, 5 s
+measurement). The host is a shared desktop (load average 3.9 to 11.7,
+recorded per round in `campaign_*.log`). The noise policy is the one in
+"Interleaving, rounds, and the noise policy" above: a row is **noisy**
+(inconclusive) when its rounds disagree in sign beyond +/-2% or their
+spread exceeds 10 pp. Limits from the issue: uncontended median change
+against `a5a94fc` at most +3%; contended at most +5% with a round spread
+below 5 pp.
+
+Campaigns: **A** and **B** (3 rounds each: main crate `Add Orders/*`,
+`Isolated Ops/*` and `concurrent_cancel_orders/*`; `benches/compare`
+`add_orders_batch_100/*` including `v092`; 5 latency harness contention
+runs per side per round), **C** (6 rounds of `Isolated Ops/*` and
+`concurrent_cancel_orders/*`, 2 contention runs per side per round),
+**X** and **Y** (latency-only diagnostics of uncommitted variants).
+
+### New isolated per-operation benches
+
+`benches/price_level/isolated_ops.rs` ("PriceLevel - Isolated Ops") times
+exactly one public call per iteration: the 32-maker level is built in the
+`iter_batched_ref` setup closure, and Criterion drops the input and the
+output outside the timed region, so neither seeding nor teardown is timed.
+`BatchSize::PerIteration`: the level is cache-warm and at most one seeded
+level is alive; the price is one `Instant::now()` pair per iteration inside
+the timed region, identical on every side. Cases: one `add_order` into the
+seeded level (standard, iceberg), one full-front-maker `match_order`, one
+cancel (standard, iceberg), one in-place quantity decrease, one
+price-moving replace.
+
+### Profile (`a5a94fc` vs `bb7ab71`, objdump of the bench binaries)
+
+| Item | `a5a94fc` | `bb7ab71` | Final (`dfc27a0`) |
+|---|---|---|---|
+| `size_of::<DeferredEvents>()` | n/a | 336 B | 48 B (`u8` bit set + `Option<Id>`), `Copy`, no drop glue |
+| `size_of::<PriceLevelError>()` / `Id` | 56 B / 32 B | 56 B / 32 B | 56 B / 32 B |
+| `add_order` stack frame | 304 B | 912 B | 368 B |
+| `update_order` stack frame | 240 B | 816 B | 240 B |
+| Per-call event handling | none | 5 discriminant stores, a 336 B `memcpy` into `emit(self)`, an out-of-line `emit` call and its drop glue, on every call | two stores (the `kinds` byte and the `Option<Id>` tag) and one byte test; `emit_slow` runs only when a bit is set |
+| `remove_resting` decrements | 2 `ldadd` | 2 load + `cas` loops, unconditional | visible: load + `cas`; hidden: skipped when the order's hidden part is 0 |
+| Match sweep visible decrement | `ldadd` | load + `cas` loop | load + `cas` loop (nonzero delta) |
+
+Per-hypothesis findings:
+
+- **H1 (large `DeferredEvents` built and dropped on every call):
+  confirmed.** 336 bytes were initialised, copied and dropped on every
+  `add_order` / `update_order`, whatever was recorded.
+- **H2 (`emit` inlined into the hot function): refuted as stated.** `emit`
+  was already out of line (1,708 B); the cost was that it was called
+  unconditionally with the struct moved by value. Fixed by an inline bit
+  test and a `#[cold] #[inline(never)]` `emit_slow`.
+- **H3 (threading `&mut DeferredEvents`): minor once H1 is fixed.**
+  `add_order_guarded` is inlined into `add_order`; only the
+  `try_push_with` closure, `remove_resting` and `update_order_inner` see
+  the pointer, and with a 48-byte `Copy` struct written only by `#[cold]`
+  helpers the happy path stores nothing through it. Idea E (returning the
+  events) was therefore not needed and not implemented.
+- **H4 (checked decrement CAS on fills and cancels): confirmed for the
+  contended rows.** The zero-delta skip (Idea H) removes the hidden
+  counter's CAS from every standard cancel and price move and brings
+  `concurrent_cancel_orders` within the limit (`/2` and `/8` within
+  observed noise). The matcher's own visible decrement (nonzero)
+  keeps its CAS; diagnostic variants show it causes the remaining
+  contended GTC p50 gap (see below).
+- **H5 (seqlock bound): no evidence.** The bound sits on
+  `record_execution` / `reset` only (not on admissions or cancels), adds
+  one compare per transition, and no regression of the isolated match row
+  was observed within noise.
+- The `order_queue.rs` and `utils/alloc.rs` changes in #212 are
+  `cfg(test)` seams only; the bench binaries carry no trace of them.
+
+### Changes (one commit each, each measured)
+
+1. `f2bc151`, bench only: the isolated per-operation cases.
+2. `e3fd792`, compact deferred events: a `Copy` bit set plus the order id;
+   no stored `PriceLevelError` (the removal refusal and the release failure
+   log the error the call returns; the statistics drop rebuilds its
+   `CounterExhausted` error from the counter kind); `#[cold]
+   #[inline(never)]` recorders and emitter; an inline bit test after the
+   guard is released.
+3. `dfc27a0`, zero-delta skip: `checked_counter_sub` returns success
+   without an RMW when the operation's own delta is 0 (never based on a
+   loaded counter value); nonzero decrements are still one
+   `fetch_update(checked_sub)`.
+
+### Results per commit (median change against `a5a94fc`)
+
+Uncontended rows from campaign B (3 rounds; every `c3` row non-noisy),
+isolated and cancel rows from campaign C (6 rounds), latency p50 pooled
+over all 42 contention runs per side (A, B and C). Round-by-round values
+and spreads are in the CSVs.
+
+| Benchmark | `head` | `c2` | `c3` (final) |
+|---|---|---|---|
+| compare `add_orders_batch_100/standard` | +14.25% | -1.78% | -1.95% |
+| compare `add_orders_batch_100/iceberg` | +12.31% | -1.87% | -1.08% |
+| compare `add_orders_batch_100/reserve` | +11.84% | -1.48% | -1.80% |
+| `Add Orders/add_standard_order` | +9.31% | -0.48% | +0.11% |
+| `Add Orders/add_iceberg_order` | +11.42% | +1.20% | +1.88% |
+| `Add Orders/add_reserve_order` | +9.27% | -0.83% | +0.64% |
+| `Add Orders/add_mixed_orders` | +10.86% | +3.53% | +1.67% |
+| `Add Orders/order_count_scaling/10` | +5.97% | -0.52% | -0.98% |
+| `Add Orders/order_count_scaling/100` | +8.06% (noisy) | -0.17% | -0.51% |
+| `Add Orders/order_count_scaling/1000` | +12.84% | +4.91% | +2.54% |
+| `Isolated Ops/add_order_seeded/standard` | +1.72% (noisy) | -4.84% (noisy) | -2.31% (noisy) |
+| `Isolated Ops/add_order_seeded/iceberg` | +3.86% (noisy) | -2.84% (noisy) | -2.55% (noisy) |
+| `Isolated Ops/match_order_seeded/full_front_maker` | -1.86% (noisy) | -0.16% (noisy) | -0.76% (noisy) |
+| `Isolated Ops/cancel_seeded/standard` | -6.65% (noisy) | -12.25% (noisy) | -13.59% (noisy) |
+| `Isolated Ops/cancel_seeded/iceberg` | -6.59% (noisy) | -12.13% | -13.20% (noisy) |
+| `Isolated Ops/update_quantity_seeded/decrease` | -12.95% (noisy) | -16.47% (noisy) | -16.63% (noisy) |
+| `Isolated Ops/replace_seeded/different_price` | -6.74% (noisy) | -12.68% (noisy) | -13.93% (noisy) |
+| `concurrent_cancel_orders/2` | +6.87% (noisy) | +6.47% (noisy) | +1.93% (noisy, spread 12.3 pp) |
+| `concurrent_cancel_orders/4` | +11.45% | +6.55% | -0.26% (spread 2.9 pp) |
+| `concurrent_cancel_orders/8` | +7.66% (noisy) | +5.92% | -1.36% (spread 5.7 pp) |
+| `concurrent_cancel_orders/16` | +11.18% | +8.99% | +2.41% (spread 2.7 pp) |
+| latency `contention_gtc_matcher` p50 | +6.3% | +6.1% | +6.1% |
+| latency `contention_fok_matcher` p50 | +6.0% | +2.1% | +10.1% (inconclusive) |
+
+Campaign A agrees with B on every uncontended row (for `c3`: compare
+batches -1.2% to -3.7%, `Add Orders/*` -7.0% to +1.3%).
+
+**Why the isolated rows are flagged noisy.** The `a5a94fc` binary runs in
+one of two modes per process (for example `cancel_seeded/standard` at 73
+to 75 ns in four rounds and 87 ns in two), while the candidates stay in one
+mode. That bimodality alone pushes the spread past 10 pp, so these rows
+are reported as noisy, not as conclusive passes. What the data does
+support: in every one of the 6 rounds `c3` is at or below +2.54% against
+the baseline (worst rounds: `add_order_seeded/standard` +1.75%,
+`add_order_seeded/iceberg` +0.28%, `match_order_seeded` +2.54%; every
+cancel, update and replace round -8.6% or better), and campaigns A and B
+point the same way.
+
+### Contended tails (42 runs per side, pooled)
+
+| Scenario | Quantile | `a5a94fc` median (min to max) | `c3` median (min to max) | Change |
+|---|---|---|---|---|
+| `contention_gtc_matcher` | p50 | 667 ns (625 to 792) | 708 ns (666 to 708) | +6.1% |
+| | p99 | 1,750 ns (1,500 to 3,916) | 1,750 ns (1,542 to 3,042) | within observed noise (median 0.0%) |
+| | p99.9 | 4,313 ns (3,333 to 19,791) | 4,146 ns (3,083 to 19,125) | within observed noise (median -3.9%) |
+| `contention_fok_matcher` | p50 | 33.3 us (26.4 to 44.3) | 36.6 us (28.3 to 49.4) | +10.1% |
+| | p99 | 205 us (156 to 275) | 220 us (171 to 312) | within observed noise (median +6.9%) |
+| | p99.9 | 321 us (224 to 416) | 338 us (261 to 569) | within observed noise (median +5.4%) |
+
+The p99 and p99.9 values of one binary vary by 2x to 5x between runs; no
+tail change is claimed from them.
+
+### Verdict against the #214 limits
+
+- **Pass** (conclusive, within the limit): `add_orders_batch_100/*` (-1.1%
+  to -1.9%), every main-crate `Add Orders/*` row (at most +2.54%),
+  `concurrent_cancel_orders/4` and `/16` (-0.3% and +2.4%, spread under
+  5 pp).
+- **Within the limit but noise-flagged** (not claimed as a pass): the seven
+  isolated rows (every round at or below +2.54%, see above);
+  `concurrent_cancel_orders/2` (+1.9%, spread 12.3 pp from one baseline
+  outlier round; campaign B: +2.7%, spread 4.2 pp) and `/8` (-1.4%, spread
+  5.7 pp, just above the 5 pp precision bar).
+- **Fails**: `contention_gtc_matcher` p50, +6.1% in every campaign (spread
+  up to 6.6 pp). The harness timer ticks at 41.67 ns on this host and the
+  p50 moves from 16 to 17 ticks (667 to 708 ns): the true shift is under
+  one tick, but it is consistently present.
+- **Inconclusive**: `contention_fok_matcher` p50 (round spread 12 to 36 pp
+  in every campaign; pooled +10.1% for `c3`, +6.0% for `head`). It is
+  dominated by the fill-or-kill guard hand-off under three writers and
+  would need far more runs to resolve a 5% effect.
+
+**Attribution of the GTC p50 gap** (campaigns X and Y, 15 runs per side,
+latency only; the variants are diagnostics and are not committed):
+
+| Variant (on top of `c3`) | GTC p50 |
+|---|---|
+| `c3` | 708 ns (+6.15%) |
+| match sweep visible decrement as a plain `fetch_sub` (violates no-wrap) | 667 ns (0%) |
+| every decrement as a plain `fetch_sub` (violates no-wrap) | 625 ns (-6.3%) |
+| Idea J: `compare_exchange_weak` loop seeded with the guess `counter == delta` (no plain load; never wraps) | 625 ns (-6.3%) |
+
+The remaining gap is therefore the load plus `cas` of the checked
+decrements under contention: the matcher's visible decrement and the
+writers' cancel decrement. Idea J closes it under contention but was not
+committed: this change keeps nonzero decrements as
+`fetch_update(checked_sub)`, and in campaign B Idea J costs the
+uncontended paths (its first CAS usually fails, so an uncontended
+decrement becomes two RMWs): `cancel_seeded/iceberg` +23.0% against
+`a5a94fc`, and `replace_seeded` back to +0.0% from -19%. It needs a
+decision (and a `concurrency-auditor` pass) before it is pursued, for
+example on the match sweep only. Packing the two counters (Idea I) was
+not attempted.
+
+### Against 0.9.2 (`benches/compare`, campaign B)
+
+| Scenario | `a5a94fc` | `bb7ab71` | `c3` |
+|---|---|---|---|
+| `add_orders_batch_100/standard` | +2.74% | +17.38% | +0.74% |
+| `add_orders_batch_100/iceberg` | +4.48% | +17.34% | +3.35% |
+| `add_orders_batch_100/reserve` | +2.01% | +14.09% | +0.17% |
+
+All rows non-noisy (spreads 0.4 to 5.4 pp); campaign A agrees within
+noise.
+
+### Allocations
+
+`benches/compare` `alloc_compare` and the latency harness allocation pass
+(`PL_LATENCY_ONLY=alloc`) were run for `a5a94fc`, `bb7ab71` and `c3`.
+Allocation counts per operation are unchanged by #214: `add_order_standard`
+5.00 and `match_full` 8.02 allocations per operation on all three; the
+latency pass's fractional differences (for example `add_order` 2.10 to
+2.11) are the size of one binary's run-to-run variation (two runs of each
+are stored). The differences between `a5a94fc` and `bb7ab71` in
+`trade_list_parse_32` (47 to 15 allocations) and in restore bytes predate
+this change (#211, #212).
+
+### Review follow-up: finer timing and the sweep statistics drop
+
+The numbers above are kept as measured. After review, three changes were
+made and the affected rows measured again:
+
+- `b3e82f1` (bench): the isolated cases use `iter_custom`. Up to 64 seeded
+  levels are built before the clock starts, one `Instant` pair times one
+  call per level (each output moved into a pre-sized buffer), and outputs
+  and levels are dropped after the clock stops. This replaces
+  `BatchSize::PerIteration`, which put about two 41.67 ns timer ticks
+  around every ~70 ns call. The chunk is less cache-warm than one freshly
+  built level, so the absolute values are higher than in the tables above.
+- `708e23d` (bench): `PL_LATENCY_CONTENTION_BATCH=K` in the latency
+  harness times K consecutive contended `match_order` calls with one clock
+  pair and records the per-call mean (`<scenario>_x<K>`), so shifts smaller
+  than one tick become visible. The default (1) is unchanged.
+- `36acc66` (engine): the sweep's statistics-drop event no longer keeps an
+  `Option<PriceLevelError>` per step or an inline `tracing::warn!` in the
+  loop: one pending slot per call and a `#[cold] #[inline(never)]`
+  emitter, with the same event, fields and timing.
+
+Both bench commits were cherry-picked onto the `a5a94fc` side. Sides:
+`base2` (`a5a94fc` + all bench commits), `c3b` (`dfc27a0` + the two new
+bench commits) and `final` (`bfb7387`). Campaign **D**: 4 interleaved
+rounds of `Isolated Ops/*` and `Match Orders/*`, with 5 contention runs per
+side per round at `K = 32`. Campaign **E**: 4 more rounds re-measuring the
+rows that D flagged noisy, with 8 contention runs per side per round.
+
+| Benchmark (median change vs `a5a94fc`) | `c3b` | `final` | Source |
+|---|---|---|---|
+| `Isolated Ops/add_order_seeded/standard` | -3.92% | -4.45% | D |
+| `Isolated Ops/add_order_seeded/iceberg` | -4.66% | -4.29% | D |
+| `Isolated Ops/match_order_seeded/full_front_maker` | -0.51% | -0.46% | E (D: one outlier round, noisy) |
+| `Isolated Ops/cancel_seeded/standard` | -2.50% (noisy) | -2.69% | D |
+| `Isolated Ops/cancel_seeded/iceberg` | -0.54% (noisy) | -1.09% | D |
+| `Isolated Ops/update_quantity_seeded/decrease` | +1.55% (noisy) | +1.75% | D |
+| `Isolated Ops/replace_seeded/different_price` | -1.51% (noisy) | -1.65% | D |
+| `Match Orders/*` (13 rows, seeding included) | -1.07% to +1.47% | -1.63% to +1.52% | D, E |
+| latency `contention_gtc_matcher_x32` p50 | +2.80% (spread 0.6 pp) | +3.58% (spread 0.9 pp) | E (D: +2.20% / +3.26%) |
+| latency `contention_fok_matcher_x32` p50 | +2.09% (spread 3.2 pp) | +3.50% (spread 1.2 pp) | E (D: noisy) |
+
+Every `final` isolated row is non-noisy and within the +3% limit. Of the
+`Match Orders/*` rows, `match_partial_fill_reinsert` stays noise-flagged in
+E (-1.00%; its rounds straddle +/-2%); the rest are non-noisy in D or E.
+`36acc66` shows no effect on the match rows beyond noise (`c3b` against
+`final`).
+
+With batched sampling the contended p50 limit is met: GTC +3.6% and FOK
++3.5% against `a5a94fc`, both with a round spread under 5 pp. The earlier
+single-call GTC reading of +6.1% was the p50 crossing one 41.67 ns tick;
+the batched mean puts the cost of the checked (non-wrapping) decrements
+under contention at about 25 ns per call. Batched p99 / p99.9 are means
+over 32 calls, not single-call tails, and are not used for tail claims
+(GTC `x32` p99 +3.4%, FOK `x32` p99 +3.9%; p99.9 noisy).
+
+**Updated verdict against `a5a94fc`** (final candidate `bfb7387`):
+
+| Row | Result | Verdict |
+|---|---|---|
+| `add_orders_batch_100/*` | -1.1% to -1.9% (B) | pass |
+| `Add Orders/*` | at most +2.54% (B) | pass |
+| Isolated add / match / cancel / update / replace | -4.5% to +1.75% (D, E) | pass |
+| `concurrent_cancel_orders/4`, `/16` | -0.3%, +2.4% (C) | pass |
+| `concurrent_cancel_orders/2`, `/8` | +1.9%, -1.4% (C) | within observed noise (spread 12.3 / 5.7 pp) |
+| `contention_gtc_matcher` p50 | +3.6% batched (E); +6.1% single-call, one tick | pass (batched) |
+| `contention_fok_matcher` p50 | +3.5% batched (E) | pass (batched) |
+| Contended p99 / p99.9 | see the tail table | within observed noise, no claim |

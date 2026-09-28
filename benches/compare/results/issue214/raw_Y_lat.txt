@@ -1,0 +1,1665 @@
+==== lat_Yr1k1_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1542     p99.9=5333     p99.99=30292 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=30292    min=208 | outcomes: matcher: 5000/5000 Filled (408331 ops/s over 0.012245s); writers: 84688 completed (49489 successful, 16941 missing, 18258 rejected) across 3 threads = 6916053 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36209    p99=213625   p99.9=312208   p99.99=411917 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=411917   min=667 | outcomes: matcher: 5000/5000 Filled (19468 ops/s over 0.256828s); writers: 2072962 completed (1157012 successful, 457309 missing, 458641 rejected) across 3 threads = 8071391 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1542 | 5333 | 30292 | 30292 | matcher: 5000/5000 Filled (408331 ops/s over 0.012245s); writers: 84688 completed (49489 successful, 16941 missing, 18258 rejected) across 3 threads = 6916053 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36209 | 213625 | 312208 | 411917 | 411917 | matcher: 5000/5000 Filled (19468 ops/s over 0.256828s); writers: 2072962 completed (1157012 successful, 457309 missing, 458641 rejected) across 3 threads = 8071391 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588346509 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k1_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1625     p99.9=4083     p99.99=11958 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=11958    min=167 | outcomes: matcher: 5000/5000 Filled (403153 ops/s over 0.012402s); writers: 87084 completed (50765 successful, 17499 missing, 18820 rejected) across 3 threads = 7021576 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=33000    p99=203875   p99.9=283708   p99.99=362042 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=362042   min=584 | outcomes: matcher: 5000/5000 Filled (20817 ops/s over 0.240188s); writers: 1910479 completed (1068161 successful, 420493 missing, 421825 rejected) across 3 threads = 7953981 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1625 | 4083 | 11958 | 11958 | matcher: 5000/5000 Filled (403153 ops/s over 0.012402s); writers: 87084 completed (50765 successful, 17499 missing, 18820 rejected) across 3 threads = 7021576 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 33000 | 203875 | 283708 | 362042 | 362042 | matcher: 5000/5000 Filled (20817 ops/s over 0.240188s); writers: 1910479 completed (1068161 successful, 420493 missing, 421825 rejected) across 3 threads = 7953981 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588346833 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k1_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=3833     p99.9=21375    p99.99=80750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=80750    min=208 | outcomes: matcher: 5000/5000 Filled (387379 ops/s over 0.012907s); writers: 83585 completed (49527 successful, 16393 missing, 17665 rejected) across 3 threads = 6475742 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=40417    p99=277000   p99.9=404583   p99.99=555750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=555750   min=583 | outcomes: matcher: 5000/5000 Filled (16478 ops/s over 0.303427s); writers: 2293577 completed (1277559 successful, 507343 missing, 508675 rejected) across 3 threads = 7558907 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 3833 | 21375 | 80750 | 80750 | matcher: 5000/5000 Filled (387379 ops/s over 0.012907s); writers: 83585 completed (49527 successful, 16393 missing, 17665 rejected) across 3 threads = 6475742 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 40417 | 277000 | 404583 | 555750 | 555750 | matcher: 5000/5000 Filled (16478 ops/s over 0.303427s); writers: 2293577 completed (1277559 successful, 507343 missing, 508675 rejected) across 3 threads = 7558907 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588347456 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k2_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 13 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=3875     p99.9=27292    p99.99=88959 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=88959    min=208 | outcomes: matcher: 5000/5000 Filled (371099 ops/s over 0.013473s); writers: 83932 completed (47814 successful, 17421 missing, 18697 rejected) across 3 threads = 6229308 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=38625    p99=242250   p99.9=373083   p99.99=494791 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=494791   min=625 | outcomes: matcher: 5000/5000 Filled (17996 ops/s over 0.277841s); writers: 2175058 completed (1211468 successful, 481129 missing, 482461 rejected) across 3 threads = 7828420 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 3875 | 27292 | 88959 | 88959 | matcher: 5000/5000 Filled (371099 ops/s over 0.013473s); writers: 83932 completed (47814 successful, 17421 missing, 18697 rejected) across 3 threads = 6229308 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 38625 | 242250 | 373083 | 494791 | 494791 | matcher: 5000/5000 Filled (17996 ops/s over 0.277841s); writers: 2175058 completed (1211468 successful, 481129 missing, 482461 rejected) across 3 threads = 7828420 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588347828 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k2_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=666      p99=1708     p99.9=4458     p99.99=10000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=10000    min=166 | outcomes: matcher: 5000/5000 Filled (418455 ops/s over 0.011949s); writers: 82951 completed (48399 successful, 16616 missing, 17936 rejected) across 3 threads = 6942146 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=34667    p99=205083   p99.9=322750   p99.99=438000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=438000   min=500 | outcomes: matcher: 5000/5000 Filled (20210 ops/s over 0.247399s); writers: 1942484 completed (1081868 successful, 429642 missing, 430974 rejected) across 3 threads = 7851625 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 666 | 1708 | 4458 | 10000 | 10000 | matcher: 5000/5000 Filled (418455 ops/s over 0.011949s); writers: 82951 completed (48399 successful, 16616 missing, 17936 rejected) across 3 threads = 6942146 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 34667 | 205083 | 322750 | 438000 | 438000 | matcher: 5000/5000 Filled (20210 ops/s over 0.247399s); writers: 1942484 completed (1081868 successful, 429642 missing, 430974 rejected) across 3 threads = 7851625 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588348156 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k2_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 13 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=2667     p99.9=25000    p99.99=103750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=103750   min=208 | outcomes: matcher: 5000/5000 Filled (384130 ops/s over 0.013016s); writers: 84563 completed (48792 successful, 17243 missing, 18528 rejected) across 3 threads = 6496509 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=42375    p99=278916   p99.9=423417   p99.99=530250 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=530250   min=667 | outcomes: matcher: 5000/5000 Filled (16141 ops/s over 0.309775s); writers: 2316701 completed (1290001 successful, 512684 missing, 514016 rejected) across 3 threads = 7478662 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 2667 | 25000 | 103750 | 103750 | matcher: 5000/5000 Filled (384130 ops/s over 0.013016s); writers: 84563 completed (48792 successful, 17243 missing, 18528 rejected) across 3 threads = 6496509 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 42375 | 278916 | 423417 | 530250 | 530250 | matcher: 5000/5000 Filled (16141 ops/s over 0.309775s); writers: 2316701 completed (1290001 successful, 512684 missing, 514016 rejected) across 3 threads = 7478662 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588348560 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k3_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 20 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=2917     p99.9=17125    p99.99=81791 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=81791    min=167 | outcomes: matcher: 5000/5000 Filled (367229 ops/s over 0.013616s); writers: 80667 completed (47002 successful, 16193 missing, 17472 rejected) across 3 threads = 5924579 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=42166    p99=270000   p99.9=450542   p99.99=561083 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=561083   min=625 | outcomes: matcher: 5000/5000 Filled (16218 ops/s over 0.308294s); writers: 2208391 completed (1230044 successful, 488508 missing, 489839 rejected) across 3 threads = 7163198 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 2917 | 17125 | 81791 | 81791 | matcher: 5000/5000 Filled (367229 ops/s over 0.013616s); writers: 80667 completed (47002 successful, 16193 missing, 17472 rejected) across 3 threads = 5924579 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 42166 | 270000 | 450542 | 561083 | 561083 | matcher: 5000/5000 Filled (16218 ops/s over 0.308294s); writers: 2208391 completed (1230044 successful, 488508 missing, 489839 rejected) across 3 threads = 7163198 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588348965 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k3_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1833     p99.9=5291     p99.99=12375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=12375    min=208 | outcomes: matcher: 5000/5000 Filled (397401 ops/s over 0.012582s); writers: 87995 completed (51419 successful, 17625 missing, 18951 rejected) across 3 threads = 6993859 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36042    p99=238792   p99.9=367375   p99.99=573041 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=573041   min=542 | outcomes: matcher: 5000/5000 Filled (18674 ops/s over 0.267756s); writers: 2162388 completed (1208908 successful, 476075 missing, 477405 rejected) across 3 threads = 8075940 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1833 | 5291 | 12375 | 12375 | matcher: 5000/5000 Filled (397401 ops/s over 0.012582s); writers: 87995 completed (51419 successful, 17625 missing, 18951 rejected) across 3 threads = 6993859 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36042 | 238792 | 367375 | 573041 | 573041 | matcher: 5000/5000 Filled (18674 ops/s over 0.267756s); writers: 2162388 completed (1208908 successful, 476075 missing, 477405 rejected) across 3 threads = 8075940 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588349321 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+
+==== lat_Yr1k3_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 15.67 9.85 7.17
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1792     p99.9=5708     p99.99=31500 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=31500    min=208 | outcomes: matcher: 5000/5000 Filled (404020 ops/s over 0.012376s); writers: 91389 completed (53033 successful, 18513 missing, 19843 rejected) across 3 threads = 7373409 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=40292    p99=234791   p99.9=325042   p99.99=477125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=477125   min=542 | outcomes: matcher: 5000/5000 Filled (17425 ops/s over 0.286940s); writers: 2262451 completed (1260708 successful, 500206 missing, 501537 rejected) across 3 threads = 7884648 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1792 | 5708 | 31500 | 31500 | matcher: 5000/5000 Filled (404020 ops/s over 0.012376s); writers: 91389 completed (53033 successful, 18513 missing, 19843 rejected) across 3 threads = 7373409 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 40292 | 234791 | 325042 | 477125 | 477125 | matcher: 5000/5000 Filled (17425 ops/s over 0.286940s); writers: 2262451 completed (1260708 successful, 500206 missing, 501537 rejected) across 3 threads = 7884648 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588349690 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k4_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1500     p99.9=3750     p99.99=9459 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=9459     min=208 | outcomes: matcher: 5000/5000 Filled (405723 ops/s over 0.012324s); writers: 86669 completed (50281 successful, 17532 missing, 18856 rejected) across 3 threads = 7032601 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=32208    p99=195333   p99.9=269959   p99.99=388000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=388000   min=625 | outcomes: matcher: 5000/5000 Filled (21957 ops/s over 0.227716s); writers: 1792190 completed (1001173 successful, 394843 missing, 396174 rejected) across 3 threads = 7870107 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1500 | 3750 | 9459 | 9459 | matcher: 5000/5000 Filled (405723 ops/s over 0.012324s); writers: 86669 completed (50281 successful, 17532 missing, 18856 rejected) across 3 threads = 7032601 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 32208 | 195333 | 269959 | 388000 | 388000 | matcher: 5000/5000 Filled (21957 ops/s over 0.227716s); writers: 1792190 completed (1001173 successful, 394843 missing, 396174 rejected) across 3 threads = 7870107 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588349998 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k4_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1917     p99.9=3750     p99.99=7375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7375     min=208 | outcomes: matcher: 5000/5000 Filled (404615 ops/s over 0.012357s); writers: 89084 completed (51436 successful, 18163 missing, 19485 rejected) across 3 threads = 7208858 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=39916    p99=243917   p99.9=335209   p99.99=395208 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=395208   min=625 | outcomes: matcher: 5000/5000 Filled (17335 ops/s over 0.288441s); writers: 2343027 completed (1308696 successful, 516499 missing, 517832 rejected) across 3 threads = 8123045 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1917 | 3750 | 7375 | 7375 | matcher: 5000/5000 Filled (404615 ops/s over 0.012357s); writers: 89084 completed (51436 successful, 18163 missing, 19485 rejected) across 3 threads = 7208858 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 39916 | 243917 | 335209 | 395208 | 395208 | matcher: 5000/5000 Filled (17335 ops/s over 0.288441s); writers: 2343027 completed (1308696 successful, 516499 missing, 517832 rejected) across 3 threads = 8123045 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588350368 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k4_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1708     p99.9=3458     p99.99=6750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=6750     min=208 | outcomes: matcher: 5000/5000 Filled (429718 ops/s over 0.011636s); writers: 82432 completed (47863 successful, 16621 missing, 17948 rejected) across 3 threads = 7084420 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=32459    p99=198625   p99.9=281334   p99.99=322709 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=322709   min=542 | outcomes: matcher: 5000/5000 Filled (21591 ops/s over 0.231582s); writers: 1783360 completed (993816 successful, 394106 missing, 395438 rejected) across 3 threads = 7700754 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1708 | 3458 | 6750 | 6750 | matcher: 5000/5000 Filled (429718 ops/s over 0.011636s); writers: 82432 completed (47863 successful, 16621 missing, 17948 rejected) across 3 threads = 7084420 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 32459 | 198625 | 281334 | 322709 | 322709 | matcher: 5000/5000 Filled (21591 ops/s over 0.231582s); writers: 1783360 completed (993816 successful, 394106 missing, 395438 rejected) across 3 threads = 7700754 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588350678 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k5_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1792     p99.9=6458     p99.99=37208 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=37208    min=208 | outcomes: matcher: 5000/5000 Filled (401695 ops/s over 0.012447s); writers: 86616 completed (50345 successful, 17476 missing, 18795 rejected) across 3 threads = 6958624 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36000    p99=223083   p99.9=328292   p99.99=487375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=487375   min=625 | outcomes: matcher: 5000/5000 Filled (19148 ops/s over 0.261122s); writers: 2079031 completed (1158453 successful, 459623 missing, 460955 rejected) across 3 threads = 7961845 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1792 | 6458 | 37208 | 37208 | matcher: 5000/5000 Filled (401695 ops/s over 0.012447s); writers: 86616 completed (50345 successful, 17476 missing, 18795 rejected) across 3 threads = 6958624 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36000 | 223083 | 328292 | 487375 | 487375 | matcher: 5000/5000 Filled (19148 ops/s over 0.261122s); writers: 2079031 completed (1158453 successful, 459623 missing, 460955 rejected) across 3 threads = 7961845 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588351023 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k5_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=2292     p99.9=19833    p99.99=29958 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=29958    min=208 | outcomes: matcher: 5000/5000 Filled (388743 ops/s over 0.012862s); writers: 86378 completed (49770 successful, 17647 missing, 18961 rejected) across 3 threads = 6715032 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=33916    p99=202333   p99.9=280375   p99.99=347000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=347000   min=666 | outcomes: matcher: 5000/5000 Filled (20553 ops/s over 0.243277s); writers: 1878536 completed (1048543 successful, 414330 missing, 415663 rejected) across 3 threads = 7721806 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 2292 | 19833 | 29958 | 29958 | matcher: 5000/5000 Filled (388743 ops/s over 0.012862s); writers: 86378 completed (49770 successful, 17647 missing, 18961 rejected) across 3 threads = 6715032 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 33916 | 202333 | 280375 | 347000 | 347000 | matcher: 5000/5000 Filled (20553 ops/s over 0.243277s); writers: 1878536 completed (1048543 successful, 414330 missing, 415663 rejected) across 3 threads = 7721806 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588351351 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr1k5_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1666     p99.9=3709     p99.99=8708 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=8708     min=208 | outcomes: matcher: 5000/5000 Filled (432431 ops/s over 0.011563s); writers: 81822 completed (47778 successful, 16359 missing, 17685 rejected) across 3 threads = 7076229 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=35334    p99=219917   p99.9=316625   p99.99=370208 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=370208   min=583 | outcomes: matcher: 5000/5000 Filled (19835 ops/s over 0.252086s); writers: 1977386 completed (1101789 successful, 437133 missing, 438464 rejected) across 3 threads = 7843968 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1666 | 3709 | 8708 | 8708 | matcher: 5000/5000 Filled (432431 ops/s over 0.011563s); writers: 81822 completed (47778 successful, 16359 missing, 17685 rejected) across 3 threads = 7076229 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 35334 | 219917 | 316625 | 370208 | 370208 | matcher: 5000/5000 Filled (19835 ops/s over 0.252086s); writers: 1977386 completed (1101789 successful, 437133 missing, 438464 rejected) across 3 threads = 7843968 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588351684 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k1_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1792     p99.9=5208     p99.99=25750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=25750    min=208 | outcomes: matcher: 5000/5000 Filled (405859 ops/s over 0.012320s); writers: 85235 completed (49377 successful, 17267 missing, 18591 rejected) across 3 threads = 6918282 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36625    p99=224000   p99.9=322250   p99.99=512708 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=512708   min=666 | outcomes: matcher: 5000/5000 Filled (18919 ops/s over 0.264284s); writers: 2136976 completed (1192788 successful, 471429 missing, 472759 rejected) across 3 threads = 8085900 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1792 | 5208 | 25750 | 25750 | matcher: 5000/5000 Filled (405859 ops/s over 0.012320s); writers: 85235 completed (49377 successful, 17267 missing, 18591 rejected) across 3 threads = 6918282 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36625 | 224000 | 322250 | 512708 | 512708 | matcher: 5000/5000 Filled (18919 ops/s over 0.264284s); writers: 2136976 completed (1192788 successful, 471429 missing, 472759 rejected) across 3 threads = 8085900 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588352731 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k1_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1875     p99.9=4167     p99.99=8958 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=8958     min=167 | outcomes: matcher: 5000/5000 Filled (404770 ops/s over 0.012353s); writers: 89515 completed (51849 successful, 18170 missing, 19496 rejected) across 3 threads = 7246509 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36583    p99=225833   p99.9=335958   p99.99=412250 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=412250   min=584 | outcomes: matcher: 5000/5000 Filled (19117 ops/s over 0.261550s); writers: 2085064 completed (1163223 successful, 460255 missing, 461586 rejected) across 3 threads = 7971964 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1875 | 4167 | 8958 | 8958 | matcher: 5000/5000 Filled (404770 ops/s over 0.012353s); writers: 89515 completed (51849 successful, 18170 missing, 19496 rejected) across 3 threads = 7246509 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36583 | 225833 | 335958 | 412250 | 412250 | matcher: 5000/5000 Filled (19117 ops/s over 0.261550s); writers: 2085064 completed (1163223 successful, 460255 missing, 461586 rejected) across 3 threads = 7971964 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588352038 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k1_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1875     p99.9=3584     p99.99=7125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7125     min=208 | outcomes: matcher: 5000/5000 Filled (427949 ops/s over 0.011684s); writers: 82586 completed (48101 successful, 16579 missing, 17906 rejected) across 3 threads = 7068380 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=35417    p99=230042   p99.9=362250   p99.99=500834 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=500834   min=583 | outcomes: matcher: 5000/5000 Filled (19086 ops/s over 0.261977s); writers: 2060698 completed (1150895 successful, 454236 missing, 455567 rejected) across 3 threads = 7865950 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1875 | 3584 | 7125 | 7125 | matcher: 5000/5000 Filled (427949 ops/s over 0.011684s); writers: 82586 completed (48101 successful, 16579 missing, 17906 rejected) across 3 threads = 7068380 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 35417 | 230042 | 362250 | 500834 | 500834 | matcher: 5000/5000 Filled (19086 ops/s over 0.261977s); writers: 2060698 completed (1150895 successful, 454236 missing, 455567 rejected) across 3 threads = 7865950 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588352387 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k2_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1583     p99.9=3667     p99.99=12042 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=12042    min=208 | outcomes: matcher: 5000/5000 Filled (402425 ops/s over 0.012425s); writers: 85659 completed (49563 successful, 17386 missing, 18710 rejected) across 3 threads = 6894120 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=34791    p99=207583   p99.9=343875   p99.99=393333 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=393333   min=667 | outcomes: matcher: 5000/5000 Filled (19937 ops/s over 0.250791s); writers: 2046150 completed (1144409 successful, 450204 missing, 451537 rejected) across 3 threads = 8158678 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1583 | 3667 | 12042 | 12042 | matcher: 5000/5000 Filled (402425 ops/s over 0.012425s); writers: 85659 completed (49563 successful, 17386 missing, 18710 rejected) across 3 threads = 6894120 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 34791 | 207583 | 343875 | 393333 | 393333 | matcher: 5000/5000 Filled (19937 ops/s over 0.250791s); writers: 2046150 completed (1144409 successful, 450204 missing, 451537 rejected) across 3 threads = 8158678 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588353773 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k2_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1917     p99.9=4250     p99.99=9708 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=9708     min=167 | outcomes: matcher: 5000/5000 Filled (409168 ops/s over 0.012220s); writers: 87105 completed (50375 successful, 17700 missing, 19030 rejected) across 3 threads = 7128057 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=38791    p99=228708   p99.9=331375   p99.99=474291 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=474291   min=625 | outcomes: matcher: 5000/5000 Filled (17963 ops/s over 0.278350s); writers: 2160930 completed (1206315 successful, 476641 missing, 477974 rejected) across 3 threads = 7763359 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1917 | 4250 | 9708 | 9708 | matcher: 5000/5000 Filled (409168 ops/s over 0.012220s); writers: 87105 completed (50375 successful, 17700 missing, 19030 rejected) across 3 threads = 7128057 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 38791 | 228708 | 331375 | 474291 | 474291 | matcher: 5000/5000 Filled (17963 ops/s over 0.278350s); writers: 2160930 completed (1206315 successful, 476641 missing, 477974 rejected) across 3 threads = 7763359 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588353090 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k2_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1709     p99.9=3791     p99.99=12959 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=12959    min=208 | outcomes: matcher: 5000/5000 Filled (433863 ops/s over 0.011524s); writers: 82162 completed (47821 successful, 16510 missing, 17831 rejected) across 3 threads = 7129267 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=35750    p99=242042   p99.9=402458   p99.99=536416 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=536416   min=542 | outcomes: matcher: 5000/5000 Filled (18950 ops/s over 0.263849s); writers: 2096744 completed (1169276 successful, 463068 missing, 464400 rejected) across 3 threads = 7946684 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1709 | 3791 | 12959 | 12959 | matcher: 5000/5000 Filled (433863 ops/s over 0.011524s); writers: 82162 completed (47821 successful, 16510 missing, 17831 rejected) across 3 threads = 7129267 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 35750 | 242042 | 402458 | 536416 | 536416 | matcher: 5000/5000 Filled (18950 ops/s over 0.263849s); writers: 2096744 completed (1169276 successful, 463068 missing, 464400 rejected) across 3 threads = 7946684 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588353437 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k3_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 13 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=750      p99=2667     p99.9=11542    p99.99=31375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=31375    min=208 | outcomes: matcher: 5000/5000 Filled (373239 ops/s over 0.013396s); writers: 79406 completed (46177 successful, 15963 missing, 17266 rejected) across 3 threads = 5927335 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=39666    p99=228500   p99.9=309625   p99.99=612292 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=612292   min=708 | outcomes: matcher: 5000/5000 Filled (18075 ops/s over 0.276625s); writers: 2188329 completed (1219094 successful, 483951 missing, 485284 rejected) across 3 threads = 7910706 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 750 | 2667 | 11542 | 31375 | 31375 | matcher: 5000/5000 Filled (373239 ops/s over 0.013396s); writers: 79406 completed (46177 successful, 15963 missing, 17266 rejected) across 3 threads = 5927335 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 39666 | 228500 | 309625 | 612292 | 612292 | matcher: 5000/5000 Filled (18075 ops/s over 0.276625s); writers: 2188329 completed (1219094 successful, 483951 missing, 485284 rejected) across 3 threads = 7910706 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588354889 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k3_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=2000     p99.9=4875     p99.99=23458 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=23458    min=166 | outcomes: matcher: 5000/5000 Filled (404914 ops/s over 0.012348s); writers: 86348 completed (49966 successful, 17537 missing, 18845 rejected) across 3 threads = 6987506 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=42958    p99=272958   p99.9=374084   p99.99=459833 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=459833   min=708 | outcomes: matcher: 5000/5000 Filled (16055 ops/s over 0.311435s); writers: 2524925 completed (1409957 successful, 556818 missing, 558150 rejected) across 3 threads = 8107295 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 2000 | 4875 | 23458 | 23458 | matcher: 5000/5000 Filled (404914 ops/s over 0.012348s); writers: 86348 completed (49966 successful, 17537 missing, 18845 rejected) across 3 threads = 6987506 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 42958 | 272958 | 374084 | 459833 | 459833 | matcher: 5000/5000 Filled (16055 ops/s over 0.311435s); writers: 2524925 completed (1409957 successful, 556818 missing, 558150 rejected) across 3 threads = 8107295 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588354168 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+
+==== lat_Yr2k3_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.74 9.75 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=2208     p99.9=11834    p99.99=18959 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=18959    min=208 | outcomes: matcher: 5000/5000 Filled (416421 ops/s over 0.012007s); writers: 81489 completed (47727 successful, 16231 missing, 17531 rejected) across 3 threads = 6786275 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=35708    p99=242000   p99.9=390000   p99.99=476583 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=476583   min=500 | outcomes: matcher: 5000/5000 Filled (18909 ops/s over 0.264428s); writers: 2039403 completed (1139900 successful, 449086 missing, 450417 rejected) across 3 threads = 7712422 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 2208 | 11834 | 18959 | 18959 | matcher: 5000/5000 Filled (416421 ops/s over 0.012007s); writers: 81489 completed (47727 successful, 16231 missing, 17531 rejected) across 3 threads = 6786275 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 35708 | 242000 | 390000 | 476583 | 476583 | matcher: 5000/5000 Filled (18909 ops/s over 0.264428s); writers: 2039403 completed (1139900 successful, 449086 missing, 450417 rejected) across 3 threads = 7712422 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588354519 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k4_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1625     p99.9=3417     p99.99=7750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7750     min=208 | outcomes: matcher: 5000/5000 Filled (402772 ops/s over 0.012414s); writers: 86410 completed (50138 successful, 17472 missing, 18800 rejected) across 3 threads = 6960655 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36917    p99=221833   p99.9=310125   p99.99=441500 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=441500   min=667 | outcomes: matcher: 5000/5000 Filled (19323 ops/s over 0.258762s); writers: 2091983 completed (1165644 successful, 462503 missing, 463836 rejected) across 3 threads = 8084534 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1625 | 3417 | 7750 | 7750 | matcher: 5000/5000 Filled (402772 ops/s over 0.012414s); writers: 86410 completed (50138 successful, 17472 missing, 18800 rejected) across 3 threads = 6960655 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36917 | 221833 | 310125 | 441500 | 441500 | matcher: 5000/5000 Filled (19323 ops/s over 0.258762s); writers: 2091983 completed (1165644 successful, 462503 missing, 463836 rejected) across 3 threads = 8084534 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588355924 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k4_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1667     p99.9=3750     p99.99=11250 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=11250    min=167 | outcomes: matcher: 5000/5000 Filled (402964 ops/s over 0.012408s); writers: 87267 completed (50528 successful, 17708 missing, 19031 rejected) across 3 threads = 7033083 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=39166    p99=262125   p99.9=346666   p99.99=473542 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=473542   min=666 | outcomes: matcher: 5000/5000 Filled (17337 ops/s over 0.288407s); writers: 2321880 completed (1292834 successful, 513857 missing, 515189 rejected) across 3 threads = 8050611 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1667 | 3750 | 11250 | 11250 | matcher: 5000/5000 Filled (402964 ops/s over 0.012408s); writers: 87267 completed (50528 successful, 17708 missing, 19031 rejected) across 3 threads = 7033083 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 39166 | 262125 | 346666 | 473542 | 473542 | matcher: 5000/5000 Filled (17337 ops/s over 0.288407s); writers: 2321880 completed (1292834 successful, 513857 missing, 515189 rejected) across 3 threads = 8050611 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588355258 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k4_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1708     p99.9=4000     p99.99=9542 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=9542     min=208 | outcomes: matcher: 5000/5000 Filled (427756 ops/s over 0.011689s); writers: 81354 completed (47485 successful, 16269 missing, 17600 rejected) across 3 threads = 6959902 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=34791    p99=217208   p99.9=312125   p99.99=564583 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=564583   min=625 | outcomes: matcher: 5000/5000 Filled (20194 ops/s over 0.247604s); writers: 1930197 completed (1074636 successful, 427115 missing, 428446 rejected) across 3 threads = 7795419 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1708 | 4000 | 9542 | 9542 | matcher: 5000/5000 Filled (427756 ops/s over 0.011689s); writers: 81354 completed (47485 successful, 16269 missing, 17600 rejected) across 3 threads = 6959902 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 34791 | 217208 | 312125 | 564583 | 564583 | matcher: 5000/5000 Filled (20194 ops/s over 0.247604s); writers: 1930197 completed (1074636 successful, 427115 missing, 428446 rejected) across 3 threads = 7795419 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588355587 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k5_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1709     p99.9=3750     p99.99=22416 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=22416    min=167 | outcomes: matcher: 5000/5000 Filled (421981 ops/s over 0.011849s); writers: 81172 completed (47230 successful, 16309 missing, 17633 rejected) across 3 threads = 6850496 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=29875    p99=170667   p99.9=249959   p99.99=392667 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=392667   min=583 | outcomes: matcher: 5000/5000 Filled (23510 ops/s over 0.212677s); writers: 1635693 completed (912080 successful, 361141 missing, 362472 rejected) across 3 threads = 7690846 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1709 | 3750 | 22416 | 22416 | matcher: 5000/5000 Filled (421981 ops/s over 0.011849s); writers: 81172 completed (47230 successful, 16309 missing, 17633 rejected) across 3 threads = 6850496 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 29875 | 170667 | 249959 | 392667 | 392667 | matcher: 5000/5000 Filled (23510 ops/s over 0.212677s); writers: 1635693 completed (912080 successful, 361141 missing, 362472 rejected) across 3 threads = 7690846 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588356954 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k5_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=750      p99=2542     p99.9=10334    p99.99=19542 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=19542    min=167 | outcomes: matcher: 5000/5000 Filled (366307 ops/s over 0.013650s); writers: 82376 completed (47637 successful, 16712 missing, 18027 rejected) across 3 threads = 6034893 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=39541    p99=247583   p99.9=358875   p99.99=483375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=483375   min=708 | outcomes: matcher: 5000/5000 Filled (17448 ops/s over 0.286572s); writers: 2284587 completed (1276765 successful, 503246 missing, 504576 rejected) across 3 threads = 7972114 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 750 | 2542 | 10334 | 19542 | 19542 | matcher: 5000/5000 Filled (366307 ops/s over 0.013650s); writers: 82376 completed (47637 successful, 16712 missing, 18027 rejected) across 3 threads = 6034893 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 39541 | 247583 | 358875 | 483375 | 483375 | matcher: 5000/5000 Filled (17448 ops/s over 0.286572s); writers: 2284587 completed (1276765 successful, 503246 missing, 504576 rejected) across 3 threads = 7972114 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588356295 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr2k5_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1750     p99.9=3541     p99.99=19208 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=19208    min=208 | outcomes: matcher: 5000/5000 Filled (405440 ops/s over 0.012332s); writers: 88571 completed (51499 successful, 17873 missing, 19199 rejected) across 3 threads = 7181995 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=38917    p99=238333   p99.9=411500   p99.99=527875 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=527875   min=708 | outcomes: matcher: 5000/5000 Filled (17704 ops/s over 0.282423s); writers: 2222640 completed (1237865 successful, 491722 missing, 493053 rejected) across 3 threads = 7869833 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1750 | 3541 | 19208 | 19208 | matcher: 5000/5000 Filled (405440 ops/s over 0.012332s); writers: 88571 completed (51499 successful, 17873 missing, 19199 rejected) across 3 threads = 7181995 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 38917 | 238333 | 411500 | 527875 | 527875 | matcher: 5000/5000 Filled (17704 ops/s over 0.282423s); writers: 2222640 completed (1237865 successful, 491722 missing, 493053 rejected) across 3 threads = 7869833 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588356660 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k1_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1791     p99.9=3750     p99.99=8125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=8125     min=167 | outcomes: matcher: 5000/5000 Filled (404415 ops/s over 0.012364s); writers: 86118 completed (50130 successful, 17329 missing, 18659 rejected) across 3 threads = 6965371 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=36584    p99=226334   p99.9=353750   p99.99=418459 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=418459   min=666 | outcomes: matcher: 5000/5000 Filled (19049 ops/s over 0.262479s); writers: 2132006 completed (1187553 successful, 471560 missing, 472893 rejected) across 3 threads = 8122469 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1791 | 3750 | 8125 | 8125 | matcher: 5000/5000 Filled (404415 ops/s over 0.012364s); writers: 86118 completed (50130 successful, 17329 missing, 18659 rejected) across 3 threads = 6965371 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 36584 | 226334 | 353750 | 418459 | 418459 | matcher: 5000/5000 Filled (19049 ops/s over 0.262479s); writers: 2132006 completed (1187553 successful, 471560 missing, 472893 rejected) across 3 threads = 8122469 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588357634 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k1_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=2042     p99.9=3875     p99.99=7417 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7417     min=208 | outcomes: matcher: 5000/5000 Filled (404488 ops/s over 0.012361s); writers: 88023 completed (50862 successful, 17917 missing, 19244 rejected) across 3 threads = 7119430 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=38250    p99=230750   p99.9=355959   p99.99=462000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=462000   min=625 | outcomes: matcher: 5000/5000 Filled (18195 ops/s over 0.274799s); writers: 2195102 completed (1224938 successful, 484416 missing, 485748 rejected) across 3 threads = 7988022 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 2042 | 3875 | 7417 | 7417 | matcher: 5000/5000 Filled (404488 ops/s over 0.012361s); writers: 88023 completed (50862 successful, 17917 missing, 19244 rejected) across 3 threads = 7119430 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 38250 | 230750 | 355959 | 462000 | 462000 | matcher: 5000/5000 Filled (18195 ops/s over 0.274799s); writers: 2195102 completed (1224938 successful, 484416 missing, 485748 rejected) across 3 threads = 7988022 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588357990 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k1_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1625     p99.9=4709     p99.99=31333 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=31333    min=208 | outcomes: matcher: 5000/5000 Filled (430926 ops/s over 0.011603s); writers: 82580 completed (48102 successful, 16576 missing, 17902 rejected) across 3 threads = 7117052 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=33834    p99=207750   p99.9=325833   p99.99=403042 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=403042   min=500 | outcomes: matcher: 5000/5000 Filled (20327 ops/s over 0.245973s); writers: 1901860 completed (1062257 successful, 419136 missing, 420467 rejected) across 3 threads = 7732000 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1625 | 4709 | 31333 | 31333 | matcher: 5000/5000 Filled (430926 ops/s over 0.011603s); writers: 82580 completed (48102 successful, 16576 missing, 17902 rejected) across 3 threads = 7117052 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 33834 | 207750 | 325833 | 403042 | 403042 | matcher: 5000/5000 Filled (20327 ops/s over 0.245973s); writers: 1901860 completed (1062257 successful, 419136 missing, 420467 rejected) across 3 threads = 7732000 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588357288 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k2_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1625     p99.9=4250     p99.99=11250 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=11250    min=167 | outcomes: matcher: 5000/5000 Filled (413163 ops/s over 0.012102s); writers: 84810 completed (48596 successful, 17450 missing, 18764 rejected) across 3 threads = 7008035 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=34166    p99=217334   p99.9=305792   p99.99=420459 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=420459   min=666 | outcomes: matcher: 5000/5000 Filled (20186 ops/s over 0.247699s); writers: 1994111 completed (1112687 successful, 440046 missing, 441378 rejected) across 3 threads = 8050521 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1625 | 4250 | 11250 | 11250 | matcher: 5000/5000 Filled (413163 ops/s over 0.012102s); writers: 84810 completed (48596 successful, 17450 missing, 18764 rejected) across 3 threads = 7008035 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 34166 | 217334 | 305792 | 420459 | 420459 | matcher: 5000/5000 Filled (20186 ops/s over 0.247699s); writers: 1994111 completed (1112687 successful, 440046 missing, 441378 rejected) across 3 threads = 8050521 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588358662 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k2_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1709     p99.9=4000     p99.99=22875 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=22875    min=167 | outcomes: matcher: 5000/5000 Filled (408472 ops/s over 0.012241s); writers: 85993 completed (50153 successful, 17263 missing, 18577 rejected) across 3 threads = 7025054 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=33875    p99=216042   p99.9=328416   p99.99=485375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=485375   min=625 | outcomes: matcher: 5000/5000 Filled (20114 ops/s over 0.248583s); writers: 1967617 completed (1097177 successful, 434554 missing, 435886 rejected) across 3 threads = 7915327 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1709 | 4000 | 22875 | 22875 | matcher: 5000/5000 Filled (408472 ops/s over 0.012241s); writers: 85993 completed (50153 successful, 17263 missing, 18577 rejected) across 3 threads = 7025054 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 33875 | 216042 | 328416 | 485375 | 485375 | matcher: 5000/5000 Filled (20114 ops/s over 0.248583s); writers: 1967617 completed (1097177 successful, 434554 missing, 435886 rejected) across 3 threads = 7915327 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588358994 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k2_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1833     p99.9=5000     p99.99=7375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7375     min=208 | outcomes: matcher: 5000/5000 Filled (431782 ops/s over 0.011580s); writers: 81226 completed (47268 successful, 16318 missing, 17640 rejected) across 3 threads = 7014305 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=37000    p99=223542   p99.9=330209   p99.99=488417 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=488417   min=541 | outcomes: matcher: 5000/5000 Filled (18860 ops/s over 0.265111s); writers: 2093813 completed (1166331 successful, 463075 missing, 464407 rejected) across 3 threads = 7897883 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1833 | 5000 | 7375 | 7375 | matcher: 5000/5000 Filled (431782 ops/s over 0.011580s); writers: 81226 completed (47268 successful, 16318 missing, 17640 rejected) across 3 threads = 7014305 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 37000 | 223542 | 330209 | 488417 | 488417 | matcher: 5000/5000 Filled (18860 ops/s over 0.265111s); writers: 2093813 completed (1166331 successful, 463075 missing, 464407 rejected) across 3 threads = 7897883 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588358335 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k3_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1917     p99.9=4333     p99.99=11792 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=11792    min=208 | outcomes: matcher: 5000/5000 Filled (424791 ops/s over 0.011770s); writers: 82168 completed (47700 successful, 16571 missing, 17897 rejected) across 3 threads = 6980804 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=32084    p99=189625   p99.9=259875   p99.99=343834 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=343834   min=500 | outcomes: matcher: 5000/5000 Filled (21916 ops/s over 0.228147s); writers: 1823454 completed (1019317 successful, 401403 missing, 402734 rejected) across 3 threads = 7992427 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1917 | 4333 | 11792 | 11792 | matcher: 5000/5000 Filled (424791 ops/s over 0.011770s); writers: 82168 completed (47700 successful, 16571 missing, 17897 rejected) across 3 threads = 6980804 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 32084 | 189625 | 259875 | 343834 | 343834 | matcher: 5000/5000 Filled (21916 ops/s over 0.228147s); writers: 1823454 completed (1019317 successful, 401403 missing, 402734 rejected) across 3 threads = 7992427 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588359667 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k3_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1792     p99.9=4833     p99.99=18125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=18125    min=167 | outcomes: matcher: 5000/5000 Filled (406741 ops/s over 0.012293s); writers: 89067 completed (51059 successful, 18343 missing, 19665 rejected) across 3 threads = 7245425 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=35458    p99=207583   p99.9=302167   p99.99=464958 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=464958   min=625 | outcomes: matcher: 5000/5000 Filled (19747 ops/s over 0.253206s); writers: 1950649 completed (1093610 successful, 427854 missing, 429185 rejected) across 3 threads = 7703682 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1792 | 4833 | 18125 | 18125 | matcher: 5000/5000 Filled (406741 ops/s over 0.012293s); writers: 89067 completed (51059 successful, 18343 missing, 19665 rejected) across 3 threads = 7245425 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 35458 | 207583 | 302167 | 464958 | 464958 | matcher: 5000/5000 Filled (19747 ops/s over 0.253206s); writers: 1950649 completed (1093610 successful, 427854 missing, 429185 rejected) across 3 threads = 7703682 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588360000 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k3_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1792     p99.9=4166     p99.99=23959 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=23959    min=208 | outcomes: matcher: 5000/5000 Filled (411224 ops/s over 0.012159s); writers: 88165 completed (51198 successful, 17822 missing, 19145 rejected) across 3 threads = 7250993 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=39958    p99=242667   p99.9=338958   p99.99=485041 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=485041   min=625 | outcomes: matcher: 5000/5000 Filled (17530 ops/s over 0.285221s); writers: 2245564 completed (1250611 successful, 496811 missing, 498142 rejected) across 3 threads = 7872943 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1792 | 4166 | 23959 | 23959 | matcher: 5000/5000 Filled (411224 ops/s over 0.012159s); writers: 88165 completed (51198 successful, 17822 missing, 19145 rejected) across 3 threads = 7250993 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 39958 | 242667 | 338958 | 485041 | 485041 | matcher: 5000/5000 Filled (17530 ops/s over 0.285221s); writers: 2245564 completed (1250611 successful, 496811 missing, 498142 rejected) across 3 threads = 7872943 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588359360 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 14.12 9.71 7.15
+
+==== lat_Yr3k4_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1750     p99.9=3833     p99.99=8083 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=8083     min=208 | outcomes: matcher: 5000/5000 Filled (408404 ops/s over 0.012243s); writers: 86610 completed (50136 successful, 17575 missing, 18899 rejected) across 3 threads = 7074114 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=37792    p99=231208   p99.9=362583   p99.99=426916 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=426916   min=750 | outcomes: matcher: 5000/5000 Filled (18646 ops/s over 0.268154s); writers: 2197070 completed (1229024 successful, 483357 missing, 484689 rejected) across 3 threads = 8193310 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1750 | 3833 | 8083 | 8083 | matcher: 5000/5000 Filled (408404 ops/s over 0.012243s); writers: 86610 completed (50136 successful, 17575 missing, 18899 rejected) across 3 threads = 7074114 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 37792 | 231208 | 362583 | 426916 | 426916 | matcher: 5000/5000 Filled (18646 ops/s over 0.268154s); writers: 2197070 completed (1229024 successful, 483357 missing, 484689 rejected) across 3 threads = 8193310 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588360681 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k4_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1750     p99.9=3500     p99.99=20000 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=20000    min=166 | outcomes: matcher: 5000/5000 Filled (400871 ops/s over 0.012473s); writers: 88287 completed (51351 successful, 17807 missing, 19129 rejected) across 3 threads = 7078283 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=40458    p99=265500   p99.9=382958   p99.99=491292 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=491292   min=708 | outcomes: matcher: 5000/5000 Filled (17202 ops/s over 0.290665s); writers: 2371243 completed (1322052 successful, 523930 missing, 525261 rejected) across 3 threads = 8157975 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1750 | 3500 | 20000 | 20000 | matcher: 5000/5000 Filled (400871 ops/s over 0.012473s); writers: 88287 completed (51351 successful, 17807 missing, 19129 rejected) across 3 threads = 7078283 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 40458 | 265500 | 382958 | 491292 | 491292 | matcher: 5000/5000 Filled (17202 ops/s over 0.290665s); writers: 2371243 completed (1322052 successful, 523930 missing, 525261 rejected) across 3 threads = 8157975 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588361053 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k4_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=1833     p99.9=3833     p99.99=7959 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7959     min=209 | outcomes: matcher: 5000/5000 Filled (424100 ops/s over 0.011790s); writers: 81938 completed (47690 successful, 16460 missing, 17788 rejected) across 3 threads = 6950033 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=34625    p99=213750   p99.9=316750   p99.99=859750 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=859750   min=583 | outcomes: matcher: 5000/5000 Filled (19873 ops/s over 0.251598s); writers: 1976180 completed (1100848 successful, 437000 missing, 438332 rejected) across 3 threads = 7854383 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 1833 | 3833 | 7959 | 7959 | matcher: 5000/5000 Filled (424100 ops/s over 0.011790s); writers: 81938 completed (47690 successful, 16460 missing, 17788 rejected) across 3 threads = 6950033 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 34625 | 213750 | 316750 | 859750 | 859750 | matcher: 5000/5000 Filled (19873 ops/s over 0.251598s); writers: 1976180 completed (1100848 successful, 437000 missing, 438332 rejected) across 3 threads = 7854383 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588360333 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k5_base.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : 1c0e02c3a5f8adac50300c964d2d859d6d1853cd (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=667      p99=1625     p99.9=3375     p99.99=7875 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=7875     min=208 | outcomes: matcher: 5000/5000 Filled (402118 ops/s over 0.012434s); writers: 86947 completed (50264 successful, 17678 missing, 19005 rejected) across 3 threads = 6992506 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=31709    p99=194083   p99.9=317333   p99.99=399375 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=399375   min=625 | outcomes: matcher: 5000/5000 Filled (21792 ops/s over 0.229444s); writers: 1864590 completed (1038915 successful, 412172 missing, 413503 rejected) across 3 threads = 8126539 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 667 | 1625 | 3375 | 7875 | 7875 | matcher: 5000/5000 Filled (402118 ops/s over 0.012434s); writers: 86947 completed (50264 successful, 17678 missing, 19005 rejected) across 3 threads = 6992506 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 31709 | 194083 | 317333 | 399375 | 399375 | matcher: 5000/5000 Filled (21792 ops/s over 0.229444s); writers: 1864590 completed (1038915 successful, 412172 missing, 413503 rejected) across 3 threads = 8126539 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588361724 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k5_c3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=708      p99=1625     p99.9=4084     p99.99=25333 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=25333    min=167 | outcomes: matcher: 5000/5000 Filled (403430 ops/s over 0.012394s); writers: 87897 completed (50715 successful, 17927 missing, 19255 rejected) across 3 threads = 7092065 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=42542    p99=259875   p99.9=380708   p99.99=522125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=522125   min=666 | outcomes: matcher: 5000/5000 Filled (16576 ops/s over 0.301643s); writers: 2458117 completed (1368594 successful, 544096 missing, 545427 rejected) across 3 threads = 8149086 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 708 | 1625 | 4084 | 25333 | 25333 | matcher: 5000/5000 Filled (403430 ops/s over 0.012394s); writers: 87897 completed (50715 successful, 17927 missing, 19255 rejected) across 3 threads = 7092065 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 42542 | 259875 | 380708 | 522125 | 522125 | matcher: 5000/5000 Filled (16576 ops/s over 0.301643s); writers: 2458117 completed (1368594 successful, 544096 missing, 545427 rejected) across 3 threads = 8149086 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588362106 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+
+==== lat_Yr3k5_e3.txt ====
+# uptime before: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (dirty)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 13 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=625      p99=2292     p99.9=7500     p99.99=29125 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=29125    min=166 | outcomes: matcher: 5000/5000 Filled (409752 ops/s over 0.012202s); writers: 78400 completed (45893 successful, 15604 missing, 16903 rejected) across 3 threads = 6424470 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher       depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=37708    p99=246167   p99.9=418375   p99.99=576958 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=576958   min=541 | outcomes: matcher: 5000/5000 Filled (18149 ops/s over 0.275501s); writers: 2126523 completed (1183382 successful, 470905 missing, 472236 rejected) across 3 threads = 7718639 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher | contention | 1 | 5000 | 625 | 2292 | 7500 | 29125 | 29125 | matcher: 5000/5000 Filled (409752 ops/s over 0.012202s); writers: 78400 completed (45893 successful, 15604 missing, 16903 rejected) across 3 threads = 6424470 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher | contention | 1 | 5000 | 37708 | 246167 | 418375 | 576958 | 576958 | matcher: 5000/5000 Filled (18149 ops/s over 0.275501s); writers: 2126523 completed (1183382 successful, 470905 missing, 472236 rejected) across 3 threads = 7718639 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1790588361414 ==
+
+# uptime after: 11:39  up 2 days, 23:27, 15 users, load averages: 13.23 9.60 7.13
+

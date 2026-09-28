@@ -1,0 +1,660 @@
+==== cmp_Br1_base.txt ====
+# uptime before: 11:53  up 2 days, 23:42, 15 users, load averages: 6.31 6.27 6.45
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0167 s (535k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [9.3251 µs 9.3607 µs 9.4010 µs]
+                        change: [+2.1772% +2.8116% +3.4612%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0136 s (540k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.3612 µs 9.4043 µs 9.4497 µs]
+                        change: [+1.0639% +1.7362% +2.4187%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0285 s (535k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.3479 µs 9.3983 µs 9.4588 µs]
+                        change: [+1.5452% +2.1539% +2.7315%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+# uptime after: 11:54  up 2 days, 23:43, 15 users, load averages: 5.45 6.08 6.37
+
+==== cmp_Br1_c2.txt ====
+# uptime before: 11:55  up 2 days, 23:43, 15 users, load averages: 5.24 5.96 6.32
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0103 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.9737 µs 9.0061 µs 9.0424 µs]
+                        change: [−0.9048% −0.0419% +0.7913%] (p = 0.92 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0115 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.0254 µs 9.0580 µs 9.0917 µs]
+                        change: [−2.1039% −1.1117% −0.1758%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0207 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.0786 µs 9.1198 µs 9.1620 µs]
+                        change: [−8.8188% −7.4985% −6.2116%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+# uptime after: 11:55  up 2 days, 23:44, 15 users, load averages: 4.37 5.68 6.20
+
+==== cmp_Br1_c3.txt ====
+# uptime before: 11:55  up 2 days, 23:44, 15 users, load averages: 4.37 5.68 6.20
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0414 s (566k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.9164 µs 8.9553 µs 9.0002 µs]
+                        change: [−5.5117% −4.5849% −3.6233%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0418 s (561k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.0850 µs 9.1331 µs 9.1844 µs]
+                        change: [+0.7782% +1.4179% +2.1560%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0048 s (545k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.0644 µs 9.1143 µs 9.1716 µs]
+                        change: [+0.2791% +0.8639% +1.4712%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+
+# uptime after: 11:56  up 2 days, 23:44, 15 users, load averages: 4.36 5.54 6.13
+
+==== cmp_Br1_e3.txt ====
+# uptime before: 11:56  up 2 days, 23:44, 15 users, load averages: 4.36 5.54 6.13
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0428 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [9.1305 µs 9.1581 µs 9.1847 µs]
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0416 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.0585 µs 9.1100 µs 9.1612 µs]
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0284 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.0355 µs 9.0756 µs 9.1190 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+
+# uptime after: 11:56  up 2 days, 23:45, 15 users, load averages: 4.62 5.47 6.08
+
+==== cmp_Br1_head.txt ====
+# uptime before: 11:54  up 2 days, 23:43, 15 users, load averages: 5.45 6.08 6.37
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0482 s (485k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [10.388 µs 10.435 µs 10.484 µs]
+                        change: [+2.2199% +2.8466% +3.4911%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0281 s (490k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [10.280 µs 10.335 µs 10.403 µs]
+                        change: [+0.2439% +1.0127% +1.7427%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0520 s (490k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [10.276 µs 10.302 µs 10.332 µs]
+                        change: [+0.4760% +1.0159% +1.5842%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  8 (8.00%) high mild
+
+# uptime after: 11:55  up 2 days, 23:43, 15 users, load averages: 5.24 5.96 6.32
+
+==== cmp_Br1_v092.txt ====
+# uptime before: 11:53  up 2 days, 23:42, 15 users, load averages: 6.77 6.36 6.49
+pricelevel-compare[0.9.2]: self-check passed
+Benchmarking add_orders_batch_100/0.9.2/standard
+Benchmarking add_orders_batch_100/0.9.2/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/standard: Collecting 100 samples in estimated 5.0198 s (545k iterations)
+Benchmarking add_orders_batch_100/0.9.2/standard: Analyzing
+add_orders_batch_100/0.9.2/standard
+                        time:   [8.8458 µs 8.8972 µs 8.9606 µs]
+                        change: [−6.2196% −5.2133% −4.1931%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.9.2/iceberg
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Collecting 100 samples in estimated 5.0123 s (566k iterations)
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Analyzing
+add_orders_batch_100/0.9.2/iceberg
+                        time:   [8.8845 µs 8.9562 µs 9.0423 µs]
+                        change: [+0.4383% +1.0881% +1.7939%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking add_orders_batch_100/0.9.2/reserve
+Benchmarking add_orders_batch_100/0.9.2/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/reserve: Collecting 100 samples in estimated 5.0008 s (520k iterations)
+Benchmarking add_orders_batch_100/0.9.2/reserve: Analyzing
+add_orders_batch_100/0.9.2/reserve
+                        time:   [9.1224 µs 9.2186 µs 9.3354 µs]
+                        change: [+2.3212% +3.2367% +4.3213%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+# uptime after: 11:53  up 2 days, 23:42, 15 users, load averages: 6.31 6.27 6.45
+
+==== cmp_Br2_base.txt ====
+# uptime before: 12:13  up 3 days, 1 min, 15 users, load averages: 4.36 5.26 5.55
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0077 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [9.0876 µs 9.1336 µs 9.1829 µs]
+                        change: [−4.5471% −3.9030% −3.3154%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) low mild
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0063 s (545k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.1567 µs 9.2018 µs 9.2498 µs]
+                        change: [−2.4644% −1.8545% −1.2585%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0374 s (545k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.1342 µs 9.1847 µs 9.2426 µs]
+                        change: [−3.4022% −2.8069% −2.1622%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+
+# uptime after: 12:13  up 3 days, 2 mins, 15 users, load averages: 4.80 5.28 5.55
+
+==== cmp_Br2_c2.txt ====
+# uptime before: 12:11  up 3 days, 0 sec, 15 users, load averages: 6.65 5.75 5.74
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0154 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.9318 µs 8.9714 µs 9.0129 µs]
+                        change: [−1.2343% −0.5082% +0.3684%] (p = 0.24 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0147 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [8.9960 µs 9.0293 µs 9.0671 µs]
+                        change: [−0.1981% +0.4300% +1.0581%] (p = 0.20 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0322 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [8.9833 µs 9.0256 µs 9.0739 µs]
+                        change: [−2.1877% −1.4790% −0.7212%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 11 outliers among 100 measurements (11.00%)
+  11 (11.00%) high mild
+
+# uptime after: 12:12  up 3 days, 0 sec, 15 users, load averages: 5.55 5.56 5.67
+
+==== cmp_Br2_c3.txt ====
+# uptime before: 12:12  up 3 days, 0 sec, 15 users, load averages: 5.55 5.56 5.67
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0131 s (561k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.8330 µs 8.8640 µs 8.9013 µs]
+                        change: [−2.1015% −1.5134% −0.8817%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  9 (9.00%) high mild
+  4 (4.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0085 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [8.8887 µs 8.9260 µs 8.9699 µs]
+                        change: [−2.5291% −1.7672% −1.0201%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0067 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [8.9124 µs 8.9428 µs 8.9785 µs]
+                        change: [−2.8285% −2.2769% −1.7293%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+
+# uptime after: 12:12  up 3 days, 1 min, 15 users, load averages: 5.25 5.49 5.64
+
+==== cmp_Br2_e3.txt ====
+# uptime before: 12:12  up 3 days, 1 min, 15 users, load averages: 5.25 5.49 5.64
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0165 s (566k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.8173 µs 8.8682 µs 8.9255 µs]
+                        change: [−2.9222% −2.3529% −1.7654%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0161 s (566k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [8.8449 µs 8.8767 µs 8.9117 µs]
+                        change: [−3.1000% −2.6071% −2.1232%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0089 s (561k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [8.8881 µs 8.9446 µs 9.0032 µs]
+                        change: [−2.3573% −1.8503% −1.3377%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) high mild
+  15 (15.00%) high severe
+
+# uptime after: 12:13  up 3 days, 1 min, 15 users, load averages: 4.36 5.26 5.55
+
+==== cmp_Br2_head.txt ====
+# uptime before: 12:11  up 2 days, 23:59, 15 users, load averages: 5.45 5.44 5.63
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0169 s (485k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [10.380 µs 10.448 µs 10.518 µs]
+                        change: [−1.5913% −0.8567% −0.1041%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0031 s (444k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [10.535 µs 10.632 µs 10.750 µs]
+                        change: [+2.2802% +3.1229% +4.0027%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0018 s (480k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [10.296 µs 10.335 µs 10.379 µs]
+                        change: [−0.5793% −0.0424% +0.4638%] (p = 0.87 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  10 (10.00%) high mild
+
+# uptime after: 12:11  up 3 days, 0 sec, 15 users, load averages: 6.65 5.75 5.74
+
+==== cmp_Br2_v092.txt ====
+# uptime before: 12:10  up 2 days, 23:59, 15 users, load averages: 6.18 5.55 5.68
+pricelevel-compare[0.9.2]: self-check passed
+Benchmarking add_orders_batch_100/0.9.2/standard
+Benchmarking add_orders_batch_100/0.9.2/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/standard: Collecting 100 samples in estimated 5.0255 s (545k iterations)
+Benchmarking add_orders_batch_100/0.9.2/standard: Analyzing
+add_orders_batch_100/0.9.2/standard
+                        time:   [8.8470 µs 8.8898 µs 8.9356 µs]
+                        change: [−1.2222% −0.5277% +0.1768%] (p = 0.15 > 0.05)
+                        No change in performance detected.
+Benchmarking add_orders_batch_100/0.9.2/iceberg
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Collecting 100 samples in estimated 5.0045 s (561k iterations)
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Analyzing
+add_orders_batch_100/0.9.2/iceberg
+                        time:   [8.7588 µs 8.8001 µs 8.8470 µs]
+                        change: [−1.8688% −1.1351% −0.5237%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking add_orders_batch_100/0.9.2/reserve
+Benchmarking add_orders_batch_100/0.9.2/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/reserve: Collecting 100 samples in estimated 5.0006 s (561k iterations)
+Benchmarking add_orders_batch_100/0.9.2/reserve: Analyzing
+add_orders_batch_100/0.9.2/reserve
+                        time:   [8.9675 µs 9.0300 µs 9.0984 µs]
+                        change: [−2.5193% −1.5445% −0.5918%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+# uptime after: 12:11  up 2 days, 23:59, 15 users, load averages: 5.45 5.44 5.63
+
+==== cmp_Br3_base.txt ====
+# uptime before: 12:29  up 3 days, 18 mins, 15 users, load averages: 4.98 4.84 5.09
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0239 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [9.0864 µs 9.1187 µs 9.1568 µs]
+                        change: [+0.0880% +0.6423% +1.2213%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 12 outliers among 100 measurements (12.00%)
+  3 (3.00%) low mild
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0327 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.1430 µs 9.1800 µs 9.2210 µs]
+                        change: [−0.9676% −0.4522% +0.0971%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0049 s (545k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.1808 µs 9.2113 µs 9.2423 µs]
+                        change: [−0.8130% −0.2242% +0.3817%] (p = 0.47 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) low mild
+  4 (4.00%) high mild
+
+# uptime after: 12:30  up 3 days, 18 mins, 15 users, load averages: 4.90 4.86 5.09
+
+==== cmp_Br3_c2.txt ====
+# uptime before: 12:28  up 3 days, 16 mins, 15 users, load averages: 4.99 5.04 5.20
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0327 s (566k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.8361 µs 8.8925 µs 8.9707 µs]
+                        change: [−1.7587% −0.9056% −0.1400%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0256 s (561k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [8.9173 µs 8.9397 µs 8.9661 µs]
+                        change: [−1.8037% −1.1987% −0.5866%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0067 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.0306 µs 9.0748 µs 9.1226 µs]
+                        change: [−0.5556% +0.0663% +0.6446%] (p = 0.83 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+# uptime after: 12:28  up 3 days, 17 mins, 15 users, load averages: 3.84 4.75 5.08
+
+==== cmp_Br3_c3.txt ====
+# uptime before: 12:28  up 3 days, 17 mins, 15 users, load averages: 3.84 4.75 5.08
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0081 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.9993 µs 9.0242 µs 9.0551 µs]
+                        change: [+0.4639% +0.9960% +1.4906%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0013 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.0552 µs 9.1028 µs 9.1570 µs]
+                        change: [+0.1866% +0.7610% +1.3129%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) high mild
+  7 (7.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0262 s (550k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.0110 µs 9.0457 µs 9.0821 µs]
+                        change: [+0.2687% +0.6587% +1.0454%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 12 outliers among 100 measurements (12.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+
+# uptime after: 12:29  up 3 days, 17 mins, 15 users, load averages: 3.76 4.64 5.03
+
+==== cmp_Br3_e3.txt ====
+# uptime before: 12:29  up 3 days, 17 mins, 15 users, load averages: 3.76 4.64 5.03
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0185 s (566k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [8.7865 µs 8.8109 µs 8.8395 µs]
+                        change: [−1.0093% −0.4928% +0.0523%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0043 s (556k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [8.9209 µs 8.9435 µs 8.9681 µs]
+                        change: [+0.7592% +1.1933% +1.6430%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0177 s (561k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [8.9028 µs 8.9298 µs 8.9609 µs]
+                        change: [−0.0673% +0.4101% +0.8583%] (p = 0.09 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+
+# uptime after: 12:29  up 3 days, 18 mins, 15 users, load averages: 4.98 4.84 5.09
+
+==== cmp_Br3_head.txt ====
+# uptime before: 12:30  up 3 days, 18 mins, 15 users, load averages: 4.90 4.86 5.09
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0211 s (490k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [10.043 µs 10.066 µs 10.096 µs]
+                        change: [−3.2856% −2.6337% −1.9555%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 13 outliers among 100 measurements (13.00%)
+  4 (4.00%) high mild
+  9 (9.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0258 s (485k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [10.197 µs 10.247 µs 10.310 µs]
+                        change: [−1.8416% −0.5671% +0.7241%] (p = 0.37 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0345 s (495k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [10.087 µs 10.113 µs 10.146 µs]
+                        change: [−2.0270% −1.4914% −0.9709%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 15 outliers among 100 measurements (15.00%)
+  7 (7.00%) high mild
+  8 (8.00%) high severe
+
+# uptime after: 12:30  up 3 days, 19 mins, 15 users, load averages: 3.96 4.62 4.99
+
+==== cmp_Br3_v092.txt ====
+# uptime before: 12:27  up 3 days, 16 mins, 15 users, load averages: 7.07 5.38 5.32
+pricelevel-compare[0.9.2]: self-check passed
+Benchmarking add_orders_batch_100/0.9.2/standard
+Benchmarking add_orders_batch_100/0.9.2/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/standard: Collecting 100 samples in estimated 5.0215 s (576k iterations)
+Benchmarking add_orders_batch_100/0.9.2/standard: Analyzing
+add_orders_batch_100/0.9.2/standard
+                        time:   [8.7656 µs 8.8224 µs 8.8837 µs]
+                        change: [−1.3684% −0.6664% +0.0423%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+Found 16 outliers among 100 measurements (16.00%)
+  6 (6.00%) high mild
+  10 (10.00%) high severe
+Benchmarking add_orders_batch_100/0.9.2/iceberg
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Collecting 100 samples in estimated 5.0256 s (576k iterations)
+Benchmarking add_orders_batch_100/0.9.2/iceberg: Analyzing
+add_orders_batch_100/0.9.2/iceberg
+                        time:   [8.7641 µs 8.8074 µs 8.8577 µs]
+                        change: [−0.9103% −0.3736% +0.1834%] (p = 0.19 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+Benchmarking add_orders_batch_100/0.9.2/reserve
+Benchmarking add_orders_batch_100/0.9.2/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.9.2/reserve: Collecting 100 samples in estimated 5.0006 s (571k iterations)
+Benchmarking add_orders_batch_100/0.9.2/reserve: Analyzing
+add_orders_batch_100/0.9.2/reserve
+                        time:   [8.7709 µs 8.8146 µs 8.8691 µs]
+                        change: [−3.6678% −3.1091% −2.5562%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 14 outliers among 100 measurements (14.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  8 (8.00%) high severe
+
+# uptime after: 12:28  up 3 days, 16 mins, 15 users, load averages: 4.99 5.04 5.20
+
