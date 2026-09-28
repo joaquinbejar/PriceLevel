@@ -1,0 +1,10 @@
+== baseline contention_compare ==
+version=0.10.0   matcher=GTC  depth=100    writers=3 matcher_ops=2000   matcher_elapsed_ms=5.006      matcher_ops_per_s=399527.3     writer_samples=5496     writer_p50_ns=2542     writer_p99_ns=5416     writer_p999_ns=12250   
+version=0.10.0   matcher=FOK  depth=100    writers=3 matcher_ops=2000   matcher_elapsed_ms=50.208     matcher_ops_per_s=39834.6      writer_samples=63716    writer_p50_ns=1167     writer_p99_ns=15375    writer_p999_ns=23042   
+version=0.10.0   matcher=GTC  depth=10000  writers=3 matcher_ops=2000   matcher_elapsed_ms=3.664      matcher_ops_per_s=545857.8     writer_samples=5562     writer_p50_ns=1834     writer_p99_ns=3750     writer_p999_ns=6500    
+version=0.10.0   matcher=FOK  depth=10000  writers=3 matcher_ops=2000   matcher_elapsed_ms=53.587     matcher_ops_per_s=37322.8      writer_samples=79368    writer_p50_ns=1000     writer_p99_ns=14416    writer_p999_ns=24917   
+== candidate contention_compare ==
+version=0.10.0   matcher=GTC  depth=100    writers=3 matcher_ops=2000   matcher_elapsed_ms=7.145      matcher_ops_per_s=279934.0     writer_samples=5626     writer_p50_ns=3583     writer_p99_ns=7208     writer_p999_ns=13875   
+version=0.10.0   matcher=FOK  depth=100    writers=3 matcher_ops=2000   matcher_elapsed_ms=52.544     matcher_ops_per_s=38063.5      writer_samples=50951    writer_p50_ns=1625     writer_p99_ns=18209    writer_p999_ns=26834   
+version=0.10.0   matcher=GTC  depth=10000  writers=3 matcher_ops=2000   matcher_elapsed_ms=3.964      matcher_ops_per_s=504562.1     writer_samples=5653     writer_p50_ns=2000     writer_p99_ns=3875     writer_p999_ns=5750    
+version=0.10.0   matcher=FOK  depth=10000  writers=3 matcher_ops=2000   matcher_elapsed_ms=44.732     matcher_ops_per_s=44710.3      writer_samples=55802    writer_p50_ns=1292     writer_p99_ns=14042    writer_p999_ns=20500   

@@ -1,0 +1,62 @@
+PriceLevel - Add Orders/add_standard_order
+                        time:   [14.121 µs 14.747 µs 15.429 µs]
+PriceLevel - Add Orders/add_iceberg_order
+                        time:   [11.297 µs 11.392 µs 11.489 µs]
+PriceLevel - Add Orders/add_reserve_order
+                        time:   [11.372 µs 11.491 µs 11.627 µs]
+PriceLevel - Add Orders/add_mixed_orders
+                        time:   [10.634 µs 10.665 µs 10.699 µs]
+PriceLevel - Add Orders/order_count_scaling/10
+                        time:   [1.4608 µs 1.4764 µs 1.4948 µs]
+PriceLevel - Add Orders/order_count_scaling/100
+                        time:   [10.890 µs 10.943 µs 11.007 µs]
+PriceLevel - Add Orders/order_count_scaling/1000
+                        time:   [155.34 µs 160.34 µs 165.86 µs]
+PriceLevel - Match Orders/match_standard_orders
+                        time:   [12.295 µs 12.455 µs 12.641 µs]
+PriceLevel - Match Orders/match_iceberg_orders
+                        time:   [15.715 µs 15.818 µs 15.924 µs]
+PriceLevel - Match Orders/match_reserve_orders
+                        time:   [14.485 µs 14.608 µs 14.756 µs]
+PriceLevel - Match Orders/match_mixed_orders
+                        time:   [14.207 µs 14.234 µs 14.263 µs]
+PriceLevel - Match Orders/match_partial_fill_reinsert
+                        time:   [11.246 µs 11.309 µs 11.372 µs]
+PriceLevel - Match Orders/match_partial_fill_churn
+                        time:   [42.561 µs 50.278 µs 57.426 µs]
+PriceLevel - Match Orders/match_quantity_scaling_standard/10
+                        time:   [5.8423 µs 5.8657 µs 5.8942 µs]
+PriceLevel - Match Orders/match_quantity_scaling_standard/50
+                        time:   [6.4184 µs 6.4376 µs 6.4598 µs]
+PriceLevel - Match Orders/match_quantity_scaling_standard/100
+                        time:   [7.3958 µs 7.4622 µs 7.5344 µs]
+PriceLevel - Match Orders/match_quantity_scaling_standard/200
+                        time:   [9.6022 µs 9.7641 µs 9.9437 µs]
+PriceLevel - Match Orders/match_quantity_scaling_standard/500
+                        time:   [14.425 µs 14.683 µs 14.983 µs]
+PriceLevel - Match Orders/match_quantity_scaling_iceberg/10
+                        time:   [3.5010 µs 3.5179 µs 3.5375 µs]
+PriceLevel - Match Orders/match_quantity_scaling_iceberg/50
+                        time:   [5.1111 µs 5.1359 µs 5.1641 µs]
+PriceLevel - Match Orders/match_quantity_scaling_iceberg/100
+                        time:   [7.3104 µs 7.3554 µs 7.4045 µs]
+PriceLevel - Match Orders/match_quantity_scaling_iceberg/200
+                        time:   [12.048 µs 12.143 µs 12.254 µs]
+PriceLevel - Match Orders/match_quantity_scaling_iceberg/500
+                        time:   [23.972 µs 24.067 µs 24.166 µs]
+PriceLevel - Update Orders/cancel_order
+                        time:   [14.449 µs 14.557 µs 14.672 µs]
+PriceLevel - Update Orders/update_quantity
+                        time:   [20.303 µs 21.216 µs 22.056 µs]
+PriceLevel - Update Orders/replace_order_same_price
+                        time:   [20.033 µs 20.457 µs 20.985 µs]
+PriceLevel - Update Orders/replace_order_different_price
+                        time:   [15.087 µs 15.224 µs 15.374 µs]
+PriceLevel - Update Orders/update_iceberg_quantity
+                        time:   [17.331 µs 17.467 µs 17.624 µs]
+PriceLevel - Update Orders/cancel_order_count_scaling/10
+                        time:   [1.6698 µs 1.7373 µs 1.8156 µs]
+PriceLevel - Update Orders/cancel_order_count_scaling/100
+                        time:   [13.621 µs 13.787 µs 13.970 µs]
+PriceLevel - Update Orders/cancel_order_count_scaling/1000
+                        time:   [136.78 µs 137.99 µs 139.55 µs]

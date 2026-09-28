@@ -1,0 +1,60 @@
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2
+                        time:   [490.10 ns 492.45 ns 495.02 ns]
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2
+                        time:   [499.91 ns 502.14 ns 504.57 ns]
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2
+                        time:   [343.31 ns 347.61 ns 352.02 ns]
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/2
+                        time:   [349.81 ns 351.87 ns 354.17 ns]
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [426.78 ns 429.37 ns 432.29 ns]
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4
+                        time:   [887.51 ns 889.45 ns 891.80 ns]
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4
+                        time:   [952.83 ns 962.72 ns 975.51 ns]
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4
+                        time:   [337.23 ns 339.97 ns 342.61 ns]
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/4
+                        time:   [622.18 ns 624.11 ns 626.33 ns]
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [928.48 ns 931.36 ns 935.25 ns]
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8
+                        time:   [2.3322 µs 2.3364 µs 2.3411 µs]
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8
+                        time:   [2.4231 µs 2.4258 µs 2.4284 µs]
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8
+                        time:   [516.11 ns 524.45 ns 532.45 ns]
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/8
+                        time:   [1.5122 µs 1.5160 µs 1.5207 µs]
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.5062 µs 2.5293 µs 2.5491 µs]
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16
+                        time:   [4.2625 µs 4.2809 µs 4.3024 µs]
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16
+                        time:   [4.2922 µs 4.3202 µs 4.3582 µs]
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16
+                        time:   [689.26 ns 700.88 ns 717.68 ns]
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/16
+                        time:   [2.6406 µs 2.6556 µs 2.6853 µs]
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [4.6232 µs 4.6759 µs 4.7846 µs]
+PriceLevel - Contention Patterns/read_write_ratio/0
+                        time:   [1.6017 µs 1.6164 µs 1.6309 µs]
+PriceLevel - Contention Patterns/read_write_ratio/25
+                        time:   [6.9814 µs 7.0139 µs 7.0527 µs]
+PriceLevel - Contention Patterns/read_write_ratio/50
+                        time:   [15.655 µs 15.873 µs 16.137 µs]
+PriceLevel - Contention Patterns/read_write_ratio/75
+                        time:   [31.201 µs 31.436 µs 31.679 µs]
+PriceLevel - Contention Patterns/read_write_ratio/95
+                        time:   [44.015 µs 44.422 µs 44.823 µs]
+PriceLevel - Contention Patterns/hot_spot_contention/0
+                        time:   [1.8007 µs 1.8087 µs 1.8161 µs]
+PriceLevel - Contention Patterns/hot_spot_contention/20
+                        time:   [1.7958 µs 1.8030 µs 1.8096 µs]
+PriceLevel - Contention Patterns/hot_spot_contention/50
+                        time:   [1.7989 µs 1.8040 µs 1.8094 µs]
+PriceLevel - Contention Patterns/hot_spot_contention/80
+                        time:   [1.8618 µs 1.8653 µs 1.8691 µs]
+PriceLevel - Contention Patterns/hot_spot_contention/100
+                        time:   [1.8838 µs 1.8854 µs 1.8871 µs]

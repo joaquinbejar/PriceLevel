@@ -1,0 +1,185 @@
+=== baseline round 2 uptime before:  8:53  up 2 days, 20:42, 11 users, load averages: 5.82 6.49 5.66 ===
+--- filter: add_orders_batch_100 ---
+    Finished `bench` profile [optimized] target(s) in 0.06s
+     Running benches/compare.rs (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/target-compare-baseline/release/deps/compare-d0bc8c71e5aaf6af)
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking add_orders_batch_100/0.10.0/standard
+Benchmarking add_orders_batch_100/0.10.0/standard: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/standard: Collecting 100 samples in estimated 5.0278 s (515k iterations)
+Benchmarking add_orders_batch_100/0.10.0/standard: Analyzing
+add_orders_batch_100/0.10.0/standard
+                        time:   [9.6066 µs 9.6494 µs 9.6909 µs]
+                        change: [+4.5949% +5.2471% +5.8404%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+Benchmarking add_orders_batch_100/0.10.0/iceberg
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Collecting 100 samples in estimated 5.0341 s (520k iterations)
+Benchmarking add_orders_batch_100/0.10.0/iceberg: Analyzing
+add_orders_batch_100/0.10.0/iceberg
+                        time:   [9.5494 µs 9.5979 µs 9.6502 µs]
+                        change: [+3.1332% +3.8736% +4.6352%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking add_orders_batch_100/0.10.0/reserve
+Benchmarking add_orders_batch_100/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking add_orders_batch_100/0.10.0/reserve: Collecting 100 samples in estimated 5.0399 s (520k iterations)
+Benchmarking add_orders_batch_100/0.10.0/reserve: Analyzing
+add_orders_batch_100/0.10.0/reserve
+                        time:   [9.7028 µs 9.7451 µs 9.7901 µs]
+                        change: [+3.1863% +3.8028% +4.3736%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+
+--- filter: isolated_updates ---
+    Finished `bench` profile [optimized] target(s) in 0.03s
+     Running benches/compare.rs (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/target-compare-baseline/release/deps/compare-d0bc8c71e5aaf6af)
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking isolated_updates/0.10.0/cancel
+Benchmarking isolated_updates/0.10.0/cancel: Warming up for 3.0000 s
+Benchmarking isolated_updates/0.10.0/cancel: Collecting 100 samples in estimated 5.1239 s (121k iterations)
+Benchmarking isolated_updates/0.10.0/cancel: Analyzing
+isolated_updates/0.10.0/cancel
+                        time:   [10.170 µs 10.374 µs 10.566 µs]
+                        change: [+4.7815% +8.6060% +12.632%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking isolated_updates/0.10.0/update_quantity_increase
+Benchmarking isolated_updates/0.10.0/update_quantity_increase: Warming up for 3.0000 s
+Benchmarking isolated_updates/0.10.0/update_quantity_increase: Collecting 100 samples in estimated 5.1207 s (126k iterations)
+Benchmarking isolated_updates/0.10.0/update_quantity_increase: Analyzing
+isolated_updates/0.10.0/update_quantity_increase
+                        time:   [9.8935 µs 10.088 µs 10.256 µs]
+                        change: [+0.0214% +4.1396% +8.5600%] (p = 0.05 < 0.05)
+                        Change within noise threshold.
+Benchmarking isolated_updates/0.10.0/update_quantity_decrease
+Benchmarking isolated_updates/0.10.0/update_quantity_decrease: Warming up for 3.0000 s
+Benchmarking isolated_updates/0.10.0/update_quantity_decrease: Collecting 100 samples in estimated 5.0368 s (126k iterations)
+Benchmarking isolated_updates/0.10.0/update_quantity_decrease: Analyzing
+isolated_updates/0.10.0/update_quantity_decrease
+                        time:   [9.6995 µs 9.9231 µs 10.135 µs]
+                        change: [+1.2098% +4.9648% +9.0633%] (p = 0.01 < 0.05)
+                        Performance has regressed.
+Benchmarking isolated_updates/0.10.0/replace_same_price
+Benchmarking isolated_updates/0.10.0/replace_same_price: Warming up for 3.0000 s
+Benchmarking isolated_updates/0.10.0/replace_same_price: Collecting 100 samples in estimated 5.0870 s (126k iterations)
+Benchmarking isolated_updates/0.10.0/replace_same_price: Analyzing
+isolated_updates/0.10.0/replace_same_price
+                        time:   [10.491 µs 10.713 µs 10.902 µs]
+                        change: [+5.6476% +10.117% +14.820%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Benchmarking isolated_updates/0.10.0/replace_diff_price
+Benchmarking isolated_updates/0.10.0/replace_diff_price: Warming up for 3.0000 s
+Benchmarking isolated_updates/0.10.0/replace_diff_price: Collecting 100 samples in estimated 5.0247 s (121k iterations)
+Benchmarking isolated_updates/0.10.0/replace_diff_price: Analyzing
+isolated_updates/0.10.0/replace_diff_price
+                        time:   [9.8860 µs 10.007 µs 10.122 µs]
+                        change: [+5.0066% +8.9412% +12.805%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) low mild
+
+--- filter: matching/ ---
+    Finished `bench` profile [optimized] target(s) in 0.03s
+     Running benches/compare.rs (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/target-compare-baseline/release/deps/compare-d0bc8c71e5aaf6af)
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking matching/0.10.0/standard_full
+Benchmarking matching/0.10.0/standard_full: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/standard_full: Collecting 100 samples in estimated 5.0012 s (2.6M iterations)
+Benchmarking matching/0.10.0/standard_full: Analyzing
+matching/0.10.0/standard_full
+                        time:   [1.0166 µs 1.0401 µs 1.0586 µs]
+                        change: [−3.4104% +4.3510% +12.735%] (p = 0.27 > 0.05)
+                        No change in performance detected.
+Benchmarking matching/0.10.0/iceberg
+Benchmarking matching/0.10.0/iceberg: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/iceberg: Collecting 100 samples in estimated 5.0049 s (2.8M iterations)
+Benchmarking matching/0.10.0/iceberg: Analyzing
+matching/0.10.0/iceberg time:   [1.0345 µs 1.0546 µs 1.0711 µs]
+                        change: [−0.0415% +7.5522% +15.583%] (p = 0.05 > 0.05)
+                        No change in performance detected.
+Benchmarking matching/0.10.0/reserve
+Benchmarking matching/0.10.0/reserve: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/reserve: Collecting 100 samples in estimated 5.0046 s (2.9M iterations)
+Benchmarking matching/0.10.0/reserve: Analyzing
+matching/0.10.0/reserve time:   [1.0662 µs 1.0916 µs 1.1115 µs]
+                        change: [−1.8979% +6.2630% +15.614%] (p = 0.15 > 0.05)
+                        No change in performance detected.
+Benchmarking matching/0.10.0/mixed_100
+Benchmarking matching/0.10.0/mixed_100: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/mixed_100: Collecting 100 samples in estimated 5.1489 s (146k iterations)
+Benchmarking matching/0.10.0/mixed_100: Analyzing
+matching/0.10.0/mixed_100
+                        time:   [24.624 µs 24.871 µs 25.128 µs]
+                        change: [−2.0869% −0.7905% +0.5308%] (p = 0.24 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking matching/0.10.0/sweep_100_makers
+Benchmarking matching/0.10.0/sweep_100_makers: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/sweep_100_makers: Collecting 100 samples in estimated 5.0248 s (167k iterations)
+Benchmarking matching/0.10.0/sweep_100_makers: Analyzing
+matching/0.10.0/sweep_100_makers
+                        time:   [20.040 µs 20.334 µs 20.680 µs]
+                        change: [+3.9646% +5.0048% +6.2831%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking matching/0.10.0/partial_fill_reinsert
+Benchmarking matching/0.10.0/partial_fill_reinsert: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/partial_fill_reinsert: Collecting 100 samples in estimated 5.0017 s (2.7M iterations)
+Benchmarking matching/0.10.0/partial_fill_reinsert: Analyzing
+matching/0.10.0/partial_fill_reinsert
+                        time:   [1.1437 µs 1.1631 µs 1.1806 µs]
+                        change: [+1.8335% +7.1399% +12.620%] (p = 0.01 < 0.05)
+                        Performance has regressed.
+Benchmarking matching/0.10.0/partial_fill_churn_10x10
+Benchmarking matching/0.10.0/partial_fill_churn_10x10: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/partial_fill_churn_10x10: Collecting 100 samples in estimated 5.0091 s (1.2M iterations)
+Benchmarking matching/0.10.0/partial_fill_churn_10x10: Analyzing
+matching/0.10.0/partial_fill_churn_10x10
+                        time:   [3.0434 µs 3.0979 µs 3.1432 µs]
+                        change: [+0.2108% +3.8081% +7.4137%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Benchmarking matching/0.10.0/ioc_partial
+Benchmarking matching/0.10.0/ioc_partial: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/ioc_partial: Collecting 100 samples in estimated 5.0023 s (2.9M iterations)
+Benchmarking matching/0.10.0/ioc_partial: Analyzing
+matching/0.10.0/ioc_partial
+                        time:   [1.0505 µs 1.0671 µs 1.0804 µs]
+                        change: [−4.0103% +1.1445% +6.5659%] (p = 0.68 > 0.05)
+                        No change in performance detected.
+Benchmarking matching/0.10.0/post_only_reject
+Benchmarking matching/0.10.0/post_only_reject: Warming up for 3.0000 s
+Benchmarking matching/0.10.0/post_only_reject: Collecting 100 samples in estimated 5.0026 s (2.9M iterations)
+Benchmarking matching/0.10.0/post_only_reject: Analyzing
+matching/0.10.0/post_only_reject
+                        time:   [1.1234 µs 1.1371 µs 1.1478 µs]
+                        change: [+1.2144% +5.6801% +10.293%] (p = 0.01 < 0.05)
+                        Performance has regressed.
+
+--- filter: replenish_depth_10000 ---
+    Finished `bench` profile [optimized] target(s) in 0.03s
+     Running benches/compare.rs (/private/tmp/claude-501/-Users-joaquin-Repos-Local-PriceLevel/c5497919-14d1-4957-8491-cb785a52a65d/scratchpad/target-compare-baseline/release/deps/compare-d0bc8c71e5aaf6af)
+pricelevel-compare[0.10.0]: self-check passed
+Benchmarking fok_depth/0.10.0/replenish_depth_10000
+Benchmarking fok_depth/0.10.0/replenish_depth_10000: Warming up for 3.0000 s
+Benchmarking fok_depth/0.10.0/replenish_depth_10000: Collecting 100 samples in estimated 5.3102 s (1600 iterations)
+Benchmarking fok_depth/0.10.0/replenish_depth_10000: Analyzing
+fok_depth/0.10.0/replenish_depth_10000
+                        time:   [2.1149 ms 2.1280 ms 2.1428 ms]
+                        change: [+3.6439% +4.3945% +5.1981%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+
+=== baseline round 2 uptime after:  8:56  up 2 days, 20:45, 11 users, load averages: 5.58 6.12 5.65 ===
