@@ -3,6 +3,7 @@ mod caller_boundaries;
 mod checked_rollbacks;
 mod counter_exhaustion;
 mod counter_zero_delta;
+mod deferred_events;
 mod entry;
 mod fallible_growth;
 mod fok_fairness;

@@ -337,6 +337,15 @@ impl DeferredEvents {
     }
 
     /// Slow path of [`Self::emit`]: one `tracing` call site per event kind.
+    ///
+    /// Invariant (issue #214): `returned` is the call's own `Err`, and it is
+    /// the error the [`Self::REMOVAL_REFUSED`] / [`Self::RELEASE_FAILED`]
+    /// events describe only because every site that records one of those
+    /// bits returns that error immediately, unchanged, up to the public call.
+    /// A future path that records either bit and then continues (or maps the
+    /// error) must store its own error instead. Pinned by
+    /// `tests/deferred_events.rs`; no runtime assertion (Production Panic
+    /// Policy).
     #[cold]
     #[inline(never)]
     fn emit_slow(&self, price: u128, returned: Option<&PriceLevelError>) {
@@ -4613,7 +4622,10 @@ impl PriceLevel {
             RemoveOutcome::Refused => {
                 // Built after the entry lock was released; logged by
                 // `update_order` after the fill-or-kill guard is released.
-                // The event logs this returned error (no clone kept).
+                // The event logs this returned error (no clone kept). Invariant
+                // (see `DeferredEvents::emit_slow`): after recording this bit
+                // the error is returned at once and propagates unchanged to
+                // `update_order`'s result.
                 events.note(DeferredEvents::REMOVAL_REFUSED, order_id);
                 return Err(topology_underflow(self.price));
             }
@@ -4647,7 +4659,10 @@ impl PriceLevel {
                 self.trip_poison();
                 events.note_counter_refused(counter, order_id);
             }
-            // The event logs this returned error (no clone kept).
+            // The event logs this returned error (no clone kept). Invariant
+            // (see `DeferredEvents::emit_slow`): after recording this bit the
+            // error is returned at once and propagates unchanged to
+            // `update_order`'s result.
             events.note(DeferredEvents::RELEASE_FAILED, order_id);
             return Err(err);
         }
