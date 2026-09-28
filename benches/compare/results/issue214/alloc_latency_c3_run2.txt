@@ -1,0 +1,47 @@
+== Run manifest ==
+commit             : dfc27a05058702d1200e2a53ea0bf043bbd107d1 (clean)
+cpu                : Apple M5 Max
+logical cores      : 18
+os/arch            : macos/aarch64
+rustc              : rustc 1.98.1 (48a229cea 2026-09-01)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 11 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+
+== Raw observations + manifest persisted to target/latency/1790593817840 ==
+
+== Allocation measurements (separate pass, not timed) ==
+element sizes: Trade=144 bytes, Id=32 bytes
+add_order            reps=2000   alloc_count/op=2.11     alloc_bytes/op=386.12     dealloc_count_total=214      dealloc_bytes_total=157728
+match_full           reps=2000   alloc_count/op=2.03     alloc_bytes/op=1803.13    dealloc_count_total=3940     dealloc_bytes_total=525864
+uuid_try_next        reps=2000   alloc_count/op=0.00     alloc_bytes/op=0.00       dealloc_count_total=0        dealloc_bytes_total=0
+match_sweep_100      reps=2000   alloc_count/op=8.29     alloc_bytes/op=22772.88   dealloc_count_total=412549   dealloc_bytes_total=54383040
+match_zero_trade     reps=2000   alloc_count/op=0.00     alloc_bytes/op=0.00       dealloc_count_total=0        dealloc_bytes_total=0
+match_maker_partial  reps=2000   alloc_count/op=3.00     alloc_bytes/op=1920.00    dealloc_count_total=2000     dealloc_bytes_total=320000
+match_fok_partial    reps=2000   alloc_count/op=3.00     alloc_bytes/op=336.00     dealloc_count_total=2000     dealloc_bytes_total=320000
+match_iceberg_1x     reps=2000   alloc_count/op=4.02     alloc_bytes/op=437.09     dealloc_count_total=3984     dealloc_bytes_total=516872
+match_iceberg_5x     reps=2000   alloc_count/op=14.08    alloc_bytes/op=3207.79    dealloc_count_total=24176    dealloc_bytes_total=4050728
+match_reserve_1x     reps=2000   alloc_count/op=4.02     alloc_bytes/op=437.09     dealloc_count_total=3984     dealloc_bytes_total=516904
+single_partial       reps=2000   alloc_count/op=3.00     alloc_bytes/op=336.00     dealloc_count_total=2064     dealloc_bytes_total=326408
+single_partial_adm   reps=2000   alloc_count/op=3.00     alloc_bytes/op=336.00     dealloc_count_total=1999     dealloc_bytes_total=319840
+single_partial_view  reps=2000   alloc_count/op=3.00     alloc_bytes/op=336.00     dealloc_count_total=0        dealloc_bytes_total=0
+snapshot_capture     reps=2000   alloc_count/op=130.00   alloc_bytes/op=27072.00   dealloc_count_total=258000   dealloc_bytes_total=38144000
+checksum_validate    reps=2000   alloc_count/op=1.00     alloc_bytes/op=64.00      dealloc_count_total=2000     dealloc_bytes_total=128000
+restore              reps=2000   alloc_count/op=3334.45  alloc_bytes/op=432688.08  dealloc_count_total=2409010  dealloc_bytes_total=219006524

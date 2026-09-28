@@ -430,6 +430,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Hot-path cost of the pre-release hardening recovered (#214).** The
+  deferred `tracing` state of `add_order` / `update_order` is now a 48-byte
+  `Copy` bit set plus the order id (was five `Option` slots, 336 bytes,
+  three holding an owned `PriceLevelError`, initialised, copied into an
+  out-of-line emitter and dropped on every call). No error is stored: the
+  removal events log the error the call returns and the statistics drop
+  rebuilds its `CounterExhausted` error; the emitter is a `#[cold]` slow
+  path behind an inline bit test. The checked counter decrement skips its
+  compare-exchange for a zero delta (the operation's own delta, never a
+  loaded value), so a standard order's cancel or price move no longer pays
+  a CAS on the hidden counter. Events, their fields, the after-guard
+  emission, the checked (never wrapping) decrements, poisoning and the
+  returned errors are unchanged. Against the pre-hardening tree:
+  `add_orders_batch_100/*` -1.1% to -1.9% (was +11.8% to +14.3%),
+  `Add Orders/*` at most +2.5%, `concurrent_cancel_orders` -1.4% to +2.4%
+  (was +7.7% to +11.5%). Not recovered: the contended GTC matcher p50
+  stays +6.1% (one 41.67 ns timer tick; caused by the matcher's checked
+  visible decrement under contention), and the contended FOK matcher p50
+  is inconclusive. New isolated per-operation Criterion cases
+  (`PriceLevel - Isolated Ops`) time one call without seeding or teardown. See
+  `BENCHMARKS.md`, "Issue #214: hot-path recovery".
+
 - **Fill-or-kill feasibility is bounded by the depth it consumes (#143).**
   Under its exclusive guard the FOK dry run no longer materializes and
   sorts the whole level: it walks the queue in sweep order and stops once

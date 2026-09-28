@@ -1,0 +1,25 @@
+scenario,side,vs,r1,r2,r3,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,spread_pp,noisy,runs
+lat:contention_fok_matcher p50,base,base,33417.0,31959.0,37084.0,33417.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p50,c3,base,39625.0,33292.0,37375.0,37375.0,11.84,18.58,4.17,0.78,17.79,True,15
+lat:contention_fok_matcher p50,e1,base,34167.0,34583.0,37750.0,34583.0,3.49,2.24,8.21,1.80,6.41,False,15
+lat:contention_fok_matcher p50,e2,base,41083.0,39125.0,41000.0,41000.0,22.69,22.94,22.42,10.56,12.38,True,15
+lat:contention_fok_matcher p99,base,base,197750.0,204209.0,223542.0,204209.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p99,c3,base,242125.0,217625.0,243959.0,242125.0,18.57,22.44,6.57,9.13,15.87,True,15
+lat:contention_fok_matcher p99,e1,base,228375.0,214000.0,220333.0,220333.0,7.90,15.49,4.79,-1.44,16.92,True,15
+lat:contention_fok_matcher p99,e2,base,245709.0,247042.0,249750.0,247042.0,20.98,24.25,20.98,11.72,12.53,True,15
+lat:contention_fok_matcher p999,base,base,329209.0,307208.0,337125.0,329209.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_fok_matcher p999,c3,base,346916.0,310833.0,383333.0,346916.0,5.38,5.38,1.18,13.71,12.53,True,15
+lat:contention_fok_matcher p999,e1,base,304333.0,333334.0,345083.0,333334.0,1.25,-7.56,8.50,2.36,16.06,True,15
+lat:contention_fok_matcher p999,e2,base,408417.0,407291.0,388042.0,407291.0,23.72,24.06,32.58,15.10,17.47,True,15
+lat:contention_gtc_matcher p50,base,base,667.0,666.0,667.0,667.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p50,c3,base,708.0,708.0,708.0,708.0,6.15,6.15,6.31,6.15,0.16,False,15
+lat:contention_gtc_matcher p50,e1,base,708.0,667.0,667.0,667.0,0.00,6.15,0.15,0.00,6.15,False,15
+lat:contention_gtc_matcher p50,e2,base,625.0,625.0,625.0,625.0,-6.30,-6.30,-6.16,-6.30,0.14,False,15
+lat:contention_gtc_matcher p99,base,base,1750.0,1791.0,1833.0,1791.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p99,c3,base,1750.0,1792.0,1916.0,1792.0,0.06,0.00,0.06,4.53,4.53,False,15
+lat:contention_gtc_matcher p99,e1,base,1708.0,1750.0,1875.0,1750.0,-2.29,-2.40,-2.29,2.29,4.69,True,15
+lat:contention_gtc_matcher p99,e2,base,1625.0,1708.0,1709.0,1708.0,-4.63,-7.14,-4.63,-6.76,2.51,False,15
+lat:contention_gtc_matcher p999,base,base,4042.0,5333.0,4000.0,4042.0,0.00,0.00,0.00,0.00,0.00,False,15
+lat:contention_gtc_matcher p999,c3,base,4042.0,4000.0,5208.0,4042.0,0.00,0.00,-25.00,30.20,55.20,True,15
+lat:contention_gtc_matcher p999,e1,base,4209.0,4375.0,4958.0,4375.0,8.24,4.13,-17.96,23.95,41.91,True,15
+lat:contention_gtc_matcher p999,e2,base,4000.0,4000.0,4125.0,4000.0,-1.04,-1.04,-25.00,3.12,28.12,True,15

@@ -1,0 +1,16 @@
+scenario,side,vs,r1,r2,r3,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,spread_pp,noisy,runs
+cmp:add_orders_batch_100/iceberg,v092,v092,8956.2,8800.1,8807.4,8807.4,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/iceberg,base,v092,9404.3,9201.8,9180.0,9201.8,4.48,5.00,4.56,4.23,0.77,False,3
+cmp:add_orders_batch_100/iceberg,head,v092,10335.0,10632.0,10247.0,10335.0,17.34,15.39,20.82,16.35,5.42,False,3
+cmp:add_orders_batch_100/iceberg,c2,v092,9058.0,9029.3,8939.7,9029.3,2.52,1.14,2.60,1.50,1.47,False,3
+cmp:add_orders_batch_100/iceberg,c3,v092,9133.1,8926.0,9102.8,9102.8,3.35,1.98,1.43,3.35,1.92,False,3
+cmp:add_orders_batch_100/reserve,v092,v092,9218.6,9030.0,8814.6,9030.0,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/reserve,base,v092,9398.3,9184.7,9211.3,9211.3,2.01,1.95,1.71,4.50,2.79,False,3
+cmp:add_orders_batch_100/reserve,head,v092,10302.0,10335.0,10113.0,10302.0,14.09,11.75,14.45,14.73,2.98,False,3
+cmp:add_orders_batch_100/reserve,c2,v092,9119.8,9025.6,9074.8,9074.8,0.50,-1.07,-0.05,2.95,4.02,False,3
+cmp:add_orders_batch_100/reserve,c3,v092,9114.3,8942.8,9045.7,9045.7,0.17,-1.13,-0.97,2.62,3.75,False,3
+cmp:add_orders_batch_100/standard,v092,v092,8897.2,8889.8,8822.4,8889.8,0.00,0.00,0.00,0.00,0.00,False,3
+cmp:add_orders_batch_100/standard,base,v092,9360.7,9133.6,9118.7,9133.6,2.74,5.21,2.74,3.36,2.47,False,3
+cmp:add_orders_batch_100/standard,head,v092,10435.0,10448.0,10066.0,10435.0,17.38,17.28,17.53,14.10,3.43,False,3
+cmp:add_orders_batch_100/standard,c2,v092,9006.1,8971.4,8892.5,8971.4,0.92,1.22,0.92,0.79,0.43,False,3
+cmp:add_orders_batch_100/standard,c3,v092,8955.3,8864.0,9024.2,8955.3,0.74,0.65,-0.29,2.29,2.58,False,3
