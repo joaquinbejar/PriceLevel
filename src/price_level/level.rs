@@ -227,45 +227,116 @@ fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
 /// re-entrant subscriber stall a queued fill-or-kill writer (or deadlock on
 /// re-entry). Each slot keeps the first event of its kind; a single call
 /// raises at most one of each. Holds no allocation of its own.
-#[derive(Default)]
+///
+/// Compact `Copy` state (issue #214): one bit per event kind plus the id of
+/// the order the call acted on, so the happy path pays one small
+/// initialisation and one bit test, with no drop glue and no move of a large
+/// struct into the emitter. No error payload is stored:
+///
+/// * the removal refusal and the post-removal release failure log exactly the
+///   error the call returns, which [`Self::emit`] takes from the call's own
+///   `Result`;
+/// * the statistics drop rebuilds its `CounterExhausted` error from the
+///   counter kind the bit names;
+/// * the counter refusal and rollback failure carry no error field.
+///
+/// Every recording helper is `#[cold]`, and every event is written by the
+/// slow emitter, which is `#[cold] #[inline(never)]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct DeferredEvents {
-    /// First order-event statistics drop (`WARN`).
-    stats_drop: Option<PriceLevelError>,
-    /// A removal refused before any mutation (`WARN`), with the returned
-    /// error.
-    removal_refused: Option<(Id, PriceLevelError)>,
-    /// A post-removal topology release failure (`ERROR`), with the returned
-    /// error.
-    removal_release_failed: Option<(Id, PriceLevelError)>,
-    /// An update's partial-reservation rollback failed and this call
-    /// poisoned the level (`ERROR`).
-    update_rollback_failed: Option<Id>,
-    /// A level quantity counter refused a checked decrement (`ERROR`): the
-    /// counter name and the order id.
-    counter_refused: Option<(&'static str, Id)>,
+    /// Bit set of the recorded event kinds (`DeferredEvents::*` constants).
+    kinds: u8,
+    /// Id of the order the first recorded id-bearing event concerns. Every
+    /// such event of one call concerns the same order.
+    order_id: Option<Id>,
 }
 
 impl DeferredEvents {
-    /// Records a refused counter decrement, keeping the first.
-    #[cold]
-    fn note_counter_refused(&mut self, counter: &'static str, order_id: Id) {
-        if self.counter_refused.is_none() {
-            self.counter_refused = Some((counter, order_id));
+    /// A removal refused before any mutation (`WARN`); logs the returned
+    /// error.
+    const REMOVAL_REFUSED: u8 = 1;
+    /// A level quantity counter refused a checked decrement (`ERROR`): the
+    /// visible counter. Mutually exclusive with [`Self::COUNTER_HIDDEN`]: the
+    /// first refused counter is kept.
+    const COUNTER_VISIBLE: u8 = 1 << 1;
+    /// As [`Self::COUNTER_VISIBLE`], for the hidden counter.
+    const COUNTER_HIDDEN: u8 = 1 << 2;
+    /// A post-removal topology release failure (`ERROR`); logs the returned
+    /// error.
+    const RELEASE_FAILED: u8 = 1 << 3;
+    /// An update's partial-reservation rollback failed and this call
+    /// poisoned the level (`ERROR`).
+    const ROLLBACK_FAILED: u8 = 1 << 4;
+    /// First `orders_added` statistics drop (`WARN`).
+    const STATS_DROP_ADDED: u8 = 1 << 5;
+    /// First `orders_removed` statistics drop (`WARN`).
+    const STATS_DROP_REMOVED: u8 = 1 << 6;
+
+    /// Name of a counter-refusal bit, as logged and as put in the returned
+    /// error (`"hidden"` for [`Self::COUNTER_HIDDEN`], `"visible"` otherwise).
+    #[inline]
+    fn counter_name(counter: u8) -> &'static str {
+        if counter & Self::COUNTER_HIDDEN != 0 {
+            "hidden"
+        } else {
+            "visible"
         }
     }
 
-    /// Emits every recorded event. Call only after the fill-or-kill guard
-    /// has been dropped.
-    fn emit(self, price: u128) {
-        if let Some((order_id, err)) = self.removal_refused {
+    /// Records `kind` for `order_id` (the first id is kept).
+    #[cold]
+    #[inline(never)]
+    fn note(&mut self, kind: u8, order_id: Id) {
+        self.kinds |= kind;
+        if self.order_id.is_none() {
+            self.order_id = Some(order_id);
+        }
+    }
+
+    /// Records a refused counter decrement, keeping the first counter.
+    #[cold]
+    #[inline(never)]
+    fn note_counter_refused(&mut self, counter: u8, order_id: Id) {
+        if self.kinds & (Self::COUNTER_VISIBLE | Self::COUNTER_HIDDEN) == 0 {
+            self.note(counter, order_id);
+        }
+    }
+
+    /// Records a statistics drop of the given kind bit. No order id: the
+    /// drop event never carried one.
+    #[cold]
+    #[inline(never)]
+    fn note_stats_drop(&mut self, kind: u8) {
+        self.kinds |= kind;
+    }
+
+    /// Emits every recorded event; a no-op test on the happy path. Call only
+    /// after the fill-or-kill guard has been dropped. `result` is the call's
+    /// own return value: the removal events log its error.
+    #[inline]
+    fn emit<T>(&self, price: u128, result: &Result<T, PriceLevelError>) {
+        if self.kinds != 0 {
+            self.emit_slow(price, result.as_ref().err());
+        }
+    }
+
+    /// Slow path of [`Self::emit`]: one `tracing` call site per event kind.
+    #[cold]
+    #[inline(never)]
+    fn emit_slow(&self, price: u128, returned: Option<&PriceLevelError>) {
+        let order_id = OptionalDisplay(self.order_id.as_ref());
+        let error = OptionalDisplay(returned);
+        if self.kinds & Self::REMOVAL_REFUSED != 0 {
             tracing::warn!(
                 price,
                 order_id = %order_id,
-                error = %err,
+                error = %error,
                 "removal rejected before mutation: resting-order count disagrees with the queue"
             );
         }
-        if let Some((counter, order_id)) = self.counter_refused {
+        let counter_bits = self.kinds & (Self::COUNTER_VISIBLE | Self::COUNTER_HIDDEN);
+        if counter_bits != 0 {
+            let counter = Self::counter_name(counter_bits);
             tracing::error!(
                 price,
                 order_id = %order_id,
@@ -273,27 +344,49 @@ impl DeferredEvents {
                 "level quantity counter refused a checked decrement (it already disagreed with the queue); level poisoned — reconstruct it from a snapshot"
             );
         }
-        if let Some((order_id, err)) = self.removal_release_failed {
+        if self.kinds & Self::RELEASE_FAILED != 0 {
             tracing::error!(
                 price,
                 order_id = %order_id,
-                error = %err,
+                error = %error,
                 "resting-order count underflow after a committed removal; level poisoned — reconstruct it from a snapshot"
             );
         }
-        if let Some(order_id) = self.update_rollback_failed {
+        if self.kinds & Self::ROLLBACK_FAILED != 0 {
             tracing::error!(
                 price,
                 order_id = %order_id,
                 "update counter rollback failed; level poisoned — reconstruct it from a snapshot"
             );
         }
-        if let Some(err) = self.stats_drop {
+        let exhausted = if self.kinds & Self::STATS_DROP_ADDED != 0 {
+            Some(ExhaustedCounter::OrdersAdded)
+        } else if self.kinds & Self::STATS_DROP_REMOVED != 0 {
+            Some(ExhaustedCounter::OrdersRemoved)
+        } else {
+            None
+        };
+        if let Some(kind) = exhausted {
+            let err = PriceLevelError::counter_exhausted(kind);
             tracing::warn!(
                 price,
                 error = %err,
                 "order-event statistic not recorded (counter exhausted); level stats marked degraded, mutation unaffected"
             );
+        }
+    }
+}
+
+/// `Display` for an optional value in a deferred event: the value, or
+/// `unavailable` when absent (never expected: every event that logs an id
+/// or an error records the id and returns the error).
+struct OptionalDisplay<'a, T: Display>(Option<&'a T>);
+
+impl<T: Display> Display for OptionalDisplay<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(value) => value.fmt(f),
+            None => f.write_str("unavailable"),
         }
     }
 }
@@ -1598,16 +1691,16 @@ impl PriceLevel {
     /// `false -> true` transition, so across any number of concurrent
     /// admissions / cancels exactly one caller logs the anomaly (after all of
     /// its bookkeeping), not one per event.
+    ///
+    /// Returns `true` for that one reporting call; the caller records the
+    /// event kind, and the error is rebuilt from it when the event is emitted
+    /// (issue #214), so no error value is carried on the hot path.
     #[inline]
     fn record_order_event(
         &self,
         record: fn(&PriceLevelStatistics) -> Result<(), OrderEventDrop>,
-    ) -> Option<PriceLevelError> {
-        match record(&self.stats) {
-            Ok(()) => None,
-            Err(drop) if drop.degraded_now => Some(drop.error),
-            Err(_) => None,
-        }
+    ) -> bool {
+        matches!(record(&self.stats), Err(drop) if drop.degraded_now)
     }
 
     /// Returns `true` if `orders` is empty or every order shares one side — the
@@ -1934,8 +2027,8 @@ impl PriceLevel {
             self.add_order_guarded(order, &mut events)
         };
         // Events are emitted only after the guard is released (pre-release
-        // hardening, following #172).
-        events.emit(self.price);
+        // hardening, following #172); a single bit test when none was raised.
+        events.emit(self.price, &result);
         result
     }
 
@@ -2034,7 +2127,6 @@ impl PriceLevel {
         // after rolling back the visible + hidden reservations this call made
         // (a commutative, concurrency-safe undo), leaving the topology word
         // untouched and `try_push_with` publishing nothing.
-        let order_id = order.id();
         let order_arc = Arc::new(order);
         self.orders.try_push_with(order_arc.clone(), || {
             if self
@@ -2079,7 +2171,7 @@ impl PriceLevel {
                 // emitted by `add_order` after every lock is released.
                 if !checked_counter_sub(&self.visible_quantity, visible_qty) {
                     self.trip_poison();
-                    events.note_counter_refused("visible", order_id);
+                    events.note_counter_refused(DeferredEvents::COUNTER_VISIBLE, order_arc.id());
                 }
                 return Err(PriceLevelError::InvalidOperation {
                     message: "price level hidden quantity overflow on admission".to_string(),
@@ -2105,13 +2197,14 @@ impl PriceLevel {
                     // Checked, with the same refusal handling as above.
                     if !checked_counter_sub(&self.visible_quantity, visible_qty) {
                         self.trip_poison();
-                        events.note_counter_refused("visible", order_id);
+                        events
+                            .note_counter_refused(DeferredEvents::COUNTER_VISIBLE, order_arc.id());
                     }
                     // A zero hidden delta was never reserved above (issue
                     // #145), so there is nothing to undo; skip the no-op RMW.
                     if hidden_qty != 0 && !checked_counter_sub(&self.hidden_quantity, hidden_qty) {
                         self.trip_poison();
-                        events.note_counter_refused("hidden", order_id);
+                        events.note_counter_refused(DeferredEvents::COUNTER_HIDDEN, order_arc.id());
                     }
                     return Err(err);
                 }
@@ -2129,8 +2222,9 @@ impl PriceLevel {
         // statistics refuse to wrap it and mark themselves degraded (issue
         // #165), and the first such drop is logged by `add_order` after all
         // bookkeeping and after the fill-or-kill guard is released.
-        events.stats_drop =
-            self.record_order_event(PriceLevelStatistics::record_order_added_reporting);
+        if self.record_order_event(PriceLevelStatistics::record_order_added_reporting) {
+            events.note_stats_drop(DeferredEvents::STATS_DROP_ADDED);
+        }
 
         Ok(order_arc)
     }
@@ -4388,8 +4482,9 @@ impl PriceLevel {
         };
         // Every event of this call (statistics drop, removal refusal / release
         // failure, rollback failure) is emitted only after the guard is
-        // released (pre-release hardening, following #172).
-        events.emit(self.price);
+        // released (pre-release hardening, following #172); a single bit
+        // test when none was raised.
+        events.emit(self.price, &result);
         result
     }
 
@@ -4471,11 +4566,9 @@ impl PriceLevel {
             RemoveOutcome::Refused => {
                 // Built after the entry lock was released; logged by
                 // `update_order` after the fill-or-kill guard is released.
-                let err = topology_underflow(self.price);
-                if events.removal_refused.is_none() {
-                    events.removal_refused = Some((order_id, err.clone()));
-                }
-                return Err(err);
+                // The event logs this returned error (no clone kept).
+                events.note(DeferredEvents::REMOVAL_REFUSED, order_id);
+                return Err(topology_underflow(self.price));
             }
             RemoveOutcome::Removed(order) => order,
         };
@@ -4489,10 +4582,10 @@ impl PriceLevel {
         // release below, the typed error is returned instead of a success.
         let mut counter_refused = None;
         if !checked_counter_sub(&self.visible_quantity, order.visible_quantity().as_u64()) {
-            counter_refused = Some("visible");
+            counter_refused = Some(DeferredEvents::COUNTER_VISIBLE);
         }
         if !checked_counter_sub(&self.hidden_quantity, order.hidden_quantity().as_u64()) {
-            counter_refused = counter_refused.or(Some("hidden"));
+            counter_refused = counter_refused.or(Some(DeferredEvents::COUNTER_HIDDEN));
         }
 
         // Decrement the count and un-pin if this drained the level (issue
@@ -4507,9 +4600,8 @@ impl PriceLevel {
                 self.trip_poison();
                 events.note_counter_refused(counter, order_id);
             }
-            if events.removal_release_failed.is_none() {
-                events.removal_release_failed = Some((order_id, err.clone()));
-            }
+            // The event logs this returned error (no clone kept).
+            events.note(DeferredEvents::RELEASE_FAILED, order_id);
             return Err(err);
         }
         if let Some(counter) = counter_refused {
@@ -4517,7 +4609,10 @@ impl PriceLevel {
             self.bump_mutation_epoch();
             self.trip_poison();
             events.note_counter_refused(counter, order_id);
-            return Err(counter_transition_failure(self.price, counter));
+            return Err(counter_transition_failure(
+                self.price,
+                DeferredEvents::counter_name(counter),
+            ));
         }
 
         Ok(Some(order))
@@ -4550,17 +4645,13 @@ impl PriceLevel {
                     // Validated, removed and released as one unit (issue #163).
                     let order = self.remove_resting(order_id, events)?;
 
-                    if order.is_some() {
+                    if order.is_some()
                         // Update statistics (checked, issue #165).
-                        if events.stats_drop.is_none() {
-                            events.stats_drop = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        } else {
-                            let _ = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        }
+                        && self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        )
+                    {
+                        events.note_stats_drop(DeferredEvents::STATS_DROP_REMOVED);
                     }
 
                     Ok(order)
@@ -4675,8 +4766,8 @@ impl PriceLevel {
                     // `UpdatePlan::reserve`); fail fast rather than report a clean
                     // rejection (issue #163). Logged by `update_order` after the
                     // entry lock and the fill-or-kill guard are released.
-                    if self.trip_poison() && events.update_rollback_failed.is_none() {
-                        events.update_rollback_failed = Some(order_id);
+                    if self.trip_poison() {
+                        events.note(DeferredEvents::ROLLBACK_FAILED, order_id);
                     }
                 }
 
@@ -4696,17 +4787,13 @@ impl PriceLevel {
                     // Validated, removed and released as one unit (issue #163).
                     let order = self.remove_resting(order_id, events)?;
 
-                    if order.is_some() {
+                    if order.is_some()
                         // Update statistics (checked, issue #165).
-                        if events.stats_drop.is_none() {
-                            events.stats_drop = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        } else {
-                            let _ = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        }
+                        && self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        )
+                    {
+                        events.note_stats_drop(DeferredEvents::STATS_DROP_REMOVED);
                     }
                     Ok(order)
                 } else {
@@ -4729,17 +4816,13 @@ impl PriceLevel {
                 // unit (issue #163).
                 let order = self.remove_resting(order_id, events)?;
 
-                if order.is_some() {
+                if order.is_some()
                     // Update statistics (checked, issue #165).
-                    if events.stats_drop.is_none() {
-                        events.stats_drop = self.record_order_event(
-                            PriceLevelStatistics::record_order_removed_reporting,
-                        );
-                    } else {
-                        let _ = self.record_order_event(
-                            PriceLevelStatistics::record_order_removed_reporting,
-                        );
-                    }
+                    && self.record_order_event(
+                        PriceLevelStatistics::record_order_removed_reporting,
+                    )
+                {
+                    events.note_stats_drop(DeferredEvents::STATS_DROP_REMOVED);
                 }
 
                 Ok(order)
@@ -4757,17 +4840,13 @@ impl PriceLevel {
                     // Validated, removed and released as one unit (issue #163).
                     let order = self.remove_resting(order_id, events)?;
 
-                    if order.is_some() {
+                    if order.is_some()
                         // Update statistics (checked, issue #165).
-                        if events.stats_drop.is_none() {
-                            events.stats_drop = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        } else {
-                            let _ = self.record_order_event(
-                                PriceLevelStatistics::record_order_removed_reporting,
-                            );
-                        }
+                        && self.record_order_event(
+                            PriceLevelStatistics::record_order_removed_reporting,
+                        )
+                    {
+                        events.note_stats_drop(DeferredEvents::STATS_DROP_REMOVED);
                     }
 
                     Ok(order)
