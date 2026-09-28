@@ -78,6 +78,17 @@
 //!
 //! This is still a CLOSED-LOOP measurement per thread — see
 //! `manifest::COORDINATED_OMISSION_DISCLOSURE`.
+//!
+//! # Batched samples (`PL_LATENCY_CONTENTION_BATCH`, issue #214 review)
+//!
+//! With the default batch of 1 each sample is one timed call, as above. A
+//! batch of `K > 1` adds `K` targets (untimed), times `K` consecutive
+//! `match_order` calls with one clock pair, records the per-call mean, then
+//! cancels whatever targets survived (untimed); the report is named
+//! `<scenario>_x<K>`. This resolves shifts smaller than one timer tick
+//! (41.67 ns on Apple silicon) at the cost of per-call tails: a sample's
+//! p99 is a mean over `K` calls, not a single call's latency, and the
+//! matcher-owned depth is bounded by `K` instead of 1.
 
 use crate::config::Config;
 use crate::fixtures::{self, EXECUTION_TIMESTAMP_MS};
@@ -109,7 +120,12 @@ pub fn run(config: &Config) -> Vec<ScenarioReport> {
 
 fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str) -> ScenarioReport {
     let writer_threads = config.contention_threads.saturating_sub(1).max(1);
-    let matcher_ops = config.contention_ops;
+    let samples = config.contention_ops;
+    // Matcher calls per timed sample (issue #214 review): 1 keeps the
+    // original one-call-per-sample shape; above 1 the sample is the mean
+    // over `batch` consecutive calls timed with one clock pair.
+    let batch = config.contention_batch.max(1);
+    let matcher_ops = samples * batch;
 
     // Churn pool only — the matcher's own dedicated target makers are added
     // one at a time inside the matcher loop below (untimed), not pre-seeded
@@ -146,49 +162,61 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
 
     ready.wait();
     let generator = fixtures::trade_id_generator();
-    let mut durations_ns: Vec<u64> = Vec::with_capacity(matcher_ops);
+    let mut durations_ns: Vec<u64> = Vec::with_capacity(samples);
     let mut outcomes: Vec<MatchOutcome> = Vec::with_capacity(matcher_ops);
+    // Results of one batch, moved here inside the timed region and dropped
+    // after it (a `MatchResult` owns its trade buffer).
+    let mut results: Vec<MatchResult> = Vec::with_capacity(batch);
     go.store(true, Ordering::Release);
 
     let matcher_window_start = Instant::now();
-    for i in 0..matcher_ops {
+    for sample in 0..samples {
+        let first = sample * batch;
         // Untimed: add this iteration's own dedicated 1-quantity target
-        // maker, at a fresh id disjoint from the churn pool and every other
-        // matcher iteration's target, immediately before the timed call.
+        // maker(s), at fresh ids disjoint from the churn pool and every other
+        // matcher iteration's target, immediately before the timed call(s).
         // See the module docs: FIFO order means the timed call below is NOT
         // guaranteed to consume THIS target.
-        level
-            .add_order(fixtures::standard_order(
-                MATCHER_TARGET_ID_BASE + i as u64,
-                Side::Sell,
-                1,
-                TimeInForce::Gtc,
-            ))
-            .expect("contention: matcher target seeding must succeed");
+        for i in first..first + batch {
+            level
+                .add_order(fixtures::standard_order(
+                    MATCHER_TARGET_ID_BASE + i as u64,
+                    Side::Sell,
+                    1,
+                    TimeInForce::Gtc,
+                ))
+                .expect("contention: matcher target seeding must succeed");
+        }
 
         let t0 = Instant::now();
-        let result = level.match_order(
-            1,
-            Id::from_u64(TAKER_ID_BASE + i as u64),
-            matcher_tif,
-            TakerKind::Standard,
-            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
-            &generator,
-        );
+        for i in first..first + batch {
+            results.push(level.match_order(
+                1,
+                Id::from_u64(TAKER_ID_BASE + i as u64),
+                matcher_tif,
+                TakerKind::Standard,
+                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+                &generator,
+            ));
+        }
         let elapsed = t0.elapsed();
-        outcomes.push(result.outcome());
-        durations_ns.push(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+        outcomes.extend(results.iter().map(MatchResult::outcome));
+        results.clear();
+        let elapsed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+        durations_ns.push(elapsed_ns / batch as u64);
 
-        // Untimed: remove this iteration's own target if the call above did
-        // NOT consume it, so matcher-owned depth never accumulates across
-        // iterations — see the module docs. `Ok(None)` (already consumed)
-        // is the common, harmless case; `Ok(Some(_))` means it survived and
-        // is now removed.
-        level
-            .update_order(OrderUpdate::Cancel {
-                order_id: Id::from_u64(MATCHER_TARGET_ID_BASE + i as u64),
-            })
-            .expect("contention: matcher target cleanup cancel must not error");
+        // Untimed: remove this iteration's own target(s) if the call(s) above
+        // did NOT consume them, so matcher-owned depth never accumulates
+        // across iterations — see the module docs. `Ok(None)` (already
+        // consumed) is the common, harmless case; `Ok(Some(_))` means it
+        // survived and is now removed.
+        for i in first..first + batch {
+            level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: Id::from_u64(MATCHER_TARGET_ID_BASE + i as u64),
+                })
+                .expect("contention: matcher target cleanup cancel must not error");
+        }
     }
     let matcher_window = matcher_window_start.elapsed();
     stop.store(true, Ordering::Relaxed);
@@ -256,8 +284,13 @@ fn run_contention(config: &Config, matcher_tif: TimeInForce, name: &'static str)
     let window_secs = matcher_window.as_secs_f64().max(f64::EPSILON);
     let matcher_ops_per_sec = matcher_ops as f64 / window_secs;
 
+    let report_name = if batch == 1 {
+        name.to_string()
+    } else {
+        format!("{name}_x{batch}")
+    };
     ScenarioReport::from_samples(
-        name,
+        report_name,
         "contention",
         1,
         "PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads",
