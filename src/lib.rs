@@ -1326,6 +1326,44 @@
 //!   no stable fallible API; an allocator failure there aborts the process
 //!   (not a Rust panic). See `doc/panic-boundaries.md`.
 //!
+//! ## Migration Guide (strict `Hash32` hex and bounded parse errors)
+//!
+//! [`Hash32::from_hex`] (and therefore [`Hash32`]'s `FromStr`, its serde
+//! `Deserialize` and the `user_id=` field of the [`OrderType`] text form)
+//! now requires exactly 64 ASCII hex digits. It used to decode each byte
+//! pair with `u8::from_str_radix`, which also accepted a leading `+` in a
+//! pair (`"+f"` decoded as `0x0f`). Upper, lower and mixed case hex are
+//! accepted as before, and every other error message is unchanged.
+//!
+//! | Input | Before | Now |
+//! |-------|--------|-----|
+//! | 64 characters where some pair is `+<hex digit>` (e.g. `"+f"` repeated 32 times) | accepted (`+f` → `0x0f`) | [`PriceLevelError::ParseError`] (`Invalid hex character in Hash32: +f`) |
+//!
+//! Error messages and error payloads that echo caller input
+//! ([`PriceLevelError::ParseError`] from the `TimeInForce`, `OrderStatus`,
+//! [`PegReferenceType`] and [`Id`] parsers, the `value` of
+//! [`PriceLevelError::InvalidFieldValue`] from the [`Price`], [`Quantity`],
+//! [`TimestampMs`], [`OrderType`] and [`OrderUpdate`] parsers, and
+//! [`PriceLevelError::UnknownOrderType`]) now carry at most the first 128
+//! characters of that input, followed by `... (<n> bytes total)` when it was
+//! longer. Shorter inputs are echoed verbatim. The `TimeInForce` messages
+//! echo the input as written instead of its uppercase form (`Invalid
+//! TimeInForce: gtx`, was `GTX`). Variants are unchanged. The accepted
+//! vocabulary and results of the case-insensitive `Side`, `TimeInForce` and
+//! `OrderStatus` parsers are unchanged, including the Unicode case folds the
+//! former `to_uppercase` produced (for example `"ſell"` still parses as
+//! `Side::Sell`).
+//!
+//! ```rust
+//! use pricelevel::{Hash32, PriceLevelError};
+//!
+//! assert!(Hash32::from_hex(&"AB".repeat(32)).is_ok());
+//! assert!(matches!(
+//!     Hash32::from_hex(&"+f".repeat(32)),
+//!     Err(PriceLevelError::ParseError { .. })
+//! ));
+//! ```
+//!
 
 mod orders;
 mod price_level;

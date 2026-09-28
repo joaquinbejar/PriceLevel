@@ -2,6 +2,7 @@
 
 use crate::errors::PriceLevelError;
 use crate::utils::encode::{HASH32_HEX_LEN, encode_hash32_hex};
+use crate::utils::text::uppercases_to;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -44,16 +45,22 @@ impl Side {
     }
 }
 
+/// Case-insensitive: accepts exactly the inputs whose `str::to_uppercase`
+/// is `BUY` or `SELL`, matched without allocating (see
+/// `utils::text::uppercases_to`; this includes the Unicode folds such as
+/// `ſell`).
 impl FromStr for Side {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "BUY" => Ok(Side::Buy),
-            "SELL" => Ok(Side::Sell),
-            _ => Err(PriceLevelError::ParseError {
+        if uppercases_to(s, "BUY") {
+            Ok(Side::Buy)
+        } else if uppercases_to(s, "SELL") {
+            Ok(Side::Sell)
+        } else {
+            Err(PriceLevelError::ParseError {
                 message: "Failed to parse Side".to_string(),
-            }),
+            })
         }
     }
 }
@@ -110,6 +117,11 @@ impl Hash32 {
 
     /// Creates a `Hash32` from a hexadecimal string.
     ///
+    /// The grammar is exactly 64 ASCII hex digits (`0-9`, `a-f`, `A-F`); upper
+    /// and lower case may be mixed. Every character must be a hex digit: a
+    /// sign such as the `+` that `u8::from_str_radix` used to accept at the
+    /// start of a byte pair (`"+f"` → `0x0f`) is rejected.
+    ///
     /// # Errors
     ///
     /// Returns an error if the string is not exactly 64 hex characters
@@ -126,17 +138,42 @@ impl Hash32 {
         // an index.
         let mut bytes = [0u8; 32];
         let (pairs, _) = s.as_bytes().as_chunks::<2>();
-        for (slot, pair) in bytes.iter_mut().zip(pairs) {
-            let hex_str =
-                std::str::from_utf8(pair.as_slice()).map_err(|_| PriceLevelError::ParseError {
-                    message: "Invalid UTF-8 in hex string".to_string(),
-                })?;
-            *slot = u8::from_str_radix(hex_str, 16).map_err(|_| PriceLevelError::ParseError {
-                message: format!("Invalid hex character in Hash32: {hex_str}"),
-            })?;
+        for (slot, &[high, low]) in bytes.iter_mut().zip(pairs) {
+            match (hex_digit_value(high), hex_digit_value(low)) {
+                // `high <= 0x0f`, so the shift and the disjoint `|` stay in `u8`.
+                (Some(high), Some(low)) => *slot = (high << 4) | low,
+                _ => {
+                    let pair = [high, low];
+                    return Err(PriceLevelError::ParseError {
+                        message: match std::str::from_utf8(&pair) {
+                            Ok(hex_str) => format!("Invalid hex character in Hash32: {hex_str}"),
+                            Err(_) => "Invalid UTF-8 in hex string".to_string(),
+                        },
+                    });
+                }
+            }
         }
 
         Ok(Self(bytes))
+    }
+}
+
+/// The value of one ASCII hex digit (either case), or `None` for any other
+/// byte (including signs and non-ASCII bytes).
+#[inline]
+#[must_use]
+const fn hex_digit_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => byte.checked_sub(b'0'),
+        b'a'..=b'f' => match byte.checked_sub(b'a') {
+            Some(v) => v.checked_add(10),
+            None => None,
+        },
+        b'A'..=b'F' => match byte.checked_sub(b'A') {
+            Some(v) => v.checked_add(10),
+            None => None,
+        },
+        _ => None,
     }
 }
 

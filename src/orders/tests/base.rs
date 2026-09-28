@@ -141,7 +141,7 @@ mod tests_hash32_issue_201 {
         prop_oneof![
             any::<[u8; 32]>().prop_map(|b| reference_hex(&Hash32::new(b))),
             any::<[u8; 32]>().prop_map(|b| reference_hex(&Hash32::new(b)).to_uppercase()),
-            // `from_hex` keeps `u8::from_str_radix`'s leading `+` per pair.
+            // Pre-hardening `from_hex` accepted a leading `+` per pair; now rejected.
             any::<[u8; 32]>()
                 .prop_map(|b| with_first_replaced(&reference_hex(&Hash32::new(b)), "+")),
             "[0-9a-fA-F]{62,66}",

@@ -1,6 +1,6 @@
 use crate::errors::PriceLevelError;
 use crate::orders::{Id, Side};
-use crate::utils::text::{Fields, split_exactly_once};
+use crate::utils::text::{Fields, echo, split_exactly_once};
 use crate::utils::{Price, Quantity};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -84,14 +84,14 @@ impl FromStr for OrderUpdate {
         let parse_price = |field: &str, value: &str| -> Result<Price, PriceLevelError> {
             Price::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: field.to_string(),
-                value: value.to_string(),
+                value: echo(value),
             })
         };
 
         let parse_quantity = |field: &str, value: &str| -> Result<Quantity, PriceLevelError> {
             Quantity::from_str(value).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: field.to_string(),
-                value: value.to_string(),
+                value: echo(value),
             })
         };
 
@@ -100,7 +100,7 @@ impl FromStr for OrderUpdate {
         let order_id =
             Id::from_str(order_id_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                 field: "order_id".to_string(),
-                value: order_id_str.to_string(),
+                value: echo(order_id_str),
             })?;
 
         match update_type {
@@ -147,7 +147,7 @@ impl FromStr for OrderUpdate {
                 let side =
                     Side::from_str(side_str).map_err(|_| PriceLevelError::InvalidFieldValue {
                         field: "side".to_string(),
-                        value: side_str.to_string(),
+                        value: echo(side_str),
                     })?;
 
                 Ok(OrderUpdate::Replace {
@@ -157,7 +157,7 @@ impl FromStr for OrderUpdate {
                     side,
                 })
             }
-            _ => Err(PriceLevelError::UnknownOrderType(update_type.to_string())),
+            _ => Err(PriceLevelError::UnknownOrderType(echo(update_type))),
         }
     }
 }

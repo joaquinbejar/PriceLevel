@@ -1,5 +1,5 @@
 use crate::errors::PriceLevelError;
-use crate::utils::text::split_exactly_once;
+use crate::utils::text::{Echo, split_exactly_once, uppercases_to};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -87,33 +87,52 @@ impl fmt::Display for TimeInForce {
     }
 }
 
+/// Case-insensitive. The fixed forms accept exactly the inputs whose
+/// `str::to_uppercase` is `GTC`, `IOC`, `FOK` or `DAY`, matched without
+/// allocating (see `utils::text::uppercases_to`; this includes Unicode folds
+/// such as `ıoc`). `GTD-<expiry>` takes an ASCII case-insensitive `GTD-`
+/// prefix, exactly one `-`, and a `u64` expiry. No non-ASCII scalar
+/// uppercases into that prefix, a `-`, a sign or a digit, so this accepts the
+/// same set as the former uppercase-then-match parser. Error messages echo at
+/// most a bounded prefix of the input, as written (no longer uppercased).
 impl FromStr for TimeInForce {
     type Err = PriceLevelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "GTC" => Ok(TimeInForce::Gtc),
-            "IOC" => Ok(TimeInForce::Ioc),
-            "FOK" => Ok(TimeInForce::Fok),
-            "DAY" => Ok(TimeInForce::Day),
-            s if s.starts_with("GTD-") => {
-                // Exactly one `-`: `GTD-<expiry>`; a second `-` is rejected.
-                let Some((_, expiry)) = split_exactly_once(s, b'-') else {
-                    return Err(PriceLevelError::ParseError {
-                        message: format!("Invalid GTD format: {s}"),
-                    });
-                };
-
-                match expiry.parse::<u64>() {
-                    Ok(expiry) => Ok(TimeInForce::Gtd(expiry)),
-                    Err(_) => Err(PriceLevelError::ParseError {
-                        message: format!("Invalid expiry timestamp in GTD: {expiry}"),
-                    }),
-                }
-            }
-            _ => Err(PriceLevelError::ParseError {
-                message: format!("Invalid TimeInForce: {s}"),
-            }),
+        if uppercases_to(s, "GTC") {
+            return Ok(TimeInForce::Gtc);
         }
+        if uppercases_to(s, "IOC") {
+            return Ok(TimeInForce::Ioc);
+        }
+        if uppercases_to(s, "FOK") {
+            return Ok(TimeInForce::Fok);
+        }
+        if uppercases_to(s, "DAY") {
+            return Ok(TimeInForce::Day);
+        }
+
+        let is_gtd = s
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GTD-"));
+        if !is_gtd {
+            return Err(PriceLevelError::ParseError {
+                message: format!("Invalid TimeInForce: {}", Echo(s)),
+            });
+        }
+
+        // Exactly one `-`: `GTD-<expiry>`; a second `-` is rejected.
+        let Some((_, expiry)) = split_exactly_once(s, b'-') else {
+            return Err(PriceLevelError::ParseError {
+                message: format!("Invalid GTD format: {}", Echo(s)),
+            });
+        };
+
+        expiry
+            .parse::<u64>()
+            .map(TimeInForce::Gtd)
+            .map_err(|_| PriceLevelError::ParseError {
+                message: format!("Invalid expiry timestamp in GTD: {}", Echo(expiry)),
+            })
     }
 }

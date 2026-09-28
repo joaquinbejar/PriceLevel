@@ -277,7 +277,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     transition instead of ignoring it; the level must then be treated as
     failed.
 
+- **`Hash32` hex parsing rejects signs (pre-release hardening).**
+  `Hash32::from_hex` (and `FromStr`, serde `Deserialize` and the `OrderType`
+  `user_id=` text field) requires every character to be an ASCII hex digit.
+  It used `u8::from_str_radix` per byte pair, which accepted a leading `+`
+  (`"+f"` decoded as `0x0f`), so non-canonical text was accepted. Upper,
+  lower and mixed case hex, and all other outcomes and messages, are
+  unchanged.
+
 ### Changed
+
+- **Parse errors echo a bounded prefix of the input (pre-release
+  hardening).** `ParseError` messages from the `TimeInForce`, `OrderStatus`,
+  `PegReferenceType` and `Id` parsers, the `InvalidFieldValue` `value` from
+  the `Price`, `Quantity`, `TimestampMs`, `OrderType` and `OrderUpdate`
+  parsers, and `UnknownOrderType` now carry at most the first 128 characters
+  of the offending input plus `... (<n> bytes total)` when it is longer, so
+  building an error is no longer sized by the input. Shorter inputs are
+  echoed verbatim; `TimeInForce` messages echo the input as written rather
+  than uppercased. Error variants are unchanged.
+
+- **Allocation-free case-insensitive parsing (pre-release hardening).** The
+  `Side`, `TimeInForce` and `OrderStatus` `FromStr` impls no longer build an
+  uppercased copy of the input: they stream `char::to_uppercase` against each
+  accepted literal. Accepted inputs and results are identical, including the
+  Unicode folds `to_uppercase` produced (`"ſell"` → `Side::Sell`,
+  `"ﬁlled"` → `OrderStatus::Filled`, `"ıoc"` → `TimeInForce::Ioc`); a
+  differential test against the former parsers and an exhaustive scalar
+  check for the `GTD-` grammar pin this.
+
+- **`OrderType` `Display` writes without temporaries (pre-release
+  hardening).** The side is written through `Side`'s `Display` instead of an
+  uppercased `Debug` string, and `ReserveOrder`'s `replenish_amount` is
+  written directly instead of through a `String`. Output is byte-identical.
 
 - **Snapshot restore validates in two walks instead of three (#150).**
   `PriceLevel::from_snapshot` (and the package / JSON forms) runs the
