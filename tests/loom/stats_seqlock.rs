@@ -10,7 +10,7 @@
 //! model checks, under every interleaving and weak-memory outcome loom
 //! explores, that a reader running concurrently with that ONE writer never
 //! accepts a partial execution tuple, including across an overflow rollback
-//! whose committed prefix is undone with `fetch_sub`.
+//! whose committed prefix is undone with a checked `fetch_update(checked_sub)`.
 //!
 //! Overlapping writers are outside the contract (the guard entry is a plain
 //! increment, not an exclusive acquire). They are not a passing case: the
@@ -35,10 +35,11 @@
 //! file reproduces the exact protocol with loom primitives:
 //!
 //! - writer entry: a `Relaxed` checked increment that refuses to open when
-//!   the sequence exceeds `u64::MAX - 2` (issue #165), then `fence(Release)`
-//!   (`WriteSeqGuard::try_new`); a refused entry only sets the degraded flag;
-//! - field updates: `Relaxed` checked CAS adds, `Relaxed` `fetch_sub` rollback,
-//!   `Relaxed` degraded-flag CAS (`record_execution`);
+//!   the sequence exceeds `u64::MAX - 3` (issue #165), then `fence(Release)`
+//!   (`WriteSeqGuard::try_new`); a refused entry only sets the degraded flag.
+//!   Every transition is capped at the even `u64::MAX - 1`;
+//! - field updates: `Relaxed` checked CAS adds, `Relaxed` checked-subtraction
+//!   rollback, `Relaxed` degraded-flag CAS (`record_execution`);
 //! - writer exit: a checked `Release` increment, proven in range by the entry
 //!   check (`WriteSeqGuard::drop`);
 //! - reader: `seq.load(Acquire)`, retry if odd, `Relaxed` field loads,
@@ -48,7 +49,7 @@
 //! The model keeps three of the additive counters (`orders_executed`,
 //! `quantity_executed`, `sum_waiting_time`) plus the degraded flag.
 //! `value_executed` sits between `quantity_executed` and `sum_waiting_time` in
-//! production and follows the identical `Relaxed` CAS add / `fetch_sub`
+//! production and follows the identical `Relaxed` CAS add / checked-subtraction
 //! rollback pattern (loom also has no 128-bit atomic); it is left out only to
 //! keep the exhaustive search tractable, since the first and last counters
 //! already bracket the rollback. The real type is additionally exercised by
@@ -112,8 +113,30 @@ struct Tuple {
     stats_degraded: bool,
 }
 
-/// Mirror of `STATS_SEQ_ENTRY_LIMIT` (issue #165).
-const SEQ_ENTRY_LIMIT: u64 = u64::MAX - 2;
+/// Mirror of `STATS_SEQ_CEILING` (pre-release hardening): no transition may
+/// move the sequence above this even value.
+const SEQ_CEILING: u64 = u64::MAX - 1;
+
+/// Mirror of `STATS_SEQ_ENTRY_LIMIT` (issue #165; pre-release hardening).
+const SEQ_ENTRY_LIMIT: u64 = u64::MAX - 3;
+
+/// Mirror of `seq_step`: the checked, ceiling-bounded `+1`.
+fn seq_step(s: u64) -> Option<u64> {
+    s.checked_add(1).filter(|next| *next <= SEQ_CEILING)
+}
+
+/// Mirror of the statistics' checked rollbacks (pre-release hardening).
+fn rollback_u64(target: &AtomicU64, delta: u64) {
+    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+        c.checked_sub(delta)
+    });
+}
+
+fn rollback_usize(target: &AtomicUsize, delta: usize) {
+    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+        c.checked_sub(delta)
+    });
+}
 
 /// Mirror of `WriteSeqGuard`.
 struct Guard<'a>(&'a AtomicU64);
@@ -122,7 +145,7 @@ impl<'a> Guard<'a> {
     fn enter(seq: &'a AtomicU64) -> Option<Self> {
         seq.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
             if s <= SEQ_ENTRY_LIMIT {
-                s.checked_add(1)
+                seq_step(s)
             } else {
                 None
             }
@@ -137,7 +160,7 @@ impl Drop for Guard<'_> {
     fn drop(&mut self) {
         let _ = self
             .0
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |s| s.checked_add(1));
+            .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
     }
 }
 
@@ -196,16 +219,15 @@ impl Stats {
             return Err(());
         }
         if checked_add_u64(&self.quantity_executed, quantity).is_err() {
-            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            rollback_usize(&self.orders_executed, 1);
             self.mark_degraded();
             return Err(());
         }
         if let Some(waiting) = waiting
             && checked_add_u64(&self.sum_waiting_time, waiting).is_err()
         {
-            self.quantity_executed
-                .fetch_sub(quantity, Ordering::Relaxed);
-            self.orders_executed.fetch_sub(1, Ordering::Relaxed);
+            rollback_u64(&self.quantity_executed, quantity);
+            rollback_usize(&self.orders_executed, 1);
             self.mark_degraded();
             return Err(());
         }

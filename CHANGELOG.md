@@ -360,6 +360,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Engine and execution panic hardening (pre-release).**
+  - `MatchResult` decoding (`FromStr` / `Deserialize`) and snapshot restore
+    no longer build a `HashSet` (whose `RandomState` can panic on OS RNG
+    failure or during thread-local teardown) for their duplicate-id checks.
+    The ids are copied into one fallibly reserved vector, sorted and scanned
+    for adjacent equal keys; outcomes and error precedence are unchanged
+    (pinned against the former implementation on random inputs and by the
+    `restore_validation` proptest).
+  - The statistics seqlock can no longer be left on an odd sequence. Every
+    transition is capped at the even `u64::MAX - 1` (entry limit
+    `u64::MAX - 3`, identical to before for a single writer), so even
+    overlapping writers (a contract violation) cannot strand
+    `read_consistent` in an endless retry.
+  - Every rollback / decrement of the level's visible and hidden counters
+    (`add_order` reservation rollback, cancel / price-move removal, match
+    sweep fills, replenishment and stranded hidden depth) and of the
+    statistics aggregates is a checked `fetch_update(checked_sub)` instead of
+    a wrapping `fetch_sub`. A refusal (only possible once an invariant is
+    already broken) leaves the counter unchanged, poisons the level (or
+    keeps the statistics degraded), logs at `ERROR` after the per-entry
+    locks are released and, for a removal or a sweep, reports a typed error.
+    A refusal inside a `Fok` taker's sweep is still logged while that taker
+    holds the exclusive fill-or-kill guard (as are the sweep's other events),
+    so a `tracing` subscriber must not re-enter the level.
+  - `add_order`, `update_order` and `snapshot` emit their `tracing` events
+    only after releasing the fill-or-kill guard, following #172.
+  - `cfg(test)` seams compiled into production functions use
+    `LocalKey::try_with` and `RefCell::try_borrow(_mut)` and treat a failure
+    as "no hook", so they cannot panic during thread-local teardown or on
+    re-entry.
+
 - **Checked access in every text parser and in `Id` byte conversion (#174,
   #152).** The `FromStr` impls of `Hash32`, `TimeInForce`, `OrderType`,
   `OrderUpdate`, `Trade`, `TradeList`, `MatchResult`, `PriceLevelSnapshot`,
@@ -433,6 +464,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the `OrderSnapshot` failure sources.
 
 ### Documentation
+
+- **Irreducible panic / abort limits (pre-release).**
+  `doc/panic-boundaries.md` now documents the dependency limits the crate
+  cannot remove: infallible `DashMap` / `SkipMap` growth (allocator abort),
+  `RandomState` in `DashMap` and the sweep's park spill set (kept on purpose
+  for HashDoS resistance on caller-controlled ids), `FokGuard` re-entrancy
+  (also on `FokGuard::read` / `write`), the `sha2` length counter (2^61
+  bytes) and `tracing-subscriber`'s thread-local buffer during teardown. The
+  subscriber obligation is stated on `add_order`, `update_order` and
+  `snapshot`; the match sweep's events for a `Fok` taker still run under
+  the exclusive guard, and the document explains why.
 
 - **Snapshot encoding buffers measured and pinned (#149).** The borrowed
   order serializer and the streamed SHA-256 checksum (both from #164) are

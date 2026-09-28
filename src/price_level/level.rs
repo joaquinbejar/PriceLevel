@@ -35,6 +35,15 @@ use super::fok_guard::FokGuard;
 /// instead of an unbounded loop under sustained mutation.
 pub(crate) const SNAPSHOT_MAX_ATTEMPTS: u32 = 8;
 
+/// One rejection slot per [`SNAPSHOT_MAX_ATTEMPTS`] attempt. Kept equal to it
+/// (a unit test pins the two together); the attempt loop zips the attempt
+/// range with these slots.
+pub(crate) const SNAPSHOT_ATTEMPT_SLOTS: usize = 8;
+
+/// Per-attempt rejection reasons of one [`PriceLevel::snapshot`] call,
+/// recorded under the fill-or-kill guard and logged after it is released.
+type SnapshotRejections = [Option<PriceLevelError>; SNAPSHOT_ATTEMPT_SLOTS];
+
 /// Error for a collected snapshot vector that mixes both sides.
 #[cold]
 fn snapshot_mixed_side() -> PriceLevelError {
@@ -116,7 +125,7 @@ const LAZY_WALK_DIVISOR: u64 = 64;
 #[inline]
 fn lazy_walk_budget(count: u64) -> u64 {
     #[cfg(test)]
-    if let Some(budget) = LAZY_WALK_BUDGET_OVERRIDE.with(std::cell::Cell::get) {
+    if let Some(budget) = crate::utils::test_tls::cell_get(&LAZY_WALK_BUDGET_OVERRIDE, None) {
         return budget;
     }
     count
@@ -137,7 +146,7 @@ pub(crate) struct LazyWalkBudgetGuard(Option<u64>);
 #[cfg(test)]
 impl Drop for LazyWalkBudgetGuard {
     fn drop(&mut self) {
-        LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.set(self.0));
+        crate::utils::test_tls::cell_set(&LAZY_WALK_BUDGET_OVERRIDE, self.0);
     }
 }
 
@@ -145,7 +154,11 @@ impl Drop for LazyWalkBudgetGuard {
 /// thread so small books exercise the bulk continuation.
 #[cfg(test)]
 pub(crate) fn override_lazy_walk_budget(budget: u64) -> LazyWalkBudgetGuard {
-    LazyWalkBudgetGuard(LAZY_WALK_BUDGET_OVERRIDE.with(|cell| cell.replace(Some(budget))))
+    LazyWalkBudgetGuard(crate::utils::test_tls::cell_replace(
+        &LAZY_WALK_BUDGET_OVERRIDE,
+        Some(budget),
+        None,
+    ))
 }
 
 /// Counts one more parked maker for the fill-or-kill park-set preflight
@@ -174,6 +187,114 @@ fn replenish_counter_failure(price: u128) -> PriceLevelError {
         message: format!(
             "price level {price} replenish counter transition refused after the queue commit; level poisoned — reconstruct it from a snapshot"
         ),
+    }
+}
+
+/// Error for a level quantity counter that refused a checked decrement
+/// after the queue mutation it describes was committed (pre-release
+/// hardening; replaces a wrapping `fetch_sub`). The counter already held
+/// less than the orders it covers, so the level has been poisoned.
+#[cold]
+#[inline(never)]
+fn counter_transition_failure(price: u128, counter: &'static str) -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: format!(
+            "price level {price} {counter} counter refused a decrement for a committed queue mutation; level poisoned — reconstruct it from a snapshot"
+        ),
+    }
+}
+
+/// Checked `-= delta` on a level quantity counter (pre-release hardening).
+/// Returns `false`, leaving the counter unchanged, when it holds less than
+/// `delta`: only possible once the counter already disagrees with the queue.
+/// Never wraps and never saturates. `Relaxed`, like every other RMW on these
+/// advisory counters (issue #68).
+#[inline]
+fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+            c.checked_sub(delta)
+        })
+        .is_ok()
+}
+
+/// Events raised by [`PriceLevel::add_order`] / [`PriceLevel::update_order`]
+/// while they hold the fill-or-kill guard's shared side, emitted only after
+/// that guard is released (pre-release hardening, following issue #172).
+///
+/// `tracing` dispatches synchronously into the process-installed subscriber,
+/// which is caller code; emitting under the guard would let a slow or
+/// re-entrant subscriber stall a queued fill-or-kill writer (or deadlock on
+/// re-entry). Each slot keeps the first event of its kind; a single call
+/// raises at most one of each. Holds no allocation of its own.
+#[derive(Default)]
+struct DeferredEvents {
+    /// First order-event statistics drop (`WARN`).
+    stats_drop: Option<PriceLevelError>,
+    /// A removal refused before any mutation (`WARN`), with the returned
+    /// error.
+    removal_refused: Option<(Id, PriceLevelError)>,
+    /// A post-removal topology release failure (`ERROR`), with the returned
+    /// error.
+    removal_release_failed: Option<(Id, PriceLevelError)>,
+    /// An update's partial-reservation rollback failed and this call
+    /// poisoned the level (`ERROR`).
+    update_rollback_failed: Option<Id>,
+    /// A level quantity counter refused a checked decrement (`ERROR`): the
+    /// counter name and the order id.
+    counter_refused: Option<(&'static str, Id)>,
+}
+
+impl DeferredEvents {
+    /// Records a refused counter decrement, keeping the first.
+    #[cold]
+    fn note_counter_refused(&mut self, counter: &'static str, order_id: Id) {
+        if self.counter_refused.is_none() {
+            self.counter_refused = Some((counter, order_id));
+        }
+    }
+
+    /// Emits every recorded event. Call only after the fill-or-kill guard
+    /// has been dropped.
+    fn emit(self, price: u128) {
+        if let Some((order_id, err)) = self.removal_refused {
+            tracing::warn!(
+                price,
+                order_id = %order_id,
+                error = %err,
+                "removal rejected before mutation: resting-order count disagrees with the queue"
+            );
+        }
+        if let Some((counter, order_id)) = self.counter_refused {
+            tracing::error!(
+                price,
+                order_id = %order_id,
+                counter,
+                "level quantity counter refused a checked decrement (it already disagreed with the queue); level poisoned — reconstruct it from a snapshot"
+            );
+        }
+        if let Some((order_id, err)) = self.removal_release_failed {
+            tracing::error!(
+                price,
+                order_id = %order_id,
+                error = %err,
+                "resting-order count underflow after a committed removal; level poisoned — reconstruct it from a snapshot"
+            );
+        }
+        if let Some(order_id) = self.update_rollback_failed {
+            tracing::error!(
+                price,
+                order_id = %order_id,
+                "update counter rollback failed; level poisoned — reconstruct it from a snapshot"
+            );
+        }
+        if let Some(err) = self.stats_drop {
+            tracing::warn!(
+                price,
+                error = %err,
+                "order-event statistic not recorded (counter exhausted); level stats marked degraded, mutation unaffected"
+            );
+        }
     }
 }
 
@@ -299,7 +420,7 @@ thread_local! {
 /// #130). Returns a guard that clears the hook on drop.
 #[cfg(test)]
 pub(crate) fn set_post_only_decision_hook(hook: Box<dyn FnMut()>) -> PostOnlyHookGuard {
-    POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&POST_ONLY_DECISION_HOOK, Some(hook));
     PostOnlyHookGuard
 }
 
@@ -310,7 +431,7 @@ pub(crate) struct PostOnlyHookGuard;
 #[cfg(test)]
 impl Drop for PostOnlyHookGuard {
     fn drop(&mut self) {
-        POST_ONLY_DECISION_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&POST_ONLY_DECISION_HOOK, None);
     }
 }
 
@@ -333,7 +454,7 @@ pub(crate) struct SweepStartHookGuard;
 #[cfg(test)]
 impl Drop for SweepStartHookGuard {
     fn drop(&mut self) {
-        SWEEP_START_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&SWEEP_START_HOOK, None);
     }
 }
 
@@ -341,14 +462,14 @@ impl Drop for SweepStartHookGuard {
 /// (test seam, issue #164).
 #[cfg(test)]
 pub(crate) fn set_sweep_start_hook(hook: Box<dyn FnMut()>) -> SweepStartHookGuard {
-    SWEEP_START_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&SWEEP_START_HOOK, Some(hook));
     SweepStartHookGuard
 }
 
 /// Fire (and consume) the sweep-start hook if one is installed.
 #[cfg(test)]
 fn fire_sweep_start_hook() {
-    let hook = SWEEP_START_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&SWEEP_START_HOOK);
     if let Some(mut hook) = hook {
         hook();
     }
@@ -373,7 +494,7 @@ pub(crate) struct PreFokLockHookGuard;
 #[cfg(test)]
 impl Drop for PreFokLockHookGuard {
     fn drop(&mut self) {
-        PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&PRE_FOK_LOCK_HOOK, None);
     }
 }
 
@@ -381,14 +502,14 @@ impl Drop for PreFokLockHookGuard {
 /// fill-or-kill taker acquires the exclusive guard (test seam, issue #164).
 #[cfg(test)]
 pub(crate) fn set_pre_fok_lock_hook(hook: Box<dyn FnMut()>) -> PreFokLockHookGuard {
-    PRE_FOK_LOCK_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&PRE_FOK_LOCK_HOOK, Some(hook));
     PreFokLockHookGuard
 }
 
 /// Fire (and consume) the pre-fill-or-kill-lock hook if one is installed.
 #[cfg(test)]
 fn fire_pre_fok_lock_hook() {
-    let hook = PRE_FOK_LOCK_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&PRE_FOK_LOCK_HOOK);
     if let Some(mut hook) = hook {
         hook();
     }
@@ -413,7 +534,7 @@ pub(crate) struct FokLockedHookGuard;
 #[cfg(test)]
 impl Drop for FokLockedHookGuard {
     fn drop(&mut self) {
-        FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&FOK_LOCKED_HOOK, None);
     }
 }
 
@@ -421,22 +542,17 @@ impl Drop for FokLockedHookGuard {
 /// thread holds the exclusive guard (test seam, issue #206).
 #[cfg(test)]
 pub(crate) fn set_fok_locked_hook(hook: Box<dyn FnMut()>) -> FokLockedHookGuard {
-    FOK_LOCKED_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&FOK_LOCKED_HOOK, Some(hook));
     FokLockedHookGuard
 }
 
 /// Fire the fill-or-kill-locked hook, if installed, and keep it installed.
 #[cfg(test)]
 fn fire_fok_locked_hook() {
-    let hook = FOK_LOCKED_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&FOK_LOCKED_HOOK);
     if let Some(mut hook) = hook {
         hook();
-        FOK_LOCKED_HOOK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
-        });
+        crate::utils::test_tls::slot_restore(&FOK_LOCKED_HOOK, hook);
     }
 }
 
@@ -445,15 +561,10 @@ fn fire_fok_locked_hook() {
 fn fire_post_only_decision_hook() {
     // Take the hook OUT of the slot while firing so a re-entrant `match_order`
     // inside the hook does not double-borrow the `RefCell`.
-    let hook = POST_ONLY_DECISION_HOOK.with(|slot| slot.borrow_mut().take());
+    let hook = crate::utils::test_tls::slot_take(&POST_ONLY_DECISION_HOOK);
     if let Some(mut hook) = hook {
         hook();
-        POST_ONLY_DECISION_HOOK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
-        });
+        crate::utils::test_tls::slot_restore(&POST_ONLY_DECISION_HOOK, hook);
     }
 }
 
@@ -476,11 +587,7 @@ thread_local! {
 /// (test seam, issue #163). Returns a guard that clears the hook on drop.
 #[cfg(test)]
 pub(crate) fn set_update_decision_hook(hook: UpdateDecisionHook) -> UpdateDecisionHookGuard {
-    UPDATE_DECISION_HOOK.with(|slot| {
-        if let Ok(mut slot) = slot.try_borrow_mut() {
-            *slot = Some(hook);
-        }
-    });
+    crate::utils::test_tls::slot_set(&UPDATE_DECISION_HOOK, Some(hook));
     UpdateDecisionHookGuard
 }
 
@@ -491,11 +598,7 @@ pub(crate) struct UpdateDecisionHookGuard;
 #[cfg(test)]
 impl Drop for UpdateDecisionHookGuard {
     fn drop(&mut self) {
-        UPDATE_DECISION_HOOK.with(|slot| {
-            if let Ok(mut slot) = slot.try_borrow_mut() {
-                *slot = None;
-            }
-        });
+        crate::utils::test_tls::slot_set(&UPDATE_DECISION_HOOK, None);
     }
 }
 
@@ -504,18 +607,11 @@ impl Drop for UpdateDecisionHookGuard {
 /// re-entrant update inside the hook) is treated as "no hook".
 #[cfg(test)]
 fn apply_update_decision_hook(order: Arc<OrderType<()>>) -> Arc<OrderType<()>> {
-    let hook =
-        UPDATE_DECISION_HOOK.with(|slot| slot.try_borrow_mut().ok().and_then(|mut s| s.take()));
+    let hook = crate::utils::test_tls::slot_take(&UPDATE_DECISION_HOOK);
     match hook {
         Some(mut hook) => {
             let rewritten = hook(order);
-            UPDATE_DECISION_HOOK.with(|slot| {
-                if let Ok(mut slot) = slot.try_borrow_mut()
-                    && slot.is_none()
-                {
-                    *slot = Some(hook);
-                }
-            });
+            crate::utils::test_tls::slot_restore(&UPDATE_DECISION_HOOK, hook);
             rewritten
         }
         None => order,
@@ -846,7 +942,7 @@ thread_local! {
 /// call. A flag, not a counter, so the probe does no arithmetic.
 #[cfg(test)]
 pub(crate) fn test_take_tail_revisited() -> bool {
-    DRY_RUN_TAIL_REVISITED.with(|cell| cell.replace(false))
+    crate::utils::test_tls::cell_replace(&DRY_RUN_TAIL_REVISITED, false, false)
 }
 
 /// Terminal epoch value (issue #165): an epoch never moves past it, and a
@@ -1317,6 +1413,36 @@ impl PriceLevel {
         topology::count(self.topology.load(Ordering::Acquire)) != 0
     }
 
+    /// Handles a level quantity counter that refused a checked decrement in
+    /// the match sweep (pre-release hardening; replaces a wrapping
+    /// `fetch_sub`). The counter already disagreed with the queue, so the
+    /// level is poisoned, the refusal is logged at `ERROR` and the sweep is
+    /// told to stop with the committed prefix (unless an earlier stop cause is
+    /// already set). Called after the step's entry lock is released; for a
+    /// `Fok` taker the fill-or-kill write guard is still held, like every
+    /// other sweep event (see `doc/panic-boundaries.md`).
+    #[cold]
+    #[inline(never)]
+    fn counter_refused_in_sweep(
+        &self,
+        counter: &'static str,
+        taker_order_id: Id,
+        maker_order_id: Id,
+        sweep_error: &mut Option<(PriceLevelError, Option<Trade>)>,
+    ) {
+        self.trip_poison();
+        tracing::error!(
+            price = self.price,
+            taker_order_id = %taker_order_id,
+            maker_order_id = %maker_order_id,
+            counter,
+            "match sweep: level quantity counter refused a checked decrement (it already disagreed with the queue); level poisoned — reconstruct it from a snapshot"
+        );
+        if sweep_error.is_none() {
+            *sweep_error = Some((counter_transition_failure(self.price, counter), None));
+        }
+    }
+
     /// Commit the topology release for an order this call already removed
     /// from the queue (issue #163), bumping the topology epoch on an un-pin.
     ///
@@ -1484,19 +1610,6 @@ impl PriceLevel {
         }
     }
 
-    /// Log an order-event statistics drop reported by
-    /// [`Self::record_order_event`]. `WARN`: the mutation committed; only the
-    /// advisory counter is saturated, and the sticky degraded flag records it.
-    #[cold]
-    #[inline(never)]
-    fn warn_order_event_dropped(&self, err: &PriceLevelError) {
-        tracing::warn!(
-            price = self.price,
-            error = %err,
-            "order-event statistic not recorded (counter exhausted); level stats marked degraded, mutation unaffected"
-        );
-    }
-
     /// Returns `true` if `orders` is empty or every order shares one side — the
     /// single-side coherence [`Self::from_snapshot`] requires. Used as the
     /// termination backstop for `snapshot`'s torn-topology retry (issue #126).
@@ -1623,6 +1736,25 @@ impl PriceLevel {
             topology::pack(tag, count & topology::COUNT_MASK),
             Ordering::Release,
         );
+    }
+
+    /// Whether the fill-or-kill guard is currently unheld (pre-release
+    /// hardening test seam): lets a test subscriber check that an event is
+    /// emitted after the guard was released.
+    #[cfg(all(test, not(loom)))]
+    #[must_use]
+    pub(crate) fn test_fok_unheld(&self) -> bool {
+        self.fok_guard.test_is_unheld()
+    }
+
+    /// Overwrite the visible / hidden quantity counters (pre-release
+    /// hardening test seam), so a test can make a counter hold less than the
+    /// orders it covers and exercise the checked decrements. The queue and
+    /// topology word are left untouched.
+    #[cfg(test)]
+    pub(crate) fn test_store_quantity_counters(&self, visible: u64, hidden: u64) {
+        self.visible_quantity.store(visible, Ordering::Relaxed);
+        self.hidden_quantity.store(hidden, Ordering::Relaxed);
     }
 
     /// Raw resting-order count from the topology word (issue #163 test seam).
@@ -1780,11 +1912,41 @@ impl PriceLevel {
     /// the order is admitted, the counter stays at `usize::MAX`, and the
     /// statistics are marked degraded (see
     /// [`PriceLevelStatistics::record_order_added`]).
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (the statistics-drop `WARN`, a refused
+    /// counter rollback `ERROR`) is emitted after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     pub fn add_order(&self, order: OrderType<()>) -> Result<Arc<OrderType<()>>, PriceLevelError> {
-        // Hold the fill-or-kill guard's shared side for this admission so a
-        // concurrent fill-or-kill match sees a stable depth (issue #112). This
-        // is an uncontended shared acquisition in the common case (no FOK).
-        let _fok = self.fok_read();
+        let mut events = DeferredEvents::default();
+        let result = {
+            // Hold the fill-or-kill guard's shared side for this admission so
+            // a concurrent fill-or-kill match sees a stable depth (issue
+            // #112). This is an uncontended shared acquisition in the common
+            // case (no FOK).
+            let _fok = self.fok_read();
+            self.add_order_guarded(order, &mut events)
+        };
+        // Events are emitted only after the guard is released (pre-release
+        // hardening, following #172).
+        events.emit(self.price);
+        result
+    }
+
+    /// Body of [`Self::add_order`], run while the caller holds the
+    /// fill-or-kill guard's shared side. Emits no event: anything to log is
+    /// recorded in `events` for the caller to emit after the guard drops.
+    fn add_order_guarded(
+        &self,
+        order: OrderType<()>,
+        events: &mut DeferredEvents,
+    ) -> Result<Arc<OrderType<()>>, PriceLevelError> {
         // Fail fast if a prior panic poisoned the guard (or this very acquisition
         // just recovered one): the level may be half-mutated (issue #130).
         self.poison_check()?;
@@ -1872,6 +2034,7 @@ impl PriceLevel {
         // after rolling back the visible + hidden reservations this call made
         // (a commutative, concurrency-safe undo), leaving the topology word
         // untouched and `try_push_with` publishing nothing.
+        let order_id = order.id();
         let order_arc = Arc::new(order);
         self.orders.try_push_with(order_arc.clone(), || {
             if self
@@ -1909,9 +2072,15 @@ impl PriceLevel {
                     })
                     .is_err()
             {
-                // Roll back the visible reservation this call made.
-                self.visible_quantity
-                    .fetch_sub(visible_qty, Ordering::Relaxed);
+                // Roll back the visible reservation this call made. Checked
+                // (pre-release hardening): a refusal means the counter already
+                // disagreed with the queue, so the level is poisoned (an
+                // atomic flag, no event under the shard lock) and the ERROR is
+                // emitted by `add_order` after every lock is released.
+                if !checked_counter_sub(&self.visible_quantity, visible_qty) {
+                    self.trip_poison();
+                    events.note_counter_refused("visible", order_id);
+                }
                 return Err(PriceLevelError::InvalidOperation {
                     message: "price level hidden quantity overflow on admission".to_string(),
                 });
@@ -1933,13 +2102,16 @@ impl PriceLevel {
                 Err(err) => {
                     // Roll back the visible + hidden reservations this call made;
                     // the topology word was not mutated (pin goes last).
-                    self.visible_quantity
-                        .fetch_sub(visible_qty, Ordering::Relaxed);
+                    // Checked, with the same refusal handling as above.
+                    if !checked_counter_sub(&self.visible_quantity, visible_qty) {
+                        self.trip_poison();
+                        events.note_counter_refused("visible", order_id);
+                    }
                     // A zero hidden delta was never reserved above (issue
                     // #145), so there is nothing to undo; skip the no-op RMW.
-                    if hidden_qty != 0 {
-                        self.hidden_quantity
-                            .fetch_sub(hidden_qty, Ordering::Relaxed);
+                    if hidden_qty != 0 && !checked_counter_sub(&self.hidden_quantity, hidden_qty) {
+                        self.trip_poison();
+                        events.note_counter_refused("hidden", order_id);
                     }
                     return Err(err);
                 }
@@ -1955,12 +2127,10 @@ impl PriceLevel {
         // Update statistics only after a committed admission. The admission
         // stands even if the advisory `orders_added` counter is exhausted: the
         // statistics refuse to wrap it and mark themselves degraded (issue
-        // #165), and the first such drop is logged after all bookkeeping.
-        if let Some(err) =
-            self.record_order_event(PriceLevelStatistics::record_order_added_reporting)
-        {
-            self.warn_order_event_dropped(&err);
-        }
+        // #165), and the first such drop is logged by `add_order` after all
+        // bookkeeping and after the fill-or-kill guard is released.
+        events.stats_drop =
+            self.record_order_event(PriceLevelStatistics::record_order_added_reporting);
 
         Ok(order_arc)
     }
@@ -2280,7 +2450,7 @@ impl PriceLevel {
                 &resting_order
             } else if let Some(requeued) = tail.pop_front() {
                 #[cfg(test)]
-                DRY_RUN_TAIL_REVISITED.with(|cell| cell.set(true));
+                crate::utils::test_tls::cell_set(&DRY_RUN_TAIL_REVISITED, true);
                 residual = requeued;
                 &residual
             } else {
@@ -3121,6 +3291,12 @@ impl PriceLevel {
             /// step emits a trade. Reserved under the entry lock BEFORE the
             /// maker mutation is committed.
             trade_seq: Option<u64>,
+            /// `true` when the replenish path's in-lock hidden decrement was
+            /// refused (pre-release hardening): the hidden counter already
+            /// held less than this maker's hidden depth. The level was poisoned
+            /// inside the closure (an atomic flag, no event); the post-lock body
+            /// logs and stops the sweep with the committed prefix.
+            hidden_counter_refused: bool,
         }
 
         // Either the maker progressed (carrying `StepData`), was parked
@@ -3386,6 +3562,7 @@ impl PriceLevel {
                 // wrap). `counters_committed` tells the post-lock body to skip
                 // re-applying this step's deltas so the counters move exactly once.
                 let mut counters_committed = false;
+                let mut hidden_counter_refused = false;
                 let action = match updated_order {
                     None => FrontAction::Remove,
                     Some(updated) => {
@@ -3428,8 +3605,17 @@ impl PriceLevel {
                             if !net_ok {
                                 return (FrontAction::SetAside, StepResult::Abort { maker_id });
                             }
-                            self.hidden_quantity
-                                .fetch_sub(hidden_reduced, Ordering::Relaxed);
+                            // Checked (pre-release hardening): the maker's
+                            // hidden depth is covered by the counter, so a
+                            // refusal means the counter already disagreed with
+                            // the queue. The visible half is committed and the
+                            // step proceeds; the level is poisoned here (no
+                            // event under the entry lock) and the sweep stops
+                            // after this step's bookkeeping.
+                            if !checked_counter_sub(&self.hidden_quantity, hidden_reduced) {
+                                self.trip_poison();
+                                hidden_counter_refused = true;
+                            }
                             counters_committed = true;
                             // Refreshed tranche loses priority.
                             FrontAction::ReplaceAtTail(Arc::new(updated), reserved)
@@ -3452,6 +3638,7 @@ impl PriceLevel {
                     new_remaining,
                     counters_committed,
                     trade_seq,
+                    hidden_counter_refused,
                 };
 
                 (action, StepResult::Progressed(data))
@@ -3606,9 +3793,20 @@ impl PriceLevel {
                         // Skipped for a replenish step: its visible net delta
                         // (already including `- consumed`) was applied under the
                         // entry lock in the decision closure (issue #128).
-                        if !data.counters_committed {
-                            self.visible_quantity
-                                .fetch_sub(data.consumed, Ordering::Relaxed);
+                        //
+                        // Checked (pre-release hardening): the consumed units
+                        // are covered by the counter, so a refusal means it
+                        // already disagreed with the queue; the level is
+                        // poisoned and the sweep stops after this step.
+                        if !data.counters_committed
+                            && !checked_counter_sub(&self.visible_quantity, data.consumed)
+                        {
+                            self.counter_refused_in_sweep(
+                                "visible",
+                                taker_order_id,
+                                data.maker_id,
+                                &mut sweep_error,
+                            );
                         }
 
                         // The id was reserved under the entry lock before the
@@ -3696,9 +3894,15 @@ impl PriceLevel {
                         {
                             sweep_error = Some((err, None));
                         }
-                        if data.hidden_stranded > 0 {
-                            self.hidden_quantity
-                                .fetch_sub(data.hidden_stranded, Ordering::Relaxed);
+                        if data.hidden_stranded > 0
+                            && !checked_counter_sub(&self.hidden_quantity, data.hidden_stranded)
+                        {
+                            self.counter_refused_in_sweep(
+                                "hidden",
+                                taker_order_id,
+                                data.maker_id,
+                                &mut sweep_error,
+                            );
                         }
                     } else if data.hidden_reduced > 0 && !data.counters_committed {
                         // Replenishment: a fresh tranche moved from hidden into
@@ -3769,6 +3973,18 @@ impl PriceLevel {
                     // Pure partial fill (KeepInPlace, hidden_reduced == 0):
                     // visible already decremented by `consumed` above; the maker
                     // stays resident with its residual. Nothing else to do.
+
+                    if data.hidden_counter_refused {
+                        // The replenish path's in-lock hidden decrement was
+                        // refused (the level is already poisoned); reported
+                        // here, after the entry lock.
+                        self.counter_refused_in_sweep(
+                            "hidden",
+                            taker_order_id,
+                            data.maker_id,
+                            &mut sweep_error,
+                        );
+                    }
 
                     if let Some(err) = stats_drop {
                         // WARN, not ERROR: the match is not aborted — this is a
@@ -3899,22 +4115,81 @@ impl PriceLevel {
     /// [`CapacityResource::OrderSnapshot`]) at once, without recollecting, if
     /// the orders vector cannot be reserved (issue #164). The level is left
     /// unchanged.
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (one `DEBUG` per rejected walk, the
+    /// attempts-exhausted `WARN`) is emitted after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     pub fn snapshot(&self) -> Result<PriceLevelSnapshot, PriceLevelError> {
-        // Hold the fill-or-kill guard's SHARED side across every attempt (issue
-        // #130) so a snapshot can never capture a multi-maker fill-or-kill
-        // mid-transaction: the FOK holds the EXCLUSIVE side across its dry-run and
-        // sweep, so this read waits for it to fully commit or is excluded before
-        // it starts — the snapshot sees the pre- or post-FOK state, never a
-        // partial sweep. Ordinary mutators (`add_order` / `update_order`) also
-        // take the shared side, so they run concurrently with this read (read vs
-        // read) and are handled by the bounded recollection below.
-        // `snapshot` intentionally does NOT poison-check: it stays available on a
-        // poisoned level for diagnostics / reconstruction.
-        let _fok = self.fok_read();
+        // Per-attempt rejection reasons, recorded under the guard and logged
+        // after it is released (pre-release hardening, following #172). A
+        // fixed array: no allocation, one slot per bounded attempt.
+        let mut rejections: SnapshotRejections = Default::default();
+        let outcome = {
+            // Hold the fill-or-kill guard's SHARED side across every attempt
+            // (issue #130) so a snapshot can never capture a multi-maker
+            // fill-or-kill mid-transaction: the FOK holds the EXCLUSIVE side
+            // across its dry-run and sweep, so this read waits for it to fully
+            // commit or is excluded before it starts — the snapshot sees the
+            // pre- or post-FOK state, never a partial sweep. Ordinary mutators
+            // (`add_order` / `update_order`) also take the shared side, so they
+            // run concurrently with this read (read vs read) and are handled by
+            // the bounded recollection. `snapshot` intentionally does NOT
+            // poison-check: it stays available on a poisoned level for
+            // diagnostics / reconstruction.
+            let _fok = self.fok_read();
+            self.snapshot_attempts(&mut rejections)
+        };
 
+        // Guard released: report the rejected walks, then the outcome.
         let mut last_rejection: Option<PriceLevelError> = None;
+        for (attempt, rejection) in (1..=SNAPSHOT_MAX_ATTEMPTS).zip(rejections) {
+            if let Some(err) = rejection {
+                tracing::debug!(
+                    price = self.price,
+                    attempt,
+                    error = %err,
+                    "snapshot walk rejected (mixed-side view across a side transition, or aggregates that do not fit u64); recollected"
+                );
+                last_rejection = Some(err);
+            }
+        }
 
-        for attempt in 1..=SNAPSHOT_MAX_ATTEMPTS {
+        match outcome {
+            Ok(Some(snapshot)) => Ok(snapshot),
+            Err(err) => Err(err),
+            Ok(None) => {
+                let err = snapshot_attempts_exhausted(self.price, last_rejection);
+                tracing::warn!(
+                    price = self.price,
+                    attempts = SNAPSHOT_MAX_ATTEMPTS,
+                    error = %err,
+                    "snapshot could not collect a coherent view; level unchanged"
+                );
+                Err(err)
+            }
+        }
+    }
+
+    /// The bounded recollection loop of [`Self::snapshot`], run while the
+    /// caller holds the fill-or-kill guard's shared side. Emits no event:
+    /// each rejected attempt's reason is stored in its `rejections` slot.
+    ///
+    /// Returns `Ok(Some(_))` for a coherent snapshot, `Ok(None)` when every
+    /// attempt was rejected, and `Err` for a refused reservation (returned at
+    /// once, not recollected).
+    fn snapshot_attempts(
+        &self,
+        rejections: &mut SnapshotRejections,
+    ) -> Result<Option<PriceLevelSnapshot>, PriceLevelError> {
+        // Bounded by both the attempt limit and the slot count (kept equal).
+        for (rejection, _attempt) in rejections.iter_mut().zip(1..=SNAPSHOT_MAX_ATTEMPTS) {
             #[cfg(test)]
             crate::price_level::order_queue::snapshot_hook::fire(
                 crate::price_level::order_queue::snapshot_hook::SnapshotHookEvent::AttemptStart,
@@ -3943,12 +4218,7 @@ impl PriceLevel {
             // "moved": the structural single-side check then decides.
             let epoch_moved = epoch_before != epoch_after || epoch_before == EPOCH_EXHAUSTED;
             if epoch_moved && !Self::is_single_side(&orders) {
-                tracing::debug!(
-                    price = self.price,
-                    attempt,
-                    "snapshot walk captured a mixed-side view across a side transition; recollecting"
-                );
-                last_rejection = Some(snapshot_mixed_side());
+                *rejection = Some(snapshot_mixed_side());
                 continue;
             }
 
@@ -3966,35 +4236,21 @@ impl PriceLevel {
                     // (best-effort, like every other read path); statistics are
                     // independent counters, not part of the order aggregates
                     // this snapshot guarantees coherent.
-                    return Ok(PriceLevelSnapshot::from_raw_parts_with_stats(
+                    return Ok(Some(PriceLevelSnapshot::from_raw_parts_with_stats(
                         Price::new(self.price),
                         aggregates.visible_quantity,
                         aggregates.hidden_quantity,
                         aggregates.order_count,
                         orders,
                         (*self.stats).clone(),
-                    ));
+                    )));
                 }
                 Err(err) => {
-                    tracing::debug!(
-                        price = self.price,
-                        attempt,
-                        error = %err,
-                        "snapshot walk collected aggregates that do not fit u64; recollecting"
-                    );
-                    last_rejection = Some(err);
+                    *rejection = Some(err);
                 }
             }
         }
-
-        let err = snapshot_attempts_exhausted(self.price, last_rejection);
-        tracing::warn!(
-            price = self.price,
-            attempts = SNAPSHOT_MAX_ATTEMPTS,
-            error = %err,
-            "snapshot could not collect a coherent view; level unchanged"
-        );
-        Err(err)
+        Ok(None)
     }
 
     /// Serialize the current price level state into a checksum-protected snapshot package.
@@ -4098,6 +4354,18 @@ impl PriceLevel {
     /// An exhausted `orders_removed` statistic does NOT fail a committed
     /// removal: the counter stays at `usize::MAX` and the statistics are
     /// marked degraded (see [`PriceLevelStatistics::record_order_removed`]).
+    ///
+    /// # Caller-supplied code: the `tracing` subscriber
+    ///
+    /// Every event this call raises (statistics drop, removal refusal,
+    /// post-removal release failure, counter rollback failure) is emitted
+    /// after
+    /// the fill-or-kill guard's shared side is released, with no `DashMap`
+    /// shard lock held (pre-release hardening, following issue #172). The
+    /// one exception is the poison `ERROR` logged when this call's own
+    /// guard acquisition recovers a poisoned guard. The process-installed
+    /// subscriber must not panic; re-entering this level from one of these
+    /// events is an ordinary, unguarded call. See `doc/panic-boundaries.md`.
     #[must_use = "the updated order (or None when the order is absent) must be handled"]
     pub fn update_order(
         &self,
@@ -4113,14 +4381,32 @@ impl PriceLevel {
         // `read()` with a writer queued between the two acquisitions (the lock
         // is writer-preferring, so the queued writer blocks the second reader)
         // would deadlock against a `fok_write` waiting on the first reader.
-        let _fok = self.fok_read();
+        let mut events = DeferredEvents::default();
+        let result = {
+            let _fok = self.fok_read();
+            self.update_order_guarded(update, &mut events)
+        };
+        // Every event of this call (statistics drop, removal refusal / release
+        // failure, rollback failure) is emitted only after the guard is
+        // released (pre-release hardening, following #172).
+        events.emit(self.price);
+        result
+    }
+
+    /// Body of [`Self::update_order`], run while the caller holds the
+    /// fill-or-kill guard's shared side. Emits no event (see
+    /// [`DeferredEvents`]).
+    fn update_order_guarded(
+        &self,
+        update: OrderUpdate,
+        events: &mut DeferredEvents,
+    ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         // Fail fast on a poisoned level (issue #130).
         self.poison_check()?;
         // Refuse, with nothing touched, when an epoch has no headroom left for
         // this update's bumps (issue #165).
         self.check_epoch_headroom()?;
-        let mut stats_drop = None;
-        let result = self.update_order_inner(update, &mut stats_drop);
+        let result = self.update_order_inner(update, events);
         // A committed mutation (`Ok(Some(_))` — the order was found and
         // cancelled / resized / moved) bumps the mutation epoch so a racing
         // post-only depth scan retries (issue #130). `Ok(None)` (not found) and
@@ -4129,10 +4415,8 @@ impl PriceLevel {
             self.bump_mutation_epoch();
         }
         // An exhausted `orders_removed` statistic never fails the committed
-        // removal (issue #165); its first drop is logged after the bookkeeping.
-        if let Some(err) = stats_drop {
-            self.warn_order_event_dropped(&err);
-        }
+        // removal (issue #165); its first drop is recorded in `events` and
+        // logged by the caller after the guard is released.
         result
     }
 
@@ -4174,21 +4458,23 @@ impl PriceLevel {
     /// post-removal release fails; the removal is then committed, the level
     /// is poisoned (fail fast, reconstruct from a snapshot) and the error is
     /// returned rather than a success.
-    fn remove_resting(&self, order_id: Id) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
+    fn remove_resting(
+        &self,
+        order_id: Id,
+        events: &mut DeferredEvents,
+    ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         let order = match self
             .orders
             .remove_if(order_id, |_resident| self.topology_releasable())
         {
             RemoveOutcome::Absent => return Ok(None),
             RemoveOutcome::Refused => {
-                // Built and logged after the entry lock was released.
+                // Built after the entry lock was released; logged by
+                // `update_order` after the fill-or-kill guard is released.
                 let err = topology_underflow(self.price);
-                tracing::warn!(
-                    price = self.price,
-                    order_id = %order_id,
-                    error = %err,
-                    "removal rejected before mutation: resting-order count disagrees with the queue"
-                );
+                if events.removal_refused.is_none() {
+                    events.removal_refused = Some((order_id, err.clone()));
+                }
                 return Err(err);
             }
             RemoveOutcome::Removed(order) => order,
@@ -4197,21 +4483,41 @@ impl PriceLevel {
         // Update atomic counters from the order actually removed from the
         // queue above. `Relaxed` on both: advisory counters (issue #68); the
         // `OrderQueue::remove` carries the happens-before, not these counters.
-        self.visible_quantity
-            .fetch_sub(order.visible_quantity().as_u64(), Ordering::Relaxed);
-        self.hidden_quantity
-            .fetch_sub(order.hidden_quantity().as_u64(), Ordering::Relaxed);
+        // Checked (pre-release hardening): a counter holding less than the
+        // order it covers already disagreed with the queue; the removal
+        // cannot be undone, so the level is poisoned and, after the topology
+        // release below, the typed error is returned instead of a success.
+        let mut counter_refused = None;
+        if !checked_counter_sub(&self.visible_quantity, order.visible_quantity().as_u64()) {
+            counter_refused = Some("visible");
+        }
+        if !checked_counter_sub(&self.hidden_quantity, order.hidden_quantity().as_u64()) {
+            counter_refused = counter_refused.or(Some("hidden"));
+        }
 
         // Decrement the count and un-pin if this drained the level (issue
         // #126); the `remove` above happened-before.
         if let Err(err) = self.release_after_removal() {
-            tracing::error!(
-                price = self.price,
-                order_id = %order_id,
-                error = %err,
-                "resting-order count underflow after a committed removal; level poisoned — reconstruct it from a snapshot"
-            );
+            // The removal committed even though an error is returned, so the
+            // mutation epoch still moves: `update_order_guarded` bumps only on
+            // `Ok(Some(_))`, and a racing post-only scan must not accept a
+            // queue view that straddles this removal (issue #130).
+            self.bump_mutation_epoch();
+            if let Some(counter) = counter_refused {
+                self.trip_poison();
+                events.note_counter_refused(counter, order_id);
+            }
+            if events.removal_release_failed.is_none() {
+                events.removal_release_failed = Some((order_id, err.clone()));
+            }
             return Err(err);
+        }
+        if let Some(counter) = counter_refused {
+            // Committed removal: move the mutation epoch as above.
+            self.bump_mutation_epoch();
+            self.trip_poison();
+            events.note_counter_refused(counter, order_id);
+            return Err(counter_transition_failure(self.price, counter));
         }
 
         Ok(Some(order))
@@ -4225,12 +4531,13 @@ impl PriceLevel {
     /// without taking a second, non-reentrant [`std::sync::RwLock`] read
     /// (issue #112).
     ///
-    /// `stats_drop` receives the first order-event statistics drop (issue
-    /// #165) so the caller logs it after its own bookkeeping.
+    /// `events` receives the first order-event statistics drop (issue #165)
+    /// and every other event of the call, so [`Self::update_order`] logs them
+    /// after releasing the fill-or-kill guard.
     fn update_order_inner(
         &self,
         update: OrderUpdate,
-        stats_drop: &mut Option<PriceLevelError>,
+        events: &mut DeferredEvents,
     ) -> Result<Option<Arc<OrderType<()>>>, PriceLevelError> {
         match update {
             OrderUpdate::UpdatePrice {
@@ -4241,12 +4548,12 @@ impl PriceLevel {
                 // So we remove it from this level and return it for re-insertion elsewhere
                 if new_price != Price::new(self.price) {
                     // Validated, removed and released as one unit (issue #163).
-                    let order = self.remove_resting(order_id)?;
+                    let order = self.remove_resting(order_id, events)?;
 
                     if order.is_some() {
                         // Update statistics (checked, issue #165).
-                        if stats_drop.is_none() {
-                            *stats_drop = self.record_order_event(
+                        if events.stats_drop.is_none() {
+                            events.stats_drop = self.record_order_event(
                                 PriceLevelStatistics::record_order_removed_reporting,
                             );
                         } else {
@@ -4366,13 +4673,10 @@ impl PriceLevel {
                     // the counters no longer describe the queue. Unreachable while
                     // every counter covers its resting orders (see
                     // `UpdatePlan::reserve`); fail fast rather than report a clean
-                    // rejection (issue #163). Logged here, after the entry lock.
-                    if self.trip_poison() {
-                        tracing::error!(
-                            price = self.price,
-                            order_id = %order_id,
-                            "update counter rollback failed; level poisoned — reconstruct it from a snapshot"
-                        );
+                    // rejection (issue #163). Logged by `update_order` after the
+                    // entry lock and the fill-or-kill guard are released.
+                    if self.trip_poison() && events.update_rollback_failed.is_none() {
+                        events.update_rollback_failed = Some(order_id);
                     }
                 }
 
@@ -4390,12 +4694,12 @@ impl PriceLevel {
                 // If price changes, remove the order and let the order book handle re-insertion
                 if new_price != Price::new(self.price) {
                     // Validated, removed and released as one unit (issue #163).
-                    let order = self.remove_resting(order_id)?;
+                    let order = self.remove_resting(order_id, events)?;
 
                     if order.is_some() {
                         // Update statistics (checked, issue #165).
-                        if stats_drop.is_none() {
-                            *stats_drop = self.record_order_event(
+                        if events.stats_drop.is_none() {
+                            events.stats_drop = self.record_order_event(
                                 PriceLevelStatistics::record_order_removed_reporting,
                             );
                         } else {
@@ -4415,7 +4719,7 @@ impl PriceLevel {
                             order_id,
                             new_quantity,
                         },
-                        stats_drop,
+                        events,
                     )
                 }
             }
@@ -4423,12 +4727,12 @@ impl PriceLevel {
             OrderUpdate::Cancel { order_id } => {
                 // Remove the order: validated, removed and released as one
                 // unit (issue #163).
-                let order = self.remove_resting(order_id)?;
+                let order = self.remove_resting(order_id, events)?;
 
                 if order.is_some() {
                     // Update statistics (checked, issue #165).
-                    if stats_drop.is_none() {
-                        *stats_drop = self.record_order_event(
+                    if events.stats_drop.is_none() {
+                        events.stats_drop = self.record_order_event(
                             PriceLevelStatistics::record_order_removed_reporting,
                         );
                     } else {
@@ -4451,12 +4755,12 @@ impl PriceLevel {
                 if price != Price::new(self.price) {
                     // If price is different, remove the order and let order book handle re-insertion
                     // Validated, removed and released as one unit (issue #163).
-                    let order = self.remove_resting(order_id)?;
+                    let order = self.remove_resting(order_id, events)?;
 
                     if order.is_some() {
                         // Update statistics (checked, issue #165).
-                        if stats_drop.is_none() {
-                            *stats_drop = self.record_order_event(
+                        if events.stats_drop.is_none() {
+                            events.stats_drop = self.record_order_event(
                                 PriceLevelStatistics::record_order_removed_reporting,
                             );
                         } else {
@@ -4477,7 +4781,7 @@ impl PriceLevel {
                             order_id,
                             new_quantity: quantity,
                         },
-                        stats_drop,
+                        events,
                     )
                 }
             }

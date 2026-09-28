@@ -103,32 +103,38 @@ pub(crate) struct HandoffYieldsGuard(Option<u32>);
 #[cfg(test)]
 impl Drop for HandoffYieldsGuard {
     fn drop(&mut self) {
-        HANDOFF_YIELDS_OVERRIDE.with(|cell| cell.set(self.0));
+        let _ = HANDOFF_YIELDS_OVERRIDE.try_with(|cell| cell.set(self.0));
     }
 }
 
 /// Override the hand-off yield budget on the calling thread (test seam).
 #[cfg(test)]
 pub(crate) fn override_handoff_yields(yields: u32) -> HandoffYieldsGuard {
-    HandoffYieldsGuard(HANDOFF_YIELDS_OVERRIDE.with(|cell| cell.replace(Some(yields))))
+    HandoffYieldsGuard(
+        HANDOFF_YIELDS_OVERRIDE
+            .try_with(|cell| cell.replace(Some(yields)))
+            .unwrap_or(None),
+    )
 }
 
 /// The calling thread's hand-off tally `(waited, exhausted)` (test seam).
 #[cfg(test)]
 pub(crate) fn handoff_tally() -> (u64, u64) {
-    HANDOFF_TALLY.with(std::cell::Cell::get)
+    HANDOFF_TALLY
+        .try_with(std::cell::Cell::get)
+        .unwrap_or((0, 0))
 }
 
 /// Announcements the calling thread has made (test seam).
 #[cfg(test)]
 pub(crate) fn announce_tally() -> u64 {
-    ANNOUNCE_TALLY.with(std::cell::Cell::get)
+    ANNOUNCE_TALLY.try_with(std::cell::Cell::get).unwrap_or(0)
 }
 
 #[inline]
 fn handoff_yields() -> u32 {
     #[cfg(test)]
-    if let Some(yields) = HANDOFF_YIELDS_OVERRIDE.with(std::cell::Cell::get) {
+    if let Ok(Some(yields)) = HANDOFF_YIELDS_OVERRIDE.try_with(std::cell::Cell::get) {
         return yields;
     }
     HANDOFF_YIELDS
@@ -156,6 +162,17 @@ impl FokGuard {
 
     /// Acquire the shared (mutator) side, announcing this mutator to a looping
     /// fill-or-kill matcher only when the acquisition would block.
+    ///
+    /// # Re-entrancy
+    ///
+    /// Must not be called by a thread that already holds either side of this
+    /// guard. `std::sync::RwLock` is not re-entrant: a second shared
+    /// acquisition can deadlock behind a queued writer, and taking the
+    /// exclusive side while holding the shared one may deadlock or panic
+    /// (the standard library leaves it unspecified). The level acquires the
+    /// guard exactly once per public call and emits no `tracing` event while
+    /// holding it outside the documented sweep sites, so re-entry can only
+    /// come from caller code (see `doc/panic-boundaries.md`).
     ///
     /// # Errors
     ///
@@ -185,6 +202,11 @@ impl FokGuard {
 
     /// Acquire the exclusive (fill-or-kill) side, first yielding to announced
     /// mutators for a bounded budget.
+    ///
+    /// # Re-entrancy
+    ///
+    /// As for [`Self::read`]: never while the calling thread holds either
+    /// side; `RwLock::write` may deadlock or panic on re-entrant use.
     ///
     /// # Errors
     ///
@@ -227,7 +249,7 @@ impl FokGuard {
     fn hand_off(&self, spins: u32, yields: u32) -> bool {
         let drained = self.wait_rounds(spins, spin_loop) || self.wait_rounds(yields, yield_now);
         #[cfg(test)]
-        HANDOFF_TALLY.with(|cell| {
+        let _ = HANDOFF_TALLY.try_with(|cell| {
             let (waited, exhausted) = cell.get();
             // A tally that would overflow simply stops counting.
             if let (Some(waited), Some(exhausted)) = (
@@ -264,6 +286,15 @@ impl FokGuard {
     pub(crate) fn test_waiting_mutators(&self) -> usize {
         self.waiting_mutators.load(Ordering::SeqCst)
     }
+
+    /// Whether no shared or exclusive holder exists right now (test seam): a
+    /// non-blocking `try_write` that is released at once. `false` too when
+    /// the lock is poisoned.
+    #[cfg(all(test, not(loom)))]
+    #[must_use]
+    pub(crate) fn test_is_unheld(&self) -> bool {
+        self.lock.try_write().is_ok()
+    }
 }
 
 /// One announced mutator; withdrawn on drop, including on unwind.
@@ -287,7 +318,7 @@ impl<'a> Announcement<'a> {
             .is_ok();
         #[cfg(test)]
         if announced {
-            ANNOUNCE_TALLY.with(|cell| {
+            let _ = ANNOUNCE_TALLY.try_with(|cell| {
                 if let Some(next) = cell.get().checked_add(1) {
                     cell.set(next);
                 }

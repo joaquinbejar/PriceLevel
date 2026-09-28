@@ -3,8 +3,9 @@ use crate::orders::{Id, OrderType, Side};
 use crate::price_level::statistics::PriceLevelStatistics;
 use crate::utils::alloc::{
     FallibleWriter, capacity_error, try_copy_str, try_push_vec, try_reserve_exact_vec,
-    try_reserve_set, try_reserve_string, try_reserve_vec,
+    try_reserve_string, try_reserve_vec,
 };
+use crate::utils::dedup::first_repeat_position;
 use crate::utils::text::{Fields, split_exactly_once};
 use crate::utils::{Price, Quantity};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -434,22 +435,23 @@ impl PriceLevelSnapshot {
     /// (issue #150).
     ///
     /// Before #150 restore walked the orders three times (aggregate refresh,
-    /// duplicate ids, topology), each walk returning its first error. Now it
-    /// walks them twice:
+    /// duplicate ids, topology), each walk returning its first error. #150
+    /// fused the last two; the pre-release hardening split them again so the
+    /// duplicate check needs no hasher:
     ///
     /// 1. The allocation-free checked aggregate fold
     ///    ([`SnapshotAggregates::from_orders`]). It runs to completion before
     ///    anything is allocated, so a snapshot rejected here costs no
     ///    scratch memory, whatever the position of the failing order.
-    /// 2. One fused pass over ids and topology, with the duplicate-id set
-    ///    reserved once for the whole vector.
+    /// 2. A hasher-free duplicate scan (the ids copied into one fallibly
+    ///    reserved scratch vector and sorted), then a topology pass.
     ///
     /// The error precedence is the pre-#150 one, unchanged:
     ///
     /// 1. Aggregates (per-order total, then the running visible and hidden
     ///    sums): the first failing order in vector order.
     /// 2. [`PriceLevelError::CapacityExceeded`] (resource
-    ///    [`CapacityResource::RestoreScratch`]) if the duplicate-id set
+    ///    [`CapacityResource::RestoreScratch`]) if the duplicate-id scratch
     ///    cannot be reserved.
     /// 3. [`PriceLevelError::DuplicateOrderId`] for the first id that
     ///    repeats, reported at its second occurrence.
@@ -457,11 +459,10 @@ impl PriceLevelSnapshot {
     ///    or whose side differs from the first order's side (price checked
     ///    before side for the same order).
     ///
-    /// In the fused pass a duplicate is returned at once (nothing left
-    /// outranks it), while a topology violation is recorded and the pass
-    /// keeps checking ids only, so a later duplicate still wins. Duplicates
-    /// are always an error: the queue's keep-first behaviour is never relied
-    /// upon.
+    /// Because the duplicate scan covers the whole vector before topology is
+    /// looked at, a duplicate anywhere wins over a topology violation
+    /// anywhere. Duplicates are always an error: the queue's keep-first
+    /// behaviour is never relied upon.
     ///
     /// # Errors
     ///
@@ -472,45 +473,37 @@ impl PriceLevelSnapshot {
         let aggregates = SnapshotAggregates::from_orders(&self.orders)?;
 
         // Rank 2. Sized by an input-derived length, so reserved fallibly
-        // (issue #164).
-        let mut seen = std::collections::HashSet::new();
-        try_reserve_set(
-            &mut seen,
-            self.orders.len(),
+        // (issue #164). Hasher-free (pre-release hardening): the former
+        // `HashSet` built a `RandomState`, which can panic on OS RNG failure
+        // or during thread-local destruction on some platforms. Sorting the
+        // ids yields the earliest repeat position, which is exactly where the
+        // former left-to-right `insert` walk returned.
+        let first_repeat = first_repeat_position(
+            self.orders.iter().map(|order| order.id()),
             CapacityResource::RestoreScratch,
         )?;
 
-        // Walk 2, ranks 3 and 4.
+        // Rank 3: a duplicate outranks every topology violation.
+        if let Some(order) = first_repeat.and_then(|position| self.orders.get(position)) {
+            return Err(duplicate_id_error(order.id()));
+        }
+
+        // Walk 2, rank 4.
         let level_price = self.price.as_u128();
-        let mut topology_failure: Option<PriceLevelError> = None;
         let mut side: Option<Side> = None;
         for order in &self.orders {
-            if !seen.insert(order.id()) {
-                return Err(duplicate_id_error(order.id()));
-            }
-            // Only the first topology violation is kept.
-            if topology_failure.is_some() {
-                continue;
-            }
             let order_price = order.price().as_u128();
             if order_price != level_price {
-                topology_failure = Some(topology_price_error(order_price, level_price));
-                continue;
+                return Err(topology_price_error(order_price, level_price));
             }
             match side {
                 None => side = Some(order.side()),
                 Some(level_side) if level_side != order.side() => {
-                    topology_failure = Some(topology_side_error(order.side(), level_side));
+                    return Err(topology_side_error(order.side(), level_side));
                 }
                 Some(_) => {}
             }
         }
-        if let Some(error) = topology_failure {
-            return Err(error);
-        }
-        // The scratch set is no longer needed; release it before the caller
-        // builds the queue, lowering the restore's peak memory.
-        drop(seen);
 
         // The statistics are moved, not cloned; restart their private seqlock
         // sequence as the former clone did, so a restore still rebuilds a

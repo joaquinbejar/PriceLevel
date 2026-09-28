@@ -26,18 +26,16 @@ thread_local! {
 
 #[cfg(test)]
 fn record_front_scan_visit() {
-    FRONT_SCAN_VISITS.with(|visits| {
-        if let Some(next) = visits.get().checked_add(1) {
-            visits.set(next);
-        }
-    });
+    if let Some(next) = crate::utils::test_tls::cell_get(&FRONT_SCAN_VISITS, 0).checked_add(1) {
+        crate::utils::test_tls::cell_set(&FRONT_SCAN_VISITS, next);
+    }
 }
 
 /// Test-only: return and reset this thread's `match_front` index-entry visit
 /// count (issue #155).
 #[cfg(test)]
 pub(crate) fn test_take_front_scan_visits() -> u64 {
-    FRONT_SCAN_VISITS.with(|visits| visits.replace(0))
+    crate::utils::test_tls::cell_replace(&FRONT_SCAN_VISITS, 0, 0)
 }
 
 // Deterministic race seam for the cancel gap (issue #155). `remove` fires
@@ -59,7 +57,7 @@ thread_local! {
 /// Returns a guard that clears it on drop.
 #[cfg(test)]
 pub(crate) fn set_remove_gap_hook(hook: RemoveGapHook) -> RemoveGapHookGuard {
-    REMOVE_GAP_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    crate::utils::test_tls::slot_set(&REMOVE_GAP_HOOK, Some(hook));
     RemoveGapHookGuard
 }
 
@@ -70,13 +68,13 @@ pub(crate) struct RemoveGapHookGuard;
 #[cfg(test)]
 impl Drop for RemoveGapHookGuard {
     fn drop(&mut self) {
-        REMOVE_GAP_HOOK.with(|slot| *slot.borrow_mut() = None);
+        crate::utils::test_tls::slot_set(&REMOVE_GAP_HOOK, None);
     }
 }
 
 #[cfg(test)]
 fn fire_remove_gap_hook(order_id: Id) {
-    let hook = REMOVE_GAP_HOOK.with(|slot| slot.borrow().clone());
+    let hook = crate::utils::test_tls::slot_clone(&REMOVE_GAP_HOOK);
     if let Some(hook) = hook {
         hook(order_id);
     }
@@ -251,7 +249,7 @@ thread_local! {
 /// counter, so the probe does no arithmetic.
 #[cfg(test)]
 pub(crate) fn test_take_bulk_switched() -> bool {
-    SEQ_WALK_BULK_SWITCHED.with(|cell| cell.replace(false))
+    crate::utils::test_tls::cell_replace(&SEQ_WALK_BULK_SWITCHED, false, false)
 }
 
 impl SeqWalk<'_> {
@@ -270,7 +268,7 @@ impl SeqWalk<'_> {
         }
         let Some(lazy_left) = self.lazy_left.checked_sub(1) else {
             #[cfg(test)]
-            SEQ_WALK_BULK_SWITCHED.with(|cell| cell.set(true));
+            crate::utils::test_tls::cell_set(&SEQ_WALK_BULK_SWITCHED, true);
             let mut bulk = self.queue.collect_pairs_after(self.last_seq)?.into_iter();
             let first = bulk.next().map(|(_, order)| order);
             self.bulk = Some(bulk);
@@ -314,7 +312,7 @@ pub(crate) struct ParkInlineGuard(bool);
 #[cfg(test)]
 impl Drop for ParkInlineGuard {
     fn drop(&mut self) {
-        PARK_INLINE_DISABLED.with(|cell| cell.set(self.0));
+        crate::utils::test_tls::cell_set(&PARK_INLINE_DISABLED, self.0);
     }
 }
 
@@ -322,12 +320,16 @@ impl Drop for ParkInlineGuard {
 /// guard drops (test seam, issue #164).
 #[cfg(test)]
 pub(crate) fn disable_park_inline_slot() -> ParkInlineGuard {
-    ParkInlineGuard(PARK_INLINE_DISABLED.with(|cell| cell.replace(true)))
+    ParkInlineGuard(crate::utils::test_tls::cell_replace(
+        &PARK_INLINE_DISABLED,
+        true,
+        false,
+    ))
 }
 
 #[cfg(test)]
 fn park_inline_disabled() -> bool {
-    PARK_INLINE_DISABLED.with(std::cell::Cell::get)
+    crate::utils::test_tls::cell_get(&PARK_INLINE_DISABLED, false)
 }
 
 /// The insertion sequences of the makers one match sweep has parked (issue
@@ -1818,11 +1820,7 @@ pub(crate) mod snapshot_hook {
 
     impl Drop for SnapshotHookGuard {
         fn drop(&mut self) {
-            HOOK.with(|slot| {
-                if let Ok(mut slot) = slot.try_borrow_mut() {
-                    *slot = None;
-                }
-            });
+            crate::utils::test_tls::slot_set(&HOOK, None);
         }
     }
 
@@ -1830,18 +1828,14 @@ pub(crate) mod snapshot_hook {
     /// hook stays installed until the returned guard is dropped.
     #[must_use = "the hook is removed when the guard is dropped"]
     pub(crate) fn install(hook: impl FnMut(SnapshotHookEvent) + 'static) -> SnapshotHookGuard {
-        HOOK.with(|slot| {
-            if let Ok(mut slot) = slot.try_borrow_mut() {
-                *slot = Some(Box::new(hook));
-            }
-        });
+        crate::utils::test_tls::slot_set(&HOOK, Some(Box::new(hook)));
         SnapshotHookGuard
     }
 
     /// Runs the current thread's hook for `event`. A re-entrant fire (the hook
     /// itself triggering a walk on this thread) is skipped.
     pub(crate) fn fire(event: SnapshotHookEvent) {
-        HOOK.with(|slot| {
+        let _ = HOOK.try_with(|slot| {
             if let Ok(mut slot) = slot.try_borrow_mut()
                 && let Some(hook) = slot.as_mut()
             {
