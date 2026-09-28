@@ -1522,6 +1522,32 @@ impl PriceLevel {
         topology::count(self.topology.load(Ordering::Acquire)) != 0
     }
 
+    /// Emits the match sweep's execution-statistics drop `WARN` for one step
+    /// and clears the pending slot (issue #214 review: the `tracing` call
+    /// site is kept out of the sweep loop). Called after the step's
+    /// bookkeeping; for a `Fok` taker the fill-or-kill write guard is still
+    /// held, like every other sweep event (see `doc/panic-boundaries.md`).
+    #[cold]
+    #[inline(never)]
+    fn execution_stats_dropped(
+        &self,
+        taker_order_id: Id,
+        maker_order_id: Id,
+        consumed: u64,
+        pending: &mut Option<PriceLevelError>,
+    ) {
+        if let Some(err) = pending.take() {
+            tracing::warn!(
+                price = self.price,
+                taker_order_id = %taker_order_id,
+                maker_order_id = %maker_order_id,
+                consumed,
+                error = %err,
+                "execution statistics dropped (all-or-nothing); level stats marked degraded — trade unaffected"
+            );
+        }
+    }
+
     /// Handles a level quantity counter that refused a checked decrement in
     /// the match sweep (pre-release hardening; replaces a wrapping
     /// `fetch_sub`). The counter already disagreed with the queue, so the
@@ -3341,6 +3367,12 @@ impl PriceLevel {
         // Logged and stored on the result only after the sweep, once the step
         // bookkeeping is complete and the fill-or-kill guard is released.
         let mut sweep_error: Option<(PriceLevelError, Option<Trade>)> = None;
+        // A statistics drop awaiting its event (issue #214 review): declared
+        // once per call rather than once per sweep step, set only on the
+        // rare first-drop path and emitted by the cold
+        // `execution_stats_dropped`, so a step without a drop pays one
+        // discriminant test and no initialisation or drop glue.
+        let mut stats_drop: Option<PriceLevelError> = None;
 
         // No-progress safety guard. A maker that yields no progress
         // (`consumed == 0`, re-queued unchanged, `remaining` not decreased)
@@ -3890,8 +3922,8 @@ impl PriceLevel {
                     // is caller-supplied code, so logging mid-bookkeeping would
                     // let a panicking subscriber unwind with the maker already
                     // removed from the queue but `order_count` / the hidden
-                    // counter not yet adjusted.
-                    let mut stats_drop = None;
+                    // counter not yet adjusted. The pending drop lives in the
+                    // per-call `stats_drop` slot declared before the sweep.
 
                     if let Some(trade_seq) = data.trade_seq {
                         // Update visible quantity counter. `Relaxed`: advisory
@@ -4096,18 +4128,17 @@ impl PriceLevel {
                         );
                     }
 
-                    if let Some(err) = stats_drop {
+                    if stats_drop.is_some() {
                         // WARN, not ERROR: the match is not aborted — this is a
                         // recoverable observability anomaly flagged by the sticky
                         // degraded flag (the trade is committed). Emitted here,
-                        // after the step's bookkeeping, per the note above.
-                        tracing::warn!(
-                            price = self.price,
-                            taker_order_id = %taker_order_id,
-                            maker_order_id = %data.maker_id,
-                            consumed = data.consumed,
-                            error = %err,
-                            "execution statistics dropped (all-or-nothing); level stats marked degraded — trade unaffected"
+                        // after the step's bookkeeping, per the note above; the
+                        // `tracing` call site lives in the cold emitter.
+                        self.execution_stats_dropped(
+                            taker_order_id,
+                            data.maker_id,
+                            data.consumed,
+                            &mut stats_drop,
                         );
                     }
 
