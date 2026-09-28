@@ -1,0 +1,88 @@
+scenario,side,vs,r1,r2,r3,r4,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,r4_pct_change,spread_pp,noisy,runs
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,base2,base2,89.3,90.1,90.4,88.9,89.7,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,c3b,base2,84.8,86.4,86.1,84.9,85.5,-4.66,-5.05,-4.05,-4.79,-4.51,1.00,False,4
+crit:PriceLevel - Isolated Ops/add_order_seeded/iceberg,final,base2,86.0,87.5,85.7,84.4,85.8,-4.29,-3.72,-2.88,-5.19,-5.16,2.31,False,4
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,base2,base2,88.9,88.8,89.7,88.1,88.8,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,c3b,base2,84.7,86.1,85.9,84.8,85.4,-3.92,-4.72,-3.02,-4.24,-3.78,1.70,False,4
+crit:PriceLevel - Isolated Ops/add_order_seeded/standard,final,base2,85.0,86.3,84.7,84.2,84.9,-4.45,-4.30,-2.88,-5.56,-4.48,2.68,False,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,base2,base2,74.6,75.0,74.1,74.2,74.4,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,c3b,base2,72.9,77.0,74.1,73.9,74.0,-0.54,-2.28,2.70,-0.02,-0.40,4.98,True,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/iceberg,final,base2,73.5,73.7,74.3,73.3,73.6,-1.09,-1.51,-1.76,0.27,-1.27,2.03,False,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,base2,base2,74.4,75.1,74.7,74.5,74.6,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,c3b,base2,72.2,99.8,72.8,72.7,72.7,-2.50,-3.06,32.97,-2.53,-2.48,36.02,True,4
+crit:PriceLevel - Isolated Ops/cancel_seeded/standard,final,base2,72.1,73.0,73.0,72.2,72.6,-2.69,-3.12,-2.68,-2.25,-3.13,0.89,False,4
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,base2,base2,247.0,249.8,246.9,245.4,247.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,c3b,base2,246.1,247.2,247.0,245.4,246.6,-0.18,-0.37,-1.03,0.02,-0.01,1.05,False,4
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,final,base2,247.6,325.5,251.2,246.8,249.4,0.98,0.23,30.30,1.74,0.55,30.07,True,4
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,base2,base2,74.3,75.2,74.2,74.4,74.4,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,c3b,base2,72.9,86.2,73.0,73.5,73.2,-1.51,-1.99,14.52,-1.58,-1.20,16.51,True,4
+crit:PriceLevel - Isolated Ops/replace_seeded/different_price,final,base2,72.8,73.2,74.3,73.1,73.1,-1.65,-2.08,-2.70,0.14,-1.76,2.84,False,4
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,base2,base2,66.1,66.6,66.4,65.8,66.3,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,c3b,base2,66.7,83.2,67.4,67.1,67.3,1.55,0.90,24.96,1.55,2.04,24.06,True,4
+crit:PriceLevel - Isolated Ops/update_quantity_seeded/decrease,final,base2,66.9,67.6,67.5,67.3,67.4,1.75,1.25,1.50,1.66,2.33,1.07,False,4
+crit:PriceLevel - Match Orders/match_iceberg_orders,base2,base2,12627.0,12595.0,12601.0,12726.0,12614.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_iceberg_orders,c3b,base2,12623.0,12770.0,12624.0,12645.0,12634.5,0.16,-0.03,1.39,0.18,-0.64,2.03,False,4
+crit:PriceLevel - Match Orders/match_iceberg_orders,final,base2,12828.0,12623.0,12627.0,12599.0,12625.0,0.09,1.59,0.22,0.21,-1.00,2.59,False,4
+crit:PriceLevel - Match Orders/match_mixed_orders,base2,base2,12367.0,12538.0,12495.0,12447.0,12471.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_mixed_orders,c3b,base2,12463.0,13380.0,12527.0,12562.0,12544.5,0.59,0.78,6.72,0.26,0.92,6.46,False,4
+crit:PriceLevel - Match Orders/match_mixed_orders,final,base2,12674.0,12468.0,12560.0,12413.0,12514.0,0.34,2.48,-0.56,0.52,-0.27,3.04,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_churn,base2,base2,20421.0,20686.0,20602.0,20457.0,20529.5,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_churn,c3b,base2,20691.0,21084.0,20766.0,20707.0,20736.5,1.01,1.32,1.92,0.80,1.22,1.13,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_churn,final,base2,20774.0,20525.0,20634.0,20518.0,20579.5,0.24,1.73,-0.78,0.16,0.30,2.51,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,base2,base2,9458.1,9604.1,9553.6,9587.6,9570.6,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,c3b,base2,9591.4,10003.0,9700.1,9540.9,9645.8,0.79,1.41,4.15,1.53,-0.49,4.64,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,final,base2,9793.1,9424.2,9404.9,9394.2,9414.5,-1.63,3.54,-1.87,-1.56,-2.02,5.56,True,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/10,base2,base2,3057.3,3086.9,3110.2,3100.5,3093.7,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/10,c3b,base2,3075.1,3098.9,3122.5,3122.5,3110.7,0.55,0.58,0.39,0.40,0.71,0.32,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/10,final,base2,3184.8,3131.4,3115.1,3094.3,3123.2,0.96,4.17,1.44,0.16,-0.20,4.37,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/100,base2,base2,6757.8,6774.9,6795.8,6745.0,6766.3,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/100,c3b,base2,6747.3,6820.2,6780.7,6800.7,6790.7,0.36,-0.16,0.67,-0.22,0.83,1.05,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/100,final,base2,6883.2,6804.2,6722.7,6687.1,6763.4,-0.04,1.86,0.43,-1.08,-0.86,2.93,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/200,base2,base2,11227.0,11326.0,11328.0,11221.0,11276.5,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/200,c3b,base2,11409.0,11299.0,11299.0,11248.0,11299.0,0.20,1.62,-0.24,-0.26,0.24,1.88,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/200,final,base2,11310.0,11311.0,11187.0,11134.0,11248.5,-0.25,0.74,-0.13,-1.24,-0.78,1.98,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/50,base2,base2,4668.2,4694.0,4700.7,4675.7,4684.9,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/50,c3b,base2,4681.2,4775.4,4732.0,4701.6,4716.8,0.68,0.28,1.73,0.67,0.55,1.46,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/50,final,base2,4802.0,4747.3,4695.1,4678.3,4721.2,0.78,2.87,1.14,-0.12,0.06,2.99,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/500,base2,base2,22785.0,22931.0,22799.0,22664.0,22792.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/500,c3b,base2,23156.0,23987.0,22974.0,22772.0,23065.0,1.20,1.63,4.61,0.77,0.48,4.13,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_iceberg/500,final,base2,23372.0,23009.0,22745.0,22856.0,22932.5,0.62,2.58,0.34,-0.24,0.85,2.81,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/10,base2,base2,4989.6,5038.9,5098.6,5051.2,5045.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/10,c3b,base2,4975.1,4996.4,5068.9,4985.5,4991.0,-1.07,-0.29,-0.84,-0.58,-1.30,1.01,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/10,final,base2,5249.2,5022.2,5044.5,5085.0,5064.8,0.39,5.20,-0.33,-1.06,0.67,6.26,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/100,base2,base2,6456.3,6469.8,6432.9,6526.8,6463.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/100,c3b,base2,6394.2,6459.0,6461.9,6466.6,6460.4,-0.04,-0.96,-0.17,0.45,-0.92,1.41,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/100,final,base2,6652.9,6521.8,6401.9,6397.7,6461.9,-0.02,3.05,0.80,-0.48,-1.98,5.02,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/200,base2,base2,7978.4,8194.0,8031.8,7984.0,8007.9,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/200,c3b,base2,8014.4,8092.9,8071.1,8105.8,8082.0,0.93,0.45,-1.23,0.49,1.53,2.76,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/200,final,base2,8223.6,8484.5,8035.0,7969.8,8129.3,1.52,3.07,3.55,0.04,-0.18,3.72,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/50,base2,base2,5870.4,5629.1,5621.1,5705.2,5667.1,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/50,c3b,base2,5585.3,5929.8,5631.5,5651.6,5641.6,-0.45,-4.86,5.34,0.19,-0.94,10.20,True,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/50,final,base2,5795.8,5616.7,5648.7,5686.8,5667.8,0.01,-1.27,-0.22,0.49,-0.32,1.76,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,base2,base2,12745.0,12741.0,12707.0,12664.0,12724.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,c3b,base2,12752.0,12877.0,12764.0,12779.0,12771.5,0.37,0.05,1.07,0.45,0.91,1.01,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,final,base2,12913.0,14101.0,12773.0,12678.0,12843.0,0.94,1.32,10.67,0.52,0.11,10.56,True,4
+crit:PriceLevel - Match Orders/match_reserve_orders,base2,base2,11941.0,12047.0,11999.0,11990.0,11994.5,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_reserve_orders,c3b,base2,11974.0,12068.0,12010.0,12167.0,12039.0,0.37,0.28,0.17,0.09,1.48,1.38,False,4
+crit:PriceLevel - Match Orders/match_reserve_orders,final,base2,12245.0,11984.0,11997.0,12004.0,12000.5,0.05,2.55,-0.52,-0.02,0.12,3.07,False,4
+crit:PriceLevel - Match Orders/match_standard_orders,base2,base2,10066.0,10063.0,10087.0,10200.0,10076.5,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_standard_orders,c3b,base2,10135.0,10168.0,10281.0,10281.0,10224.5,1.47,0.69,1.04,1.92,0.79,1.24,False,4
+crit:PriceLevel - Match Orders/match_standard_orders,final,base2,10447.0,10220.0,10171.0,10235.0,10227.5,1.50,3.79,1.56,0.83,0.34,3.44,False,4
+lat:contention_fok_matcher_x32 p50,base2,base2,39705.0,41533.0,39407.0,38712.0,39556.0,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_fok_matcher_x32 p50,c3b,base2,43434.0,41174.0,41122.0,39658.0,41148.0,4.02,9.39,-0.86,4.35,2.44,10.26,True,20
+lat:contention_fok_matcher_x32 p50,final,base2,45363.0,42195.0,41093.0,40730.0,41644.0,5.28,14.25,1.59,4.28,5.21,12.66,True,20
+lat:contention_fok_matcher_x32 p99,base2,base2,61065.0,64837.0,63571.0,64799.0,64185.0,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_fok_matcher_x32 p99,c3b,base2,69190.0,65856.0,64920.0,60368.0,65388.0,1.87,13.31,1.57,2.12,-6.84,20.14,True,20
+lat:contention_fok_matcher_x32 p99,final,base2,73770.0,71216.0,64308.0,70278.0,70747.0,10.22,20.81,9.84,1.16,8.46,19.65,True,20
+lat:contention_fok_matcher_x32 p999,base2,base2,81414.0,87278.0,82259.0,77048.0,81836.5,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_fok_matcher_x32 p999,c3b,base2,88466.0,88166.0,82040.0,74050.0,85103.0,3.99,8.66,1.02,-0.27,-3.89,12.55,True,20
+lat:contention_fok_matcher_x32 p999,final,base2,90399.0,90575.0,85266.0,86045.0,88222.0,7.80,11.04,3.78,3.66,11.68,8.02,False,20
+lat:contention_gtc_matcher_x32 p50,base2,base2,704.0,703.0,707.0,709.0,705.5,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_gtc_matcher_x32 p50,c3b,base2,720.0,723.0,722.0,720.0,721.0,2.20,2.27,2.84,2.12,1.55,1.29,False,20
+lat:contention_gtc_matcher_x32 p50,final,base2,726.0,731.0,718.0,734.0,728.5,3.26,3.12,3.98,1.56,3.53,2.43,False,20
+lat:contention_gtc_matcher_x32 p99,base2,base2,880.0,902.0,903.0,891.0,896.5,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_gtc_matcher_x32 p99,c3b,base2,917.0,929.0,925.0,914.0,921.0,2.73,4.20,2.99,2.44,2.58,1.77,False,20
+lat:contention_gtc_matcher_x32 p99,final,base2,920.0,951.0,921.0,917.0,920.5,2.68,4.55,5.43,1.99,2.92,3.44,False,20
+lat:contention_gtc_matcher_x32 p999,base2,base2,1087.0,1230.0,1210.0,1114.0,1162.0,0.00,0.00,0.00,0.00,0.00,0.00,False,20
+lat:contention_gtc_matcher_x32 p999,c3b,base2,1235.0,1252.0,1217.0,1118.0,1226.0,5.51,13.62,1.79,0.58,0.36,13.26,True,20
+lat:contention_gtc_matcher_x32 p999,final,base2,1156.0,1420.0,1389.0,1062.0,1272.5,9.51,6.35,15.45,14.79,-4.67,20.12,True,20

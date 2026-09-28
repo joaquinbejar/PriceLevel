@@ -712,7 +712,7 @@ price-moving replace.
 | `size_of::<PriceLevelError>()` / `Id` | 56 B / 32 B | 56 B / 32 B | 56 B / 32 B |
 | `add_order` stack frame | 304 B | 912 B | 368 B |
 | `update_order` stack frame | 240 B | 816 B | 240 B |
-| Per-call event handling | none | 5 discriminant stores, a 336 B `memcpy` into `emit(self)`, an out-of-line `emit` call and its drop glue, on every call | one byte store and one byte test; `emit_slow` runs only when a bit is set |
+| Per-call event handling | none | 5 discriminant stores, a 336 B `memcpy` into `emit(self)`, an out-of-line `emit` call and its drop glue, on every call | two stores (the `kinds` byte and the `Option<Id>` tag) and one byte test; `emit_slow` runs only when a bit is set |
 | `remove_resting` decrements | 2 `ldadd` | 2 load + `cas` loops, unconditional | visible: load + `cas`; hidden: skipped when the order's hidden part is 0 |
 | Match sweep visible decrement | `ldadd` | load + `cas` loop | load + `cas` loop (nonzero delta) |
 
@@ -733,13 +733,15 @@ Per-hypothesis findings:
   events) was therefore not needed and not implemented.
 - **H4 (checked decrement CAS on fills and cancels): confirmed for the
   contended rows.** The zero-delta skip (Idea H) removes the hidden
-  counter's CAS from every standard cancel and price move and recovers
-  `concurrent_cancel_orders`. The matcher's own visible decrement (nonzero)
+  counter's CAS from every standard cancel and price move and brings
+  `concurrent_cancel_orders` within the limit (`/2` and `/8` within
+  observed noise). The matcher's own visible decrement (nonzero)
   keeps its CAS; diagnostic variants show it causes the remaining
   contended GTC p50 gap (see below).
 - **H5 (seqlock bound): no evidence.** The bound sits on
   `record_execution` / `reset` only (not on admissions or cancels), adds
-  one compare per transition, and the isolated match row does not regress.
+  one compare per transition, and no regression of the isolated match row
+  was observed within noise.
 - The `order_queue.rs` and `utils/alloc.rs` changes in #212 are
   `cfg(test)` seams only; the bench binaries carry no trace of them.
 
@@ -809,11 +811,11 @@ point the same way.
 | Scenario | Quantile | `a5a94fc` median (min to max) | `c3` median (min to max) | Change |
 |---|---|---|---|---|
 | `contention_gtc_matcher` | p50 | 667 ns (625 to 792) | 708 ns (666 to 708) | +6.1% |
-| | p99 | 1,750 ns (1,500 to 3,916) | 1,750 ns (1,542 to 3,042) | 0.0% |
-| | p99.9 | 4,313 ns (3,333 to 19,791) | 4,146 ns (3,083 to 19,125) | -3.9% |
+| | p99 | 1,750 ns (1,500 to 3,916) | 1,750 ns (1,542 to 3,042) | within observed noise (median 0.0%) |
+| | p99.9 | 4,313 ns (3,333 to 19,791) | 4,146 ns (3,083 to 19,125) | within observed noise (median -3.9%) |
 | `contention_fok_matcher` | p50 | 33.3 us (26.4 to 44.3) | 36.6 us (28.3 to 49.4) | +10.1% |
-| | p99 | 205 us (156 to 275) | 220 us (171 to 312) | +6.9% |
-| | p99.9 | 321 us (224 to 416) | 338 us (261 to 569) | +5.4% |
+| | p99 | 205 us (156 to 275) | 220 us (171 to 312) | within observed noise (median +6.9%) |
+| | p99.9 | 321 us (224 to 416) | 338 us (261 to 569) | within observed noise (median +5.4%) |
 
 The p99 and p99.9 values of one binary vary by 2x to 5x between runs; no
 tail change is claimed from them.
@@ -882,3 +884,71 @@ latency pass's fractional differences (for example `add_order` 2.10 to
 are stored). The differences between `a5a94fc` and `bb7ab71` in
 `trade_list_parse_32` (47 to 15 allocations) and in restore bytes predate
 this change (#211, #212).
+
+### Review follow-up: finer timing and the sweep statistics drop
+
+The numbers above are kept as measured. After review, three changes were
+made and the affected rows measured again:
+
+- `b3e82f1` (bench): the isolated cases use `iter_custom`. Up to 64 seeded
+  levels are built before the clock starts, one `Instant` pair times one
+  call per level (each output moved into a pre-sized buffer), and outputs
+  and levels are dropped after the clock stops. This replaces
+  `BatchSize::PerIteration`, which put about two 41.67 ns timer ticks
+  around every ~70 ns call. The chunk is less cache-warm than one freshly
+  built level, so the absolute values are higher than in the tables above.
+- `708e23d` (bench): `PL_LATENCY_CONTENTION_BATCH=K` in the latency
+  harness times K consecutive contended `match_order` calls with one clock
+  pair and records the per-call mean (`<scenario>_x<K>`), so shifts smaller
+  than one tick become visible. The default (1) is unchanged.
+- `36acc66` (engine): the sweep's statistics-drop event no longer keeps an
+  `Option<PriceLevelError>` per step or an inline `tracing::warn!` in the
+  loop: one pending slot per call and a `#[cold] #[inline(never)]`
+  emitter, with the same event, fields and timing.
+
+Both bench commits were cherry-picked onto the `a5a94fc` side. Sides:
+`base2` (`a5a94fc` + all bench commits), `c3b` (`dfc27a0` + the two new
+bench commits) and `final` (`bfb7387`). Campaign **D**: 4 interleaved
+rounds of `Isolated Ops/*` and `Match Orders/*`, with 5 contention runs per
+side per round at `K = 32`. Campaign **E**: 4 more rounds re-measuring the
+rows that D flagged noisy, with 8 contention runs per side per round.
+
+| Benchmark (median change vs `a5a94fc`) | `c3b` | `final` | Source |
+|---|---|---|---|
+| `Isolated Ops/add_order_seeded/standard` | -3.92% | -4.45% | D |
+| `Isolated Ops/add_order_seeded/iceberg` | -4.66% | -4.29% | D |
+| `Isolated Ops/match_order_seeded/full_front_maker` | -0.51% | -0.46% | E (D: one outlier round, noisy) |
+| `Isolated Ops/cancel_seeded/standard` | -2.50% (noisy) | -2.69% | D |
+| `Isolated Ops/cancel_seeded/iceberg` | -0.54% (noisy) | -1.09% | D |
+| `Isolated Ops/update_quantity_seeded/decrease` | +1.55% (noisy) | +1.75% | D |
+| `Isolated Ops/replace_seeded/different_price` | -1.51% (noisy) | -1.65% | D |
+| `Match Orders/*` (13 rows, seeding included) | -1.07% to +1.47% | -1.63% to +1.52% | D, E |
+| latency `contention_gtc_matcher_x32` p50 | +2.80% (spread 0.6 pp) | +3.58% (spread 0.9 pp) | E (D: +2.20% / +3.26%) |
+| latency `contention_fok_matcher_x32` p50 | +2.09% (spread 3.2 pp) | +3.50% (spread 1.2 pp) | E (D: noisy) |
+
+Every `final` isolated row is non-noisy and within the +3% limit. Of the
+`Match Orders/*` rows, `match_partial_fill_reinsert` stays noise-flagged in
+E (-1.00%; its rounds straddle +/-2%); the rest are non-noisy in D or E.
+`36acc66` shows no effect on the match rows beyond noise (`c3b` against
+`final`).
+
+With batched sampling the contended p50 limit is met: GTC +3.6% and FOK
++3.5% against `a5a94fc`, both with a round spread under 5 pp. The earlier
+single-call GTC reading of +6.1% was the p50 crossing one 41.67 ns tick;
+the batched mean puts the cost of the checked (non-wrapping) decrements
+under contention at about 25 ns per call. Batched p99 / p99.9 are means
+over 32 calls, not single-call tails, and are not used for tail claims
+(GTC `x32` p99 +3.4%, FOK `x32` p99 +3.9%; p99.9 noisy).
+
+**Updated verdict against `a5a94fc`** (final candidate `bfb7387`):
+
+| Row | Result | Verdict |
+|---|---|---|
+| `add_orders_batch_100/*` | -1.1% to -1.9% (B) | pass |
+| `Add Orders/*` | at most +2.54% (B) | pass |
+| Isolated add / match / cancel / update / replace | -4.5% to +1.75% (D, E) | pass |
+| `concurrent_cancel_orders/4`, `/16` | -0.3%, +2.4% (C) | pass |
+| `concurrent_cancel_orders/2`, `/8` | +1.9%, -1.4% (C) | within observed noise (spread 12.3 / 5.7 pp) |
+| `contention_gtc_matcher` p50 | +3.6% batched (E); +6.1% single-call, one tick | pass (batched) |
+| `contention_fok_matcher` p50 | +3.5% batched (E) | pass (batched) |
+| Contended p99 / p99.9 | see the tail table | within observed noise, no claim |

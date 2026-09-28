@@ -1,0 +1,28 @@
+scenario,side,vs,r1,r2,r3,r4,median,median_pct_change,r1_pct_change,r2_pct_change,r3_pct_change,r4_pct_change,spread_pp,noisy,runs
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,base2,base2,249.0,245.9,246.5,248.1,247.3,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,c3b,base2,245.5,246.1,246.4,245.9,246.0,-0.51,-1.39,0.09,-0.04,-0.89,1.48,False,4
+crit:PriceLevel - Isolated Ops/match_order_seeded/full_front_maker,final,base2,246.8,245.5,244.7,247.1,246.1,-0.46,-0.89,-0.17,-0.73,-0.40,0.72,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,base2,base2,9602.6,9421.5,9449.2,9613.8,9525.9,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,c3b,base2,9456.6,9751.6,9518.1,9574.8,9546.5,0.22,-1.52,3.50,0.73,-0.41,5.02,False,4
+crit:PriceLevel - Match Orders/match_partial_fill_reinsert,final,base2,9464.4,9396.9,9683.4,9385.4,9430.6,-1.00,-1.44,-0.26,2.48,-2.38,4.85,True,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,base2,base2,12631.0,12564.0,12567.0,12662.0,12599.0,0.00,0.00,0.00,0.00,0.00,0.00,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,c3b,base2,12637.0,12642.0,12638.0,12621.0,12637.5,0.31,0.05,0.62,0.56,-0.32,0.94,False,4
+crit:PriceLevel - Match Orders/match_quantity_scaling_standard/500,final,base2,12628.0,12659.0,12627.0,12566.0,12627.5,0.23,-0.02,0.76,0.48,-0.76,1.51,False,4
+lat:contention_fok_matcher_x32 p50,base2,base2,39213.5,39621.5,40078.0,39579.0,39600.2,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_fok_matcher_x32 p50,c3b,base2,40416.5,40442.5,41051.0,39528.5,40429.5,2.09,3.07,2.07,2.43,-0.13,3.20,False,32
+lat:contention_fok_matcher_x32 p50,final,base2,40792.0,41183.5,41585.0,40715.5,40987.8,3.50,4.03,3.94,3.76,2.87,1.15,False,32
+lat:contention_fok_matcher_x32 p99,base2,base2,63589.5,64598.5,61677.5,63600.5,63595.0,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_fok_matcher_x32 p99,c3b,base2,62074.0,63582.0,63697.5,60145.5,62828.0,-1.21,-2.38,-1.57,3.28,-5.43,8.71,True,32
+lat:contention_fok_matcher_x32 p99,final,base2,65230.0,66579.0,67394.0,65624.0,66101.5,3.94,2.58,3.07,9.27,3.18,6.69,False,32
+lat:contention_fok_matcher_x32 p999,base2,base2,77312.0,78166.5,75208.5,81393.5,77739.2,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_fok_matcher_x32 p999,c3b,base2,77736.0,82720.0,79447.5,75732.0,78591.8,1.10,0.55,5.83,5.64,-6.96,12.78,True,32
+lat:contention_fok_matcher_x32 p999,final,base2,78307.5,83037.0,83374.5,79682.0,81359.5,4.66,1.29,6.23,10.86,-2.10,12.96,True,32
+lat:contention_gtc_matcher_x32 p50,base2,base2,704.0,707.5,703.5,707.0,705.5,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_gtc_matcher_x32 p50,c3b,base2,721.0,725.5,725.0,728.5,725.2,2.80,2.41,2.54,3.06,3.04,0.64,False,32
+lat:contention_gtc_matcher_x32 p50,final,base2,732.0,729.5,731.5,730.0,730.8,3.58,3.98,3.11,3.98,3.25,0.87,False,32
+lat:contention_gtc_matcher_x32 p99,base2,base2,888.5,889.5,886.0,894.5,889.0,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_gtc_matcher_x32 p99,c3b,base2,917.5,910.5,909.5,917.5,914.0,2.81,3.26,2.36,2.65,2.57,0.90,False,32
+lat:contention_gtc_matcher_x32 p99,final,base2,923.0,910.5,917.5,920.0,918.8,3.35,3.88,2.36,3.56,2.85,1.52,False,32
+lat:contention_gtc_matcher_x32 p999,base2,base2,1141.0,1118.5,1147.5,1108.5,1129.8,0.00,0.00,0.00,0.00,0.00,0.00,False,32
+lat:contention_gtc_matcher_x32 p999,c3b,base2,1205.5,1172.0,1158.5,1152.5,1165.2,3.14,5.65,4.78,0.96,3.97,4.69,False,32
+lat:contention_gtc_matcher_x32 p999,final,base2,1144.5,1089.0,1192.0,1202.0,1168.2,3.41,0.31,-2.64,3.88,8.43,11.07,True,32

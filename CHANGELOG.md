@@ -445,11 +445,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned errors are unchanged. Against the pre-hardening tree:
   `add_orders_batch_100/*` -1.1% to -1.9% (was +11.8% to +14.3%),
   `Add Orders/*` at most +2.5%, `concurrent_cancel_orders` -1.4% to +2.4%
-  (was +7.7% to +11.5%). Not recovered: the contended GTC matcher p50
-  stays +6.1% (one 41.67 ns timer tick; caused by the matcher's checked
-  visible decrement under contention), and the contended FOK matcher p50
-  is inconclusive. New isolated per-operation Criterion cases
-  (`PriceLevel - Isolated Ops`) time one call without seeding or teardown. See
+  (was +7.7% to +11.5%), isolated add / match / cancel / update / replace
+  -4.5% to +1.8%, contended matcher p50 +3.6% (GTC) and +3.5% (FOK) when
+  timed 32 calls per sample (a single-call sample reads GTC as +6.1%, one
+  41.67 ns timer tick; the remaining cost is the checked decrement under
+  contention). The match sweep's statistics-drop event also moved to a
+  cold emitter. New bench tooling: isolated per-operation Criterion cases
+  (`PriceLevel - Isolated Ops`) that time calls without seeding or
+  teardown, and `PL_LATENCY_CONTENTION_BATCH` for the latency harness. See
   `BENCHMARKS.md`, "Issue #214: hot-path recovery".
 
 - **Fill-or-kill feasibility is bounded by the depth it consumes (#143).**
