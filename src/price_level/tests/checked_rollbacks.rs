@@ -57,6 +57,7 @@ mod tests {
         let level = PriceLevel::new(PRICE);
         level.add_order(standard(1, 10)).expect("admit");
         level.test_store_quantity_counters(3, 0);
+        let (_, mutation_before) = level.test_epochs();
 
         let err = level
             .update_order(OrderUpdate::Cancel {
@@ -65,6 +66,10 @@ mod tests {
             .expect_err("counter refusal is reported");
         assert!(is_counter_failure(&err), "{err:?}");
         assert!(level.test_is_poisoned());
+        assert!(
+            level.test_epochs().1 > mutation_before,
+            "the committed removal still moves the mutation epoch"
+        );
         assert_eq!(level.visible_quantity(), 3, "refused, not wrapped");
         assert_eq!(level.order_count(), 0, "the removal itself committed");
         assert_eq!(level.test_topology_count(), 0);

@@ -347,8 +347,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     statistics aggregates is a checked `fetch_update(checked_sub)` instead of
     a wrapping `fetch_sub`. A refusal (only possible once an invariant is
     already broken) leaves the counter unchanged, poisons the level (or
-    keeps the statistics degraded), logs at `ERROR` outside every lock and,
-    for a removal or a sweep, reports a typed error.
+    keeps the statistics degraded), logs at `ERROR` after the per-entry
+    locks are released and, for a removal or a sweep, reports a typed error.
+    A refusal inside a `Fok` taker's sweep is still logged while that taker
+    holds the exclusive fill-or-kill guard (as are the sweep's other events),
+    so a `tracing` subscriber must not re-enter the level.
   - `add_order`, `update_order` and `snapshot` emit their `tracing` events
     only after releasing the fill-or-kill guard, following #172.
   - `cfg(test)` seams compiled into production functions use

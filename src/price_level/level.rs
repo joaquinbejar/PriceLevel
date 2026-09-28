@@ -1741,7 +1741,7 @@ impl PriceLevel {
     /// Whether the fill-or-kill guard is currently unheld (pre-release
     /// hardening test seam): lets a test subscriber check that an event is
     /// emitted after the guard was released.
-    #[cfg(test)]
+    #[cfg(all(test, not(loom)))]
     #[must_use]
     pub(crate) fn test_fok_unheld(&self) -> bool {
         self.fok_guard.test_is_unheld()
@@ -4498,6 +4498,11 @@ impl PriceLevel {
         // Decrement the count and un-pin if this drained the level (issue
         // #126); the `remove` above happened-before.
         if let Err(err) = self.release_after_removal() {
+            // The removal committed even though an error is returned, so the
+            // mutation epoch still moves: `update_order_guarded` bumps only on
+            // `Ok(Some(_))`, and a racing post-only scan must not accept a
+            // queue view that straddles this removal (issue #130).
+            self.bump_mutation_epoch();
             if let Some(counter) = counter_refused {
                 self.trip_poison();
                 events.note_counter_refused(counter, order_id);
@@ -4508,6 +4513,8 @@ impl PriceLevel {
             return Err(err);
         }
         if let Some(counter) = counter_refused {
+            // Committed removal: move the mutation epoch as above.
+            self.bump_mutation_epoch();
             self.trip_poison();
             events.note_counter_refused(counter, order_id);
             return Err(counter_transition_failure(self.price, counter));

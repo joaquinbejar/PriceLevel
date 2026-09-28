@@ -664,13 +664,16 @@ impl PriceLevelStatistics {
     ///
     /// # All-or-nothing (issue #117)
     ///
-    /// An accepted execution contributes to **every** aggregate, or to **none**.
-    /// If a later counter overflows after earlier ones already advanced, this
-    /// rolls the committed prefix back (a checked subtraction of exactly what
-    /// this call added, never below zero because those units are still
-    /// present; a refused rollback, possible only once an invariant is broken,
-    /// leaves that counter unchanged and is logged at ERROR). So a
-    /// caller never observes a partial contribution in the final state. On any
+    /// Under the writer contract below, an accepted execution contributes to
+    /// **every** aggregate, or to **none**. If a later counter overflows after
+    /// earlier ones already advanced, this rolls the committed prefix back (a
+    /// checked subtraction of exactly what this call added, never below zero
+    /// because those units are still present). So a caller that honours the
+    /// contract never observes a partial contribution in the final state.
+    /// Without the contract the guarantee does not hold: a rollback refused
+    /// because an overlapping [`reset`](Self::reset) already zeroed the
+    /// counter leaves that counter unchanged, is logged at ERROR, and can
+    /// leave part of the prefix behind (see the writer contract). On any
     /// failure — a validation error or a counter overflow — the sticky
     /// [`stats_degraded`](Self::stats_degraded) flag is set: the dropped
     /// execution is then observable, even though the caller
@@ -708,8 +711,9 @@ impl PriceLevelStatistics {
     /// maker arriving in the future of execution). Returns
     /// [`PriceLevelError::CounterExhausted`] (counter
     /// [`ExhaustedCounter::StatisticsSequence`]) if the seqlock sequence has
-    /// no headroom left for another write section (issue #165). Every failure
-    /// leaves the aggregates untouched and sets the degraded flag.
+    /// no headroom left for another write section (issue #165). Under the
+    /// writer contract every failure leaves the aggregates untouched; every
+    /// failure sets the degraded flag.
     pub fn record_execution(
         &self,
         quantity: u64,

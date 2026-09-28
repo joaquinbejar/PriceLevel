@@ -236,12 +236,14 @@ mod tests {
 
     /// Records, for every event it sees, whether the level's fill-or-kill
     /// guard was unheld at that moment.
+    #[cfg(not(loom))]
     struct GuardProbe {
         level: std::sync::Arc<PriceLevel>,
         seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         held: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
 
+    #[cfg(not(loom))]
     impl<S: tracing::Subscriber> Layer<S> for GuardProbe {
         fn on_event(&self, _event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
             use std::sync::atomic::Ordering;
@@ -257,6 +259,7 @@ mod tests {
     /// the observed events ran while the fill-or-kill guard was held.
     /// Retrying covers `tracing`'s process-wide interest cache, which a
     /// concurrent test can transiently reset (see the FOK test above).
+    #[cfg(not(loom))]
     fn events_under_guard(setup: fn() -> PriceLevel, op: fn(&PriceLevel)) -> usize {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -282,6 +285,7 @@ mod tests {
 
     /// Pre-release hardening: `add_order`'s statistics-drop `WARN` is emitted
     /// after the fill-or-kill shared guard is released.
+    #[cfg(not(loom))]
     #[test]
     fn add_order_stats_drop_event_runs_outside_fok_guard() {
         let held = events_under_guard(
@@ -299,6 +303,7 @@ mod tests {
 
     /// Pre-release hardening: `update_order`'s statistics-drop `WARN` is
     /// emitted after the fill-or-kill shared guard is released.
+    #[cfg(not(loom))]
     #[test]
     fn update_order_stats_drop_event_runs_outside_fok_guard() {
         let held = events_under_guard(
@@ -321,6 +326,7 @@ mod tests {
 
     /// Pre-release hardening: `update_order`'s removal-refusal `WARN` is
     /// emitted after the fill-or-kill shared guard is released.
+    #[cfg(not(loom))]
     #[test]
     fn update_order_removal_refusal_event_runs_outside_fok_guard() {
         let held = events_under_guard(
