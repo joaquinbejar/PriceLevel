@@ -64,6 +64,13 @@ mod fok_sync {
         LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
     };
     pub(crate) use std::thread::yield_now;
+
+    /// Whether `lock` is poisoned (issue #217); std never clears it. A relaxed
+    /// load in `std`.
+    #[inline]
+    pub(crate) fn rwlock_is_poisoned(lock: &RwLock<()>) -> bool {
+        lock.is_poisoned()
+    }
 }
 
 mod order_queue;

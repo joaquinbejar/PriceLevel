@@ -92,6 +92,13 @@ impl MatchOutcome {
 /// - A fill-or-kill taker fails before any maker is touched: outcome
 ///   [`MatchOutcome::Killed`], no trades, full remaining, level unchanged, and
 ///   the error set.
+/// - A poisoned level refuses to match (issue #217): no trades, full
+///   remaining, level unchanged, and the error set to the
+///   [`PriceLevelError::InvalidOperation`] the level's mutators return. The
+///   outcome is [`MatchOutcome::Killed`] for a positive-quantity fill-or-kill
+///   taker, `NotFilled` for any other positive-quantity taker, and the
+///   vacuous `Filled` (complete, nothing remaining) for a zero-quantity
+///   taker.
 ///
 /// Only the first failure is kept (it is the root cause; the sweep stops at
 /// it). Resource failures use the allocation-free

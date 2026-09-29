@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PriceLevel::is_poisoned` is public (#217).** A read-only, `#[must_use]`
+  query of whether the level is poisoned: its sticky flag is set, or the
+  fill-or-kill guard's lock is poisoned. Checking the lock directly reports a
+  panicked guard holder before any later call has tripped the sticky flag
+  (recovering the guard does not clear the lock's poison). The answer can
+  become `true` concurrently, so the result of the operation itself stays the
+  authoritative report.
+
+### Fixed
+
+- **A poisoned level reports its refusal through `MatchResult::error` (#217).**
+  `PriceLevel::match_order` on a poisoned level returned an empty result with
+  no error, so a caller sweeping several levels could not tell "poisoned,
+  refused" apart from "nothing matchable here" and moved on to a worse price.
+  Both poisoned exits (the fast path and the fill-or-kill check after
+  acquiring the exclusive guard) now set the error to the same
+  `PriceLevelError::InvalidOperation` that `add_order` / `update_order`
+  return. A positive-quantity fill-or-kill taker is `Killed`, any
+  other positive-quantity taker is `NotFilled`, and a zero-quantity taker
+  keeps its vacuously complete `Filled` result; in every case there are no
+  trades, the full quantity remains and the level is untouched.
+- **A non-fill-or-kill match no longer sweeps a level left poisoned by an
+  unwound fill-or-kill sweep (#217).** A non-fill-or-kill `match_order` takes
+  no guard, so after a fill-or-kill sweep unwound (poisoning the guard's
+  lock) it passed the fast path and swept a possibly half-mutated level until
+  some later guard acquisition tripped the poison flag. The fast path now
+  also reads the lock's poison state (one relaxed load per call while the
+  flag is clear), trips the flag and refuses as above.
+
 ## [0.10.0] - 2026-09-28
 
 ### Changed (breaking)

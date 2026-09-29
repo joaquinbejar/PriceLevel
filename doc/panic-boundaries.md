@@ -114,7 +114,7 @@ and tests.
 
 | Event site (`src/price_level/level.rs`) | Guard | Partial mutation at the event |
 |-----------------------------------------|-------|-------------------------------|
-| `mark_poisoned` `error!` | the already-poisoned `fok_guard` (read or write) | the level is already flagged poisoned; no new mutation |
+| `mark_poisoned` `error!` | the already-poisoned `fok_guard` (read or write) when a guard acquisition recovers the poison; none when the `match_order` fast path finds the lock poisoned (#217) | the level is already flagged poisoned; no new mutation |
 | `match_order` self-match reject `debug!` | none | none |
 | `match_order` post-only reject `debug!` | none | none |
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
@@ -183,11 +183,25 @@ the check cannot be misled into a spurious count error.
 Consequence of a subscriber panic inside a sweep: the queue and counters
 remain mutually consistent at step granularity, but the unwinding
 `match_order` loses the `MatchResult` for trades it already committed. For a
-`Fok` taker the unwind also poisons `fok_guard`, so the level fails fast
-(issue #130), which is the right outcome for a fill-or-kill that is no longer
-all-or-nothing. Removing the loss entirely would require deferring every sweep
-event until after `match_order` returns. That is a proposed follow-up, not a
-current guarantee.
+`Fok` taker the unwind also poisons `fok_guard`'s lock, so the level fails
+fast (issue #130), which is the right outcome for a fill-or-kill that is no
+longer all-or-nothing. The panic itself does not set the level's sticky poison
+flag: the next acquisition of the guard (`add_order`, `update_order`,
+`snapshot` or a fill-or-kill `match_order`) recovers the lock poison and trips
+it, and so does the fast path of any `match_order`, which also reads the
+lock's poison state because a non-fill-or-kill match takes no guard (#217).
+`PriceLevel::is_poisoned` reports the lock poison even before the flag is
+tripped. From then on mutators return `InvalidOperation` and every
+`match_order` refuses before touching a maker, carrying that same error in
+`MatchResult::error` (issue #217), so a caller sweeping several levels stops
+there instead of treating the level as empty. A residual window remains: a
+non-fill-or-kill match that passes the fast-path poison check just before a
+concurrent fill-or-kill sweep unwinds (or that reads the lock's relaxed poison
+flag before the panic's store is visible) can still sweep a possibly
+half-mutated level. Closing it would need a guard on the non-fill-or-kill
+path, which is deliberately not taken. Removing the loss entirely would
+require deferring every sweep event until after `match_order` returns. That is
+a proposed follow-up, not a current guarantee.
 
 ## Allocation limits (issue #164)
 

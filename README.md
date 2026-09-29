@@ -1369,6 +1369,28 @@ assert!(matches!(
 ));
 ```
 
+### Migration Guide (poisoned level reported by `match_order`, v0.10.1)
+
+[`PriceLevel::match_order`] on a poisoned level (a panicked fill-or-kill
+guard holder, issue #130, or a broken internal invariant, issue #163)
+used to return an empty result with no error, indistinguishable from a
+level with nothing matchable. It now carries the same
+[`PriceLevelError::InvalidOperation`] that [`PriceLevel::add_order`] and
+[`PriceLevel::update_order`] return (issue #217). Trades, remaining
+quantity and the level are unchanged by the refusal, as before.
+
+| Taker | Before | Now |
+|-------|--------|-----|
+| positive quantity, `Fok` | `NotFilled`, `error() == None` | [`MatchOutcome::Killed`], `error()` is `InvalidOperation` |
+| positive quantity, any other TIF / kind | `NotFilled`, `error() == None` | `NotFilled`, `error()` is `InvalidOperation` |
+| zero quantity | `Filled` (vacuous), `error() == None` | `Filled` (vacuous), `error()` is `InvalidOperation` |
+
+Callers that sweep several levels should stop on
+[`MatchResult::error`] instead of moving on to the next, worse price.
+[`PriceLevel::is_poisoned`] is now public for callers that want to check
+first; the flag is sticky but can become `true` concurrently, so the
+result's error slot remains the authoritative report.
+
 
  ## Setup Instructions
 
