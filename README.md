@@ -1369,6 +1369,36 @@ assert!(matches!(
 ));
 ```
 
+### Counter headroom for a multi-level fill-or-kill pre-flight (v0.10.1)
+
+Additive (issue #218). Valid only while the caller excludes every mutator
+of every involved level for the whole interval from the query through the
+last match: the level cannot hold its guard across calls, and a shared
+submit gate is not enough.
+
+[`PriceLevel::counter_headroom`] reports the FIFO sequences left for
+replenishments and whether both epochs are below their limit;
+[`PriceLevel::match_requirements`] runs the same read-only dry run as
+[`PriceLevel::matchable_quantity`] and reports what one
+[`PriceLevel::match_order`] call would consume (fillable quantity, trades,
+replenishments, parks, a self-match rejection, a replenish-overflow stop
+and the step error it would stop at). [`MatchRequirements::check`]
+against [`CounterHeadroom`] rules out `CounterExhausted` (and only that);
+[`MatchRequirements::fills_completely`] also requires a full fill. For a
+multi-level fill-or-kill, query each level with the remainder it will
+receive and execute each level with `Ioc`, not `Fok`.
+
+Not covered (see [`PriceLevel::match_requirements`]): poisoning
+([`PriceLevel::is_poisoned`]), allocation
+([`MatchResult::try_reserve_trades`]), shared trade ids
+([`UuidGenerator::remaining`] against the sum of
+[`MatchRequirements::trade_ids_required`]), [`MatchRequirements::stop_error`],
+self-match (reported by [`MatchRequirements::self_match_rejected`];
+`check` passes), zero quantity (`check` passes with an epoch closed), and
+`PostOnly` takers (the report is not meaningful; `MarketToLimit` matches
+like a standard taker). No existing behaviour changes and `match_order` /
+`add_order` do no new work.
+
 ### Migration Guide (poisoned level reported by `match_order`, v0.10.1)
 
 [`PriceLevel::match_order`] on a poisoned level (a panicked fill-or-kill

@@ -7,6 +7,7 @@ use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{
     FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, RemoveOutcome, UpdateDecision,
 };
+use crate::price_level::requirements::{CounterHeadroom, MatchRequirements};
 use crate::price_level::snapshot::{BorrowedOrders, SnapshotAggregates, deserialize_plain_orders};
 use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
@@ -1035,6 +1036,17 @@ pub(crate) struct DryRun {
     /// maker where the dry run stopped (issue #169). `filled` / `trades` are
     /// then the committed prefix the real sweep would report alongside it.
     pub(crate) error: Option<PriceLevelError>,
+    /// The walk stopped at a replenish whose visible net change would
+    /// overflow the level's counter (the #124 abort), and the real sweep
+    /// reserves one FIFO sequence for that step before it aborts (issue
+    /// #218). Not counted in `replenishes`: the step commits nothing.
+    pub(crate) abort_reserves_sequence: bool,
+    /// As `abort_reserves_sequence`, for the trade id the real sweep
+    /// reserves (and then skips) when the aborted step would have traded.
+    pub(crate) abort_reserves_trade_id: bool,
+    /// The walk stopped at that replenish overflow at all (whether or not
+    /// the aborted step reserves anything).
+    pub(crate) replenish_overflow_stop: bool,
 }
 
 /// What the dry run may assume about concurrent re-sequencing (issue #143).
@@ -1677,17 +1689,25 @@ impl PriceLevel {
     /// no headroom left (issue #165; see [`Self::bump_epoch`]).
     #[inline]
     fn check_epoch_headroom(&self) -> Result<(), PriceLevelError> {
+        match self.closed_epoch() {
+            Some(counter) => Err(PriceLevelError::counter_exhausted(counter)),
+            None => Ok(()),
+        }
+    }
+
+    /// The first epoch at or past [`EPOCH_MUTATION_LIMIT`], topology first
+    /// (issues #165, #218): one `Relaxed` load, or two when the topology
+    /// epoch is open. Shared by [`Self::check_epoch_headroom`] and
+    /// [`Self::counter_headroom`] so the two cannot drift.
+    #[inline]
+    fn closed_epoch(&self) -> Option<ExhaustedCounter> {
         if self.topology_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
-            return Err(PriceLevelError::counter_exhausted(
-                ExhaustedCounter::TopologyEpoch,
-            ));
+            Some(ExhaustedCounter::TopologyEpoch)
+        } else if self.mutation_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
+            Some(ExhaustedCounter::MutationEpoch)
+        } else {
+            None
         }
-        if self.mutation_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
-            return Err(PriceLevelError::counter_exhausted(
-                ExhaustedCounter::MutationEpoch,
-            ));
-        }
-        Ok(())
     }
 
     /// Test-only seeding seam (issue #165): place both epochs at the given
@@ -2543,6 +2563,205 @@ impl PriceLevel {
             .filled)
     }
 
+    /// Headroom of the per-level counters that can refuse a match (issue
+    /// #218): the FIFO sequences left for replenishments and whether both
+    /// epochs are below their limit. Two or three `Relaxed` loads (the
+    /// topology epoch, the mutation epoch only while the topology epoch is
+    /// open, and the queue sequence); the level is only read. Compare it with
+    /// [`Self::match_requirements`] through [`MatchRequirements::check`]; the
+    /// contract under which the answer is valid is documented there.
+    #[must_use]
+    pub fn counter_headroom(&self) -> CounterHeadroom {
+        CounterHeadroom::new(self.orders.seq_headroom(), self.closed_epoch())
+    }
+
+    /// Valid only while the caller excludes every mutator of every involved
+    /// level (admissions, cancels, updates, other matches) for the whole
+    /// interval from this query through the last [`Self::match_order`]: the
+    /// level cannot hold its guard across calls, so that exclusion is the
+    /// caller's alone, and a shared submit gate that lets other submits or
+    /// cancels run is not enough.
+    ///
+    /// Under that exclusion, reports what one [`Self::match_order`] call with
+    /// `incoming_quantity` for `taker_id` would consume at this level (issue
+    /// #218): the fillable quantity, the trades, the replenishments (FIFO
+    /// sequences), the parked makers, whether the taker would be rejected as
+    /// a self-match, and the step error the sweep would stop at. It runs the
+    /// same deterministic dry run as [`Self::matchable_quantity`] (same cost);
+    /// the level is only read.
+    ///
+    /// [`MatchRequirements::check`] against [`Self::counter_headroom`] rules
+    /// out [`PriceLevelError::CounterExhausted`];
+    /// [`MatchRequirements::fills_completely`] additionally tells whether the
+    /// taker would be filled in full.
+    ///
+    /// # Counters covered
+    ///
+    /// - [`ExhaustedCounter::TopologyEpoch`] and
+    ///   [`ExhaustedCounter::MutationEpoch`]: a match with a positive
+    ///   quantity is refused before its sweep once either epoch reached its
+    ///   limit. A match bumps the topology epoch at most once (when it drains
+    ///   the level) and the mutation epoch never, and the limit keeps
+    ///   headroom for that bump, so "open before the match" is the whole
+    ///   requirement.
+    /// - [`ExhaustedCounter::QueueSequence`]: every iceberg / reserve
+    ///   replenishment re-sequences its maker at the tail and takes one fresh
+    ///   FIFO sequence. The requirement is the dry run's exact replenishment
+    ///   count, which is not bounded by the trade count (a zero-visible
+    ///   reserve maker replenishes before it trades), plus one when the sweep
+    ///   stops at a replenish that would overflow the level's visible counter
+    ///   (that step reserves its sequence before it aborts).
+    ///
+    /// The statistics counters ([`ExhaustedCounter::OrdersAdded`],
+    /// [`ExhaustedCounter::OrdersRemoved`],
+    /// [`ExhaustedCounter::StatisticsSequence`]) never refuse a match (a
+    /// dropped contribution only marks the statistics degraded) and are not
+    /// reported.
+    ///
+    /// # Multi-level fill-or-kill
+    ///
+    /// For one fill-or-kill taker swept across levels `1..=n`, under the
+    /// exclusion above:
+    ///
+    /// 1. Query level `i` with the quantity it will actually receive: the
+    ///    remainder after the fills of levels `1..i`.
+    /// 2. Every level must pass [`MatchRequirements::check`] against its own
+    ///    [`Self::counter_headroom`]. A level before the last normally fills
+    ///    only part of what it received: it must not be a self-match
+    ///    rejection and must have no [`MatchRequirements::stop_error`], and
+    ///    its [`MatchRequirements::fillable`] is its contribution (the next
+    ///    level receives the rest). Only the last level must cover the
+    ///    remainder in full, which [`MatchRequirements::fills_completely`]
+    ///    checks; do not require `fills_completely` of an earlier level.
+    /// 3. Execute each level with [`TimeInForce::Ioc`], not
+    ///    [`TimeInForce::Fok`]: a per-level fill-or-kill would kill every
+    ///    intermediate level that only covers part of the taker.
+    ///
+    /// # Not covered
+    ///
+    /// Each of these needs its own guarantee from the caller, under the same
+    /// exclusion:
+    ///
+    /// - **Poisoning:** check [`Self::is_poisoned`]; a poisoned level refuses
+    ///   with the error in [`MatchResult::error`] (issue #217).
+    /// - **Allocation:** reserve the result storage before the first
+    ///   mutation ([`MatchResult::try_reserve_trades`],
+    ///   [`MatchResult::try_reserve_filled_order_ids`];
+    ///   [`MatchRequirements::trades`] is the exact trade count). The level's
+    ///   own dry run and result buffers can still refuse with
+    ///   [`PriceLevelError::CapacityExceeded`].
+    /// - **Shared trade ids:** the [`UuidGenerator`] is shared across levels,
+    ///   so compare [`UuidGenerator::remaining`] with the sum of
+    ///   [`MatchRequirements::trade_ids_required`] over the whole sweep
+    ///   (the trades, plus the id a replenish-overflow stop reserves and
+    ///   skips).
+    /// - **Step errors:** a maker step the sweep would stop at (matching
+    ///   arithmetic, resting-order count) is reported by
+    ///   [`MatchRequirements::stop_error`], not by
+    ///   [`MatchRequirements::check`].
+    /// - **Self-match:** a taker whose id rests at this level is rejected
+    ///   whole by [`Self::match_order`] (no trades, whatever the time in
+    ///   force); it is reported by [`MatchRequirements::self_match_rejected`]
+    ///   with every count zero, and [`MatchRequirements::check`] passes.
+    /// - **Zero quantity:** a zero-quantity match never sweeps, so
+    ///   [`MatchRequirements::check`] passes even with an epoch closed.
+    /// - **Taker kinds:** the requirement describes a sweeping taker.
+    ///   [`TakerKind::MarketToLimit`] matches like a standard taker at this
+    ///   level (converting its remainder is the order book's job). For
+    ///   [`TakerKind::PostOnly`] the report is not meaningful: a post-only
+    ///   taker never sweeps, and its verdict (rest or reject) comes from
+    ///   [`Self::match_order`] itself.
+    ///
+    /// These are `u64` counters: exhaustion needs on the order of `10^19`
+    /// operations on one level, so this is a formal-completeness tool rather
+    /// than a common failure path.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the dry run's order collection
+    /// cannot grow, exactly as for [`Self::matchable_quantity`]. A step the
+    /// sweep would stop at is not an error here: it is reported by
+    /// [`MatchRequirements::stop_error`].
+    ///
+    /// # Examples
+    ///
+    /// A two-level fill-or-kill pre-flight, then execution with `Ioc`:
+    ///
+    /// ```rust
+    /// use pricelevel::{
+    ///     Hash32, Id, OrderType, Price, PriceLevel, PriceLevelError, Quantity, Side, TakerKind,
+    ///     TimeInForce, TimestampMs, UuidGenerator,
+    /// };
+    ///
+    /// fn sell(id: u64, price: u128, visible: u64, hidden: u64) -> OrderType<()> {
+    ///     OrderType::IcebergOrder {
+    ///         id: Id::from_u64(id),
+    ///         price: Price::new(price),
+    ///         visible_quantity: Quantity::new(visible),
+    ///         hidden_quantity: Quantity::new(hidden),
+    ///         side: Side::Sell,
+    ///         user_id: Hash32::zero(),
+    ///         timestamp: TimestampMs::new(1_700_000_000_000),
+    ///         time_in_force: TimeInForce::Gtc,
+    ///         extra_fields: (),
+    ///     }
+    /// }
+    ///
+    /// let levels = [PriceLevel::new(100), PriceLevel::new(101)];
+    /// levels[0].add_order(sell(1, 100, 5, 5))?;
+    /// levels[1].add_order(sell(2, 101, 5, 10))?;
+    /// let taker = Id::from_u64(99);
+    /// let quantity = 18;
+    ///
+    /// // Pre-flight, with every mutator of both levels excluded until the
+    /// // last match below returns.
+    /// let first = levels[0].match_requirements(quantity, taker)?;
+    /// first.check(&levels[0].counter_headroom())?;
+    /// let intermediate_ok = !first.self_match_rejected() && first.stop_error().is_none();
+    /// assert!(intermediate_ok);
+    /// let second = levels[1].match_requirements(quantity - first.fillable(), taker)?;
+    /// assert!(second.fills_completely(&levels[1].counter_headroom())?);
+    /// let ids = UuidGenerator::new(uuid::Uuid::nil());
+    /// let ids_needed = first
+    ///     .trade_ids_required()?
+    ///     .checked_add(second.trade_ids_required()?)
+    ///     .ok_or(PriceLevelError::InvalidOperation {
+    ///         message: "trade id requirement overflows u64".to_string(),
+    ///     })?;
+    /// assert!(ids_needed <= ids.remaining());
+    ///
+    /// // Execution: Ioc per level; only the whole sweep is fill-or-kill.
+    /// let mut remaining = quantity;
+    /// for level in &levels {
+    ///     let result = level.match_order(
+    ///         remaining,
+    ///         taker,
+    ///         TimeInForce::Ioc,
+    ///         TakerKind::Standard,
+    ///         TimestampMs::new(1_700_000_000_001),
+    ///         &ids,
+    ///     );
+    ///     assert!(result.error().is_none());
+    ///     remaining = result.remaining_quantity().as_u64();
+    /// }
+    /// assert_eq!(remaining, 0);
+    /// # Ok::<(), PriceLevelError>(())
+    /// ```
+    pub fn match_requirements(
+        &self,
+        incoming_quantity: u64,
+        taker_id: Id,
+    ) -> Result<MatchRequirements, PriceLevelError> {
+        // Same test, in the same place, as `match_order`'s self-match reject
+        // (issue #126): the taker is turned away whole before any sweep.
+        if incoming_quantity > 0 && self.orders.find(taker_id).is_some() {
+            return Ok(MatchRequirements::self_match(incoming_quantity));
+        }
+        let dry = self.dry_run(incoming_quantity, taker_id, DryRunIsolation::Unguarded)?;
+        Ok(MatchRequirements::from_dry_run(incoming_quantity, dry))
+    }
+
     /// The deterministic dry run behind [`Self::matchable_quantity`]: returns
     /// both the quantity the sweep would fill and the exact number of trades
     /// it would emit, so the fill-or-kill preflight can reserve the result's
@@ -2565,6 +2784,9 @@ impl PriceLevel {
             replenishes: 0,
             parks: 0,
             error: None,
+            abort_reserves_sequence: false,
+            abort_reserves_trade_id: false,
+            replenish_overflow_stop: false,
         };
         if incoming_quantity == 0 {
             return Ok(dry);
@@ -2738,13 +2960,20 @@ impl PriceLevel {
             if hidden_reduced > 0 {
                 // Replenish: checked net delta `- consumed + hidden_reduced`. A
                 // failure is the #124 abort: the maker is set aside untouched and
-                // the sweep ends, so do NOT count `consumed` and break.
+                // the sweep ends, so do NOT count `consumed` and break. Before
+                // aborting, the real step reserves a trade id (when it would
+                // trade) and the FIFO sequence of a resident maker (issue #218).
                 match projected_visible
                     .checked_sub(consumed)
                     .and_then(|v| v.checked_add(hidden_reduced))
                 {
                     Some(next) => projected_visible = next,
-                    None => break,
+                    None => {
+                        dry.abort_reserves_trade_id = consumed > 0;
+                        dry.abort_reserves_sequence = updated_order.is_some();
+                        dry.replenish_overflow_stop = true;
+                        break;
+                    }
                 }
             } else {
                 // Pure consume: visible only decreases, so it cannot abort. Track

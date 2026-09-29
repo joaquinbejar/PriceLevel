@@ -81,6 +81,16 @@ impl Display for CapacityResource {
 /// `Copy`, so reporting an exhaustion never allocates, including from inside
 /// a match sweep. New counters add variants, so the enum is
 /// `#[non_exhaustive]`: match it with a wildcard arm.
+///
+/// Only [`Self::QueueSequence`], [`Self::TopologyEpoch`] and
+/// [`Self::MutationEpoch`] can refuse a match; the statistics counters
+/// ([`Self::OrdersAdded`], [`Self::OrdersRemoved`],
+/// [`Self::StatisticsSequence`]) never do (a dropped contribution only marks
+/// the statistics degraded). A caller that must know in advance that a match
+/// will not be refused, such as a multi-level fill-or-kill pre-flight, can
+/// compare [`PriceLevel::match_requirements`](crate::PriceLevel::match_requirements)
+/// with [`PriceLevel::counter_headroom`](crate::PriceLevel::counter_headroom)
+/// under the coordination documented there (issue #218).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
