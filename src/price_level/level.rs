@@ -1831,14 +1831,15 @@ impl PriceLevel {
     }
 
     /// Returns `true` once the level is poisoned: its sticky poison flag is
-    /// set, or the fill-or-kill guard's lock carries a poison no acquisition
-    /// has recovered yet. The flag is tripped when a guard acquisition
+    /// set, or the fill-or-kill guard's lock is poisoned. The lock's poison is
+    /// never cleared (recovering the guard with `into_inner` leaves it set), so
+    /// the direct lock check is what exposes a panicked holder before the
+    /// sticky flag has been tripped. The flag is tripped when a guard acquisition
     /// (`add_order`, `update_order`, `snapshot` or a fill-or-kill
     /// `match_order`) or any `match_order` fast path finds the lock poison
     /// left by an earlier holder that panicked mid-operation (issue #130), or
     /// when a broken internal invariant is detected after a committed
-    /// mutation (issue #163). Checking the lock as well means a panicked
-    /// holder is reported here even before any later call trips the flag.
+    /// mutation (issue #163).
     ///
     /// Both states are sticky: once `true` this never returns to `false`, and the
     /// only way back is to reconstruct the level from a snapshot. It can
@@ -1968,7 +1969,7 @@ impl PriceLevel {
     }
 
     /// Whether the sticky poison flag is set (issue #163 test seam). Unlike
-    /// [`Self::is_poisoned`] it ignores an unrecovered lock poison.
+    /// [`Self::is_poisoned`] it ignores the lock's own poison state.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn test_is_poisoned(&self) -> bool {

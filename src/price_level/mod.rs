@@ -65,7 +65,7 @@ mod fok_sync {
     };
     pub(crate) use std::thread::yield_now;
 
-    /// Whether `lock` carries an unrecovered poison (issue #217). A relaxed
+    /// Whether `lock` is poisoned (issue #217); std never clears it. A relaxed
     /// load in `std`.
     #[inline]
     pub(crate) fn rwlock_is_poisoned(lock: &RwLock<()>) -> bool {

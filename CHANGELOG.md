@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`PriceLevel::is_poisoned` is public (#217).** A read-only, `#[must_use]`
-  of whether the level is poisoned (its sticky flag is set, or the
-  fill-or-kill guard's lock carries a poison not yet recovered), for callers
-  that want to check before matching. The flag can become `true` concurrently, so the result of
-  the operation itself stays the authoritative report.
+  query of whether the level is poisoned: its sticky flag is set, or the
+  fill-or-kill guard's lock is poisoned. Checking the lock directly reports a
+  panicked guard holder before any later call has tripped the sticky flag
+  (recovering the guard does not clear the lock's poison). The answer can
+  become `true` concurrently, so the result of the operation itself stays the
+  authoritative report.
 
 ### Fixed
 
