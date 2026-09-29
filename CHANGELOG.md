@@ -55,7 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MatchRequirements::check(&CounterHeadroom)` returns `CounterExhausted`
   (`QueueSequence`, `TopologyEpoch` or `MutationEpoch`) when the match would
   be refused; `Ok` only rules out that error.
-  `MatchRequirements::fills_completely` also requires a full fill. The
+  `MatchRequirements::fills_completely` also requires a full fill, and
+  `MatchRequirements::trade_ids_required` counts the ids taken from the
+  shared generator (one more than the trades when the aborting
+  replenish-overflow step would have traded). The
   sequence requirement is the dry run's replenishment count (zero-visible
   reserve makers that take a sequence before any trade are counted) plus one
   when the sweep stops at a replenish overflow. For a multi-level

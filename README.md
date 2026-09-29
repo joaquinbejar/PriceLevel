@@ -1391,7 +1391,8 @@ receive and execute each level with `Ioc`, not `Fok`.
 Not covered (see [`PriceLevel::match_requirements`]): poisoning
 ([`PriceLevel::is_poisoned`]), allocation
 ([`MatchResult::try_reserve_trades`]), shared trade ids
-([`UuidGenerator::remaining`]), [`MatchRequirements::stop_error`],
+([`UuidGenerator::remaining`] against the sum of
+[`MatchRequirements::trade_ids_required`]), [`MatchRequirements::stop_error`],
 self-match (reported by [`MatchRequirements::self_match_rejected`];
 `check` passes), zero quantity (`check` passes with an epoch closed), and
 `PostOnly` takers (the report is not meaningful; `MarketToLimit` matches

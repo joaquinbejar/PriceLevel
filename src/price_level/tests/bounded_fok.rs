@@ -58,6 +58,7 @@ mod tests {
             error: None,
             abort_reserves_sequence: false,
             abort_reserves_trade_id: false,
+            replenish_overflow_stop: false,
         };
         if incoming_quantity == 0 {
             return Ok(dry);
@@ -128,6 +129,7 @@ mod tests {
                     None => {
                         dry.abort_reserves_trade_id = consumed > 0;
                         dry.abort_reserves_sequence = updated_order.is_some();
+                        dry.replenish_overflow_stop = true;
                         break;
                     }
                 }

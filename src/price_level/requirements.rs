@@ -87,6 +87,7 @@ pub struct MatchRequirements {
     stop_error: Option<PriceLevelError>,
     abort_reserves_sequence: bool,
     abort_reserves_trade_id: bool,
+    replenish_overflow_stop: bool,
 }
 
 impl MatchRequirements {
@@ -103,6 +104,7 @@ impl MatchRequirements {
             stop_error: None,
             abort_reserves_sequence: false,
             abort_reserves_trade_id: false,
+            replenish_overflow_stop: false,
         }
     }
 
@@ -118,6 +120,7 @@ impl MatchRequirements {
             stop_error: dry.error,
             abort_reserves_sequence: dry.abort_reserves_sequence,
             abort_reserves_trade_id: dry.abort_reserves_trade_id,
+            replenish_overflow_stop: dry.replenish_overflow_stop,
         }
     }
 
@@ -147,9 +150,8 @@ impl MatchRequirements {
     }
 
     /// Trades the sweep would emit: an exact reservation for the result.
-    /// Each takes one id from the shared trade-id generator; a sweep that
-    /// stops at a replenish overflow takes (and skips) one more when that
-    /// step would have traded (see [`Self::stops_at_replenish_overflow`]).
+    /// For the ids it takes from the shared trade-id generator, use
+    /// [`Self::trade_ids_required`], which can be one more.
     #[must_use]
     #[inline]
     pub fn trades(&self) -> usize {
@@ -174,13 +176,32 @@ impl MatchRequirements {
 
     /// `true` when the sweep would stop at a replenish whose visible net
     /// change overflows the level's visible counter (the maker is set aside
-    /// untouched and the sweep ends without an error). That step still
-    /// reserves one FIFO sequence, which [`Self::check`] requires on top of
-    /// [`Self::replenishes`], and one trade id when it would have traded.
+    /// untouched and the sweep ends without an error, so the taker is not
+    /// filled in full). Before aborting, that step reserves the maker's FIFO
+    /// sequence, which [`Self::check`] requires on top of
+    /// [`Self::replenishes`], and, when it would have traded, one trade id,
+    /// which [`Self::trade_ids_required`] counts on top of [`Self::trades`].
     #[must_use]
     #[inline]
     pub fn stops_at_replenish_overflow(&self) -> bool {
-        self.abort_reserves_sequence || self.abort_reserves_trade_id
+        self.replenish_overflow_stop
+    }
+
+    /// Trade ids the sweep takes from the shared generator: one per trade,
+    /// plus the id a replenish-overflow stop reserves and skips when that
+    /// step would have traded. Compare the sum over every level of a sweep
+    /// with [`UuidGenerator::remaining`](crate::UuidGenerator::remaining).
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidOperation`] if the count does not fit
+    /// `u64` (unreachable in practice: every trade fills at least one unit
+    /// of a `u64` quantity).
+    pub fn trade_ids_required(&self) -> Result<u64, PriceLevelError> {
+        u64::try_from(self.trades)
+            .ok()
+            .and_then(|trades| trades.checked_add(u64::from(self.abort_reserves_trade_id)))
+            .ok_or_else(trade_ids_overflow)
     }
 
     /// The error of the maker step the sweep would stop at, if any (matching
@@ -244,5 +265,14 @@ impl MatchRequirements {
         Ok(!self.self_match_rejected
             && self.stop_error.is_none()
             && self.fillable == self.incoming_quantity)
+    }
+}
+
+/// The error of [`MatchRequirements::trade_ids_required`] when the count does
+/// not fit `u64`.
+#[cold]
+fn trade_ids_overflow() -> PriceLevelError {
+    PriceLevelError::InvalidOperation {
+        message: "trade id requirement overflows u64".to_string(),
     }
 }

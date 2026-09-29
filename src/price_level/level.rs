@@ -1044,6 +1044,9 @@ pub(crate) struct DryRun {
     /// As `abort_reserves_sequence`, for the trade id the real sweep
     /// reserves (and then skips) when the aborted step would have traded.
     pub(crate) abort_reserves_trade_id: bool,
+    /// The walk stopped at that replenish overflow at all (whether or not
+    /// the aborted step reserves anything).
+    pub(crate) replenish_overflow_stop: bool,
 }
 
 /// What the dry run may assume about concurrent re-sequencing (issue #143).
@@ -2648,7 +2651,9 @@ impl PriceLevel {
     ///   [`PriceLevelError::CapacityExceeded`].
     /// - **Shared trade ids:** the [`UuidGenerator`] is shared across levels,
     ///   so compare [`UuidGenerator::remaining`] with the sum of
-    ///   [`MatchRequirements::trades`] over the whole sweep.
+    ///   [`MatchRequirements::trade_ids_required`] over the whole sweep
+    ///   (the trades, plus the id a replenish-overflow stop reserves and
+    ///   skips).
     /// - **Step errors:** a maker step the sweep would stop at (matching
     ///   arithmetic, resting-order count) is reported by
     ///   [`MatchRequirements::stop_error`], not by
@@ -2716,9 +2721,16 @@ impl PriceLevel {
     /// assert!(intermediate_ok);
     /// let second = levels[1].match_requirements(quantity - first.fillable(), taker)?;
     /// assert!(second.fills_completely(&levels[1].counter_headroom())?);
+    /// let ids = UuidGenerator::new(uuid::Uuid::nil());
+    /// let ids_needed = first
+    ///     .trade_ids_required()?
+    ///     .checked_add(second.trade_ids_required()?)
+    ///     .ok_or(PriceLevelError::InvalidOperation {
+    ///         message: "trade id requirement overflows u64".to_string(),
+    ///     })?;
+    /// assert!(ids_needed <= ids.remaining());
     ///
     /// // Execution: Ioc per level; only the whole sweep is fill-or-kill.
-    /// let ids = UuidGenerator::new(uuid::Uuid::nil());
     /// let mut remaining = quantity;
     /// for level in &levels {
     ///     let result = level.match_order(
@@ -2773,6 +2785,7 @@ impl PriceLevel {
             error: None,
             abort_reserves_sequence: false,
             abort_reserves_trade_id: false,
+            replenish_overflow_stop: false,
         };
         if incoming_quantity == 0 {
             return Ok(dry);
@@ -2957,6 +2970,7 @@ impl PriceLevel {
                     None => {
                         dry.abort_reserves_trade_id = consumed > 0;
                         dry.abort_reserves_sequence = updated_order.is_some();
+                        dry.replenish_overflow_stop = true;
                         break;
                     }
                 }

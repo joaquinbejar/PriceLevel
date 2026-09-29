@@ -187,6 +187,11 @@ mod tests {
                 assert_eq!(requirements.fillable(), scenario.quantity, "{label}");
                 assert_eq!(requirements.trades(), result.trades().len(), "{label}");
                 assert_eq!(
+                    requirements.trade_ids_required().expect("ids"),
+                    requirements.trades() as u64,
+                    "{label}"
+                );
+                assert_eq!(
                     requirements.replenishes(),
                     level.test_queue().test_next_seq() - seq_before,
                     "{label}: sequences consumed"
@@ -387,6 +392,8 @@ mod tests {
         assert!(requirements.stops_at_replenish_overflow());
         assert_eq!(requirements.replenishes(), 0);
         assert_eq!((requirements.fillable(), requirements.trades()), (1, 1));
+        // The aborting zero-visible step would not trade: no extra id.
+        assert_eq!(requirements.trade_ids_required().expect("ids"), 1);
         level.test_queue().test_seed_next_seq(u64::MAX);
         let err = requirements
             .check(&level.counter_headroom())
@@ -403,10 +410,16 @@ mod tests {
         requirements
             .check(&level.counter_headroom())
             .expect("one sequence suffices");
-        let result = take(&level, 3, TimeInForce::Gtc);
+        let ids = generator();
+        let before = ids.remaining();
+        let result = take_with(&level, 3, TimeInForce::Gtc, &ids);
         assert!(result.error().is_none(), "{:?}", result.error());
         assert_eq!(result.trades().len(), 1);
         assert_eq!(result.remaining_quantity().as_u64(), 2);
+        assert_eq!(
+            before - ids.remaining(),
+            requirements.trade_ids_required().expect("ids")
+        );
         assert_eq!(level.test_queue().test_next_seq(), u64::MAX);
     }
 
@@ -446,12 +459,16 @@ mod tests {
         requirements
             .check(&level.counter_headroom())
             .expect("sequences available");
+        assert_eq!(requirements.trade_ids_required().expect("ids"), 2);
         let ids = generator();
         let before = ids.remaining();
         let result = take_with(&level, 10, TimeInForce::Ioc, &ids);
         assert!(result.error().is_none(), "{:?}", result.error());
         assert_eq!(result.trades().len(), requirements.trades());
-        assert_eq!(before - ids.remaining(), requirements.trades() as u64 + 1);
+        assert_eq!(
+            before - ids.remaining(),
+            requirements.trade_ids_required().expect("ids")
+        );
     }
 
     #[test]
