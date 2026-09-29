@@ -407,7 +407,12 @@ impl MatchResult {
     /// matched, reserve this aggregate for that level's worst case with
     /// [`Self::try_reserve_trades`] / [`Self::try_reserve_filled_order_ids`]
     /// *before* matching it, so absorbing its committed trades cannot then
-    /// fail on growth.
+    /// fail on growth. The general worst case is the quantity still to
+    /// fill: every trade executes at least one unit. The level's resting
+    /// order count is NOT a bound (an iceberg or reserve maker replenishes
+    /// and can trade several times in one match), so a reservation sized
+    /// from [`crate::PriceLevel::order_count`] is advisory only and
+    /// `try_absorb` may still have to grow.
     ///
     /// # Failure ownership
     ///
@@ -439,16 +444,22 @@ impl MatchResult {
     ///     TimestampMs, UuidGenerator,
     /// };
     ///
-    /// /// Sweeps `levels` in price order. A level result that could not be
-    /// /// absorbed is pushed to `unabsorbed`, so its committed trades are
-    /// /// never dropped.
+    /// /// A sweep that stopped early. Nothing committed is lost: `aggregate`
+    /// /// holds every level absorbed so far and `unabsorbed` the level result
+    /// /// (if any) that could not be folded in.
+    /// struct SweepError {
+    ///     error: PriceLevelError,
+    ///     aggregate: MatchResult,
+    ///     unabsorbed: Option<MatchResult>,
+    /// }
+    ///
+    /// /// Sweeps `levels` in price order.
     /// fn sweep(
     ///     levels: &[PriceLevel],
     ///     taker: Id,
     ///     quantity: u64,
     ///     ids: &UuidGenerator,
-    ///     unabsorbed: &mut Vec<MatchResult>,
-    /// ) -> Result<MatchResult, PriceLevelError> {
+    /// ) -> Result<MatchResult, Box<SweepError>> {
     ///     let mut aggregate = MatchResult::new(taker, Quantity::new(quantity));
     ///     for (index, level) in levels.iter().enumerate() {
     ///         let remaining = aggregate.remaining_quantity().as_u64();
@@ -456,12 +467,16 @@ impl MatchResult {
     ///             break;
     ///         }
     ///         if index > 0 {
-    ///             // Later levels: reserve the worst case before matching.
-    ///             let bound = level
-    ///                 .order_count()
-    ///                 .min(usize::try_from(remaining).unwrap_or(usize::MAX));
-    ///             aggregate.try_reserve_trades(bound)?;
-    ///             aggregate.try_reserve_filled_order_ids(bound)?;
+    ///             // Later levels: reserve the worst case (one trade per unit
+    ///             // still to fill) before matching. On failure nothing was
+    ///             // matched yet, so only the aggregate is handed back.
+    ///             let bound = usize::try_from(remaining).unwrap_or(usize::MAX);
+    ///             let reserved = aggregate
+    ///                 .try_reserve_trades(bound)
+    ///                 .and_then(|()| aggregate.try_reserve_filled_order_ids(bound));
+    ///             if let Err(error) = reserved {
+    ///                 return Err(Box::new(SweepError { error, aggregate, unabsorbed: None }));
+    ///             }
     ///         }
     ///         let mut result = level.match_order(
     ///             remaining,
@@ -472,8 +487,12 @@ impl MatchResult {
     ///             ids,
     ///         );
     ///         if let Err(error) = aggregate.try_absorb(&mut result) {
-    ///             unabsorbed.push(result);
-    ///             return Err(error);
+    ///             // Both the aggregate and the level's committed trades survive.
+    ///             return Err(Box::new(SweepError {
+    ///                 error,
+    ///                 aggregate,
+    ///                 unabsorbed: Some(result),
+    ///             }));
     ///         }
     ///         if aggregate.is_failed() {
     ///             break;
@@ -483,11 +502,16 @@ impl MatchResult {
     /// }
     ///
     /// let ids = UuidGenerator::new(uuid::Uuid::nil());
-    /// let mut unabsorbed = Vec::new();
-    /// let aggregate = sweep(&[PriceLevel::new(100)], Id::from_u64(1), 5, &ids, &mut unabsorbed)?;
-    /// assert_eq!(aggregate.remaining_quantity().as_u64(), 5);
-    /// assert!(unabsorbed.is_empty());
-    /// # Ok::<(), PriceLevelError>(())
+    /// let levels = [PriceLevel::new(100), PriceLevel::new(101)];
+    /// match sweep(&levels, Id::from_u64(1), 5, &ids) {
+    ///     Ok(aggregate) => assert_eq!(aggregate.remaining_quantity().as_u64(), 5),
+    ///     Err(stopped) => panic!(
+    ///         "sweep stopped: {} ({} trades kept, unabsorbed: {})",
+    ///         stopped.error,
+    ///         stopped.aggregate.trades().len(),
+    ///         stopped.unabsorbed.is_some()
+    ///     ),
+    /// }
     /// ```
     pub fn try_absorb(&mut self, level: &mut MatchResult) -> Result<(), PriceLevelError> {
         // 1. Validate: nothing changes on a refusal.
