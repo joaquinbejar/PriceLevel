@@ -1,6 +1,6 @@
 [package]
 name = "pricelevel"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 authors = ["Joaquin Bejar <jb@taunais.com>"]
 description = "A price level implementation for limit order books in Rust, built on a lock-free ordered index and atomic counters. Provides the building blocks for trading systems, with multiple order types and concurrent admissions, updates and reads alongside one matcher per level."
