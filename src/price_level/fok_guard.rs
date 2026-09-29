@@ -65,7 +65,7 @@
 // instrumented equivalents.
 use super::fok_sync::{
     AtomicUsize, LockResult, Ordering, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
-    spin_loop, yield_now,
+    rwlock_is_poisoned, spin_loop, yield_now,
 };
 
 /// Busy-wait rounds (`spin_loop` hints) a fill-or-kill match spends on an
@@ -278,6 +278,16 @@ impl FokGuard {
     #[cfg(test)]
     pub(crate) fn test_announce(&self) -> impl Drop + '_ {
         Announcement::new(&self.waiting_mutators)
+    }
+
+    /// Whether the lock carries a poison left by a holder that panicked and
+    /// not yet cleared (issue #217). Recovering the guard (`into_inner`) does
+    /// not clear it, so once `true` it stays `true`. A single relaxed load,
+    /// taking neither side of the lock.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_poisoned(&self) -> bool {
+        rwlock_is_poisoned(&self.lock)
     }
 
     /// Currently announced mutators (test seam).

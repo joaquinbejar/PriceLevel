@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`PriceLevel::is_poisoned` is public (#217).** A read-only, `#[must_use]`
-  check of the level's sticky poison flag, for callers that want to check
-  before matching. The flag can become `true` concurrently, so the result of
+  of whether the level is poisoned (its sticky flag is set, or the
+  fill-or-kill guard's lock carries a poison not yet recovered), for callers
+  that want to check before matching. The flag can become `true` concurrently, so the result of
   the operation itself stays the authoritative report.
 
 ### Fixed
@@ -27,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other positive-quantity taker is `NotFilled`, and a zero-quantity taker
   keeps its vacuously complete `Filled` result; in every case there are no
   trades, the full quantity remains and the level is untouched.
+- **A non-fill-or-kill match no longer sweeps a level left poisoned by an
+  unwound fill-or-kill sweep (#217).** A non-fill-or-kill `match_order` takes
+  no guard, so after a fill-or-kill sweep unwound (poisoning the guard's
+  lock) it passed the fast path and swept a possibly half-mutated level until
+  some later guard acquisition tripped the poison flag. The fast path now
+  also reads the lock's poison state (one relaxed load per call while the
+  flag is clear), trips the flag and refuses as above.
 
 ## [0.10.0] - 2026-09-28
 

@@ -58,6 +58,12 @@ mod fok_sync {
     pub(crate) use loom::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
     pub(crate) use loom::thread::yield_now;
     pub(crate) use std::sync::{LockResult, TryLockError};
+
+    /// loom's `RwLock` has no poison state, and nothing in this model
+    /// panics while holding it.
+    pub(crate) fn rwlock_is_poisoned(_lock: &RwLock<()>) -> bool {
+        false
+    }
 }
 
 #[allow(dead_code)]

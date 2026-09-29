@@ -1803,7 +1803,7 @@ impl PriceLevel {
     }
 
     /// Trip the sticky poison flag when a [`Self::fok_guard`] poison is recovered
-    /// (issue #130). Logs `ERROR` exactly once — on the `false -> true`
+    /// (issue #130) or found by the `match_order` fast path (issue #217). Logs `ERROR` exactly once — on the `false -> true`
     /// transition decided by the `compare_exchange` — so a poisoned level is
     /// reported but not flooded.
     #[cold]
@@ -1829,16 +1829,17 @@ impl PriceLevel {
             .is_ok()
     }
 
-    /// Returns `true` once the level's sticky poison flag is set. The flag is
-    /// tripped in two ways: when a guard acquisition (`add_order`,
-    /// `update_order`, `snapshot` or a fill-or-kill `match_order`) recovers
-    /// the fill-or-kill guard's lock poison left by an earlier holder that
-    /// panicked mid-operation (issue #130), or when a broken internal
-    /// invariant is detected after a committed mutation (issue #163). A panic
-    /// does not set the flag by itself: until a later acquisition recovers
-    /// the lock poison, this returns `false`.
+    /// Returns `true` once the level is poisoned: its sticky poison flag is
+    /// set, or the fill-or-kill guard's lock carries a poison no acquisition
+    /// has recovered yet. The flag is tripped when a guard acquisition
+    /// (`add_order`, `update_order`, `snapshot` or a fill-or-kill
+    /// `match_order`) or any `match_order` fast path finds the lock poison
+    /// left by an earlier holder that panicked mid-operation (issue #130), or
+    /// when a broken internal invariant is detected after a committed
+    /// mutation (issue #163). Checking the lock as well means a panicked
+    /// holder is reported here even before any later call trips the flag.
     ///
-    /// The flag is sticky: once `true` it never returns to `false`, and the
+    /// Both states are sticky: once `true` this never returns to `false`, and the
     /// only way back is to reconstruct the level from a snapshot. It can
     /// become `true` concurrently (another thread's operation may trip it
     /// right after this read), so a `false` answer is advisory, not a
@@ -1851,7 +1852,7 @@ impl PriceLevel {
     #[inline]
     #[must_use]
     pub fn is_poisoned(&self) -> bool {
-        self.level_poisoned.load(Ordering::Relaxed)
+        self.level_poisoned.load(Ordering::Relaxed) || self.fok_guard.is_poisoned()
     }
 
     /// The error every entry point reports on a poisoned level (issues #130,
@@ -1965,11 +1966,12 @@ impl PriceLevel {
         topology::count(self.topology.load(Ordering::Acquire))
     }
 
-    /// Whether the sticky poison flag is set (issue #163 test seam).
+    /// Whether the sticky poison flag is set (issue #163 test seam). Unlike
+    /// [`Self::is_poisoned`] it ignores an unrecovered lock poison.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn test_is_poisoned(&self) -> bool {
-        self.is_poisoned()
+        self.level_poisoned.load(Ordering::Relaxed)
     }
 
     /// `topology::MAX_COUNT` for boundary tests (issue #163 test seam).
@@ -3080,9 +3082,17 @@ impl PriceLevel {
         // refused" apart from "nothing matchable here" and stop instead of
         // trading at a worse price. The FOK condition is the same
         // `is_fok_taker` as `is_fok` below, so both poisoned exits report the
-        // same outcome. The one-time
-        // `ERROR` log was already emitted when the poison was first recovered.
+        // same outcome.
+        //
+        // `is_poisoned` also reads the guard's lock poison (one extra relaxed
+        // load per call while the flag is clear): a non-fill-or-kill match
+        // takes no guard, so after a fill-or-kill sweep unwinds it would
+        // otherwise sweep a possibly half-mutated level until some later
+        // guard acquisition tripped the flag. `mark_poisoned` trips the flag
+        // and logs `ERROR` only on that transition, so a poison already
+        // recovered elsewhere is not logged again.
         if self.is_poisoned() {
+            self.mark_poisoned();
             return Self::poisoned_match_result(
                 taker_order_id,
                 incoming_quantity,

@@ -13,7 +13,7 @@ mod tests {
     use crate::errors::PriceLevelError;
     use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
-    use crate::price_level::level::{PriceLevel, set_pre_fok_lock_hook};
+    use crate::price_level::level::{PriceLevel, set_fok_locked_hook, set_pre_fok_lock_hook};
     use crate::utils::{Price, Quantity, TimestampMs};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -133,12 +133,14 @@ mod tests {
     fn test_is_poisoned_public_accessor() {
         let level = seeded_level();
         assert!(!level.is_poisoned());
-        // Poisoning the guard alone does not trip the flag: the next
-        // acquisition recovers the poison and trips it.
+        // A panicked holder is reported at once through the lock poison,
+        // before any later acquisition trips the sticky flag.
         level.test_poison_guard();
-        assert!(!level.is_poisoned());
+        assert!(level.is_poisoned());
+        assert!(!level.test_is_poisoned(), "no acquisition yet: flag clear");
         let _ = poison(&level);
         assert!(level.is_poisoned());
+        assert!(level.test_is_poisoned());
         // Sticky: a refused match does not clear it.
         let _ = run(&level, 5, TimeInForce::Gtc, TakerKind::Standard);
         assert!(level.is_poisoned());
@@ -189,33 +191,76 @@ mod tests {
     }
 
     #[test]
-    fn test_poisoned_fok_positive_taker_killed_after_guard_recovers_poison() {
-        // The guard is poisoned but the flag is not yet set, so the fast path
-        // passes and the exclusive-guard acquisition itself recovers the
-        // poison: the post-guard exit must report the same outcome.
+    fn test_unrecovered_lock_poison_refused_on_fast_path() {
+        // The guard's lock is poisoned but no acquisition has recovered it,
+        // so the sticky flag is still clear. The fast path reads the lock
+        // poison, trips the flag and refuses, for fill-or-kill and other
+        // takers alike (a non-fill-or-kill match takes no guard, so nothing
+        // else would catch it).
+        for (tif, outcome) in [
+            (TimeInForce::Fok, MatchOutcome::Killed),
+            (TimeInForce::Gtc, MatchOutcome::NotFilled),
+            (TimeInForce::Ioc, MatchOutcome::NotFilled),
+        ] {
+            let level = seeded_level();
+            level.test_poison_guard();
+            assert!(!level.test_is_poisoned());
+            let before = state(&level);
+
+            let result = run(&level, 20, tif, TakerKind::Standard);
+
+            assert!(
+                level.test_is_poisoned(),
+                "{tif:?}: the fast path trips the flag"
+            );
+            let expected = level
+                .update_order(OrderUpdate::Cancel {
+                    order_id: Id::from_u64(1),
+                })
+                .expect_err("mutators fail fast on a poisoned level");
+            assert_refused(&result, 20, &expected);
+            assert_eq!(result.outcome(), outcome, "{tif:?}");
+            assert_eq!(state(&level), before, "{tif:?}");
+        }
+    }
+
+    #[test]
+    fn test_non_fok_match_refused_after_fok_sweep_unwinds() {
+        // A genuine fill-or-kill unwind: a hook panics while the taker holds
+        // the exclusive guard, poisoning its lock. The next match is not
+        // fill-or-kill, so it takes no guard; it must still refuse rather
+        // than sweep the level.
         let level = seeded_level();
-        level.test_poison_guard();
-        assert!(!level.is_poisoned());
+        {
+            let _hook = set_fok_locked_hook(Box::new(|| panic!("intentional FOK unwind for test")));
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run(&level, 20, TimeInForce::Fok, TakerKind::Standard)
+            }));
+            assert!(unwound.is_err(), "the fill-or-kill match must unwind");
+        }
+        assert!(level.is_poisoned(), "the lock poison is visible at once");
+        assert!(
+            !level.test_is_poisoned(),
+            "no acquisition has tripped the flag yet"
+        );
         let before = state(&level);
 
-        let result = run(&level, 20, TimeInForce::Fok, TakerKind::Standard);
+        let result = run(&level, 5, TimeInForce::Gtc, TakerKind::Standard);
 
-        assert!(level.is_poisoned(), "the guard acquisition trips the flag");
+        assert!(level.test_is_poisoned());
         let expected = level
-            .update_order(OrderUpdate::Cancel {
-                order_id: Id::from_u64(1),
-            })
+            .add_order(standard(50, 1))
             .expect_err("mutators fail fast on a poisoned level");
-        assert_refused(&result, 20, &expected);
-        assert!(result.was_killed());
-        assert_eq!(result.outcome(), MatchOutcome::Killed);
+        assert_refused(&result, 5, &expected);
+        assert_eq!(result.outcome(), MatchOutcome::NotFilled);
         assert_eq!(state(&level), before);
     }
 
     #[test]
     fn test_poisoned_fok_positive_taker_killed_when_poisoned_before_lock() {
         // The guard is healthy at the fast-path check and is poisoned in the
-        // window between that check and the exclusive-guard acquisition.
+        // window between that check and the exclusive-guard acquisition, so
+        // the post-guard exit (the acquisition recovers the poison) refuses.
         let level = Arc::new(seeded_level());
         let before = state(&level);
         let hook_level = Arc::clone(&level);
@@ -223,7 +268,10 @@ mod tests {
 
         let result = run(&level, 20, TimeInForce::Fok, TakerKind::Standard);
 
-        assert!(level.is_poisoned());
+        assert!(
+            level.test_is_poisoned(),
+            "the guard acquisition trips the flag"
+        );
         let expected = level
             .add_order(standard(50, 1))
             .expect_err("mutators fail fast on a poisoned level");

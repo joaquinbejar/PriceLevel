@@ -114,7 +114,7 @@ and tests.
 
 | Event site (`src/price_level/level.rs`) | Guard | Partial mutation at the event |
 |-----------------------------------------|-------|-------------------------------|
-| `mark_poisoned` `error!` | the already-poisoned `fok_guard` (read or write) | the level is already flagged poisoned; no new mutation |
+| `mark_poisoned` `error!` | the already-poisoned `fok_guard` (read or write) when a guard acquisition recovers the poison; none when the `match_order` fast path finds the lock poisoned (#217) | the level is already flagged poisoned; no new mutation |
 | `match_order` self-match reject `debug!` | none | none |
 | `match_order` post-only reject `debug!` | none | none |
 | `match_order` FOK kill `debug!` | none (guard dropped first since #172) | none |
@@ -188,7 +188,10 @@ fast (issue #130), which is the right outcome for a fill-or-kill that is no
 longer all-or-nothing. The panic itself does not set the level's sticky
 poison flag: the next acquisition of the guard (`add_order`, `update_order`,
 `snapshot` or a fill-or-kill `match_order`) recovers the lock poison and
-trips it. From then on mutators return `InvalidOperation` and every
+trips it, and so does the fast path of any `match_order`, which also reads
+the lock's poison state because a non-fill-or-kill match takes no guard
+(#217). `PriceLevel::is_poisoned` reports the lock poison even before the
+flag is tripped. From then on mutators return `InvalidOperation` and every
 `match_order` refuses before touching a maker, carrying that same error in
 `MatchResult::error` (issue #217), so a caller sweeping several levels stops
 there instead of treating the level as empty. Removing the loss entirely
