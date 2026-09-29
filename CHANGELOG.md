@@ -22,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller that expects trades without fully consumed makers does not also
   allocate a filled-id buffer. `try_reserve(n)` and `try_with_capacity` keep
   sizing both vectors from one count.
+- **`MatchResult::try_absorb` (#219).** Folds one price level's result into
+  a multi-level aggregate for the same taker. Trades and filled ids are
+  appended in order; remaining quantity, completion and outcome are
+  recomputed (a level's `Killed` / `Rejected` is adopted only when nothing
+  traded); the level's error becomes the aggregate's. The level must have
+  been matched with the aggregate's remaining quantity, and a terminal
+  aggregate (error, killed, rejected) refuses further levels. An empty,
+  too-small aggregate vector takes the level's buffer by swap, so absorbing
+  the first level allocates nothing; otherwise the entries are appended into
+  the existing reservation. On any refusal (`InvalidOperation`,
+  `CapacityExceeded`) the aggregate is unchanged and the level result still
+  holds its committed trades. Allocation pass (`PL_LATENCY_ONLY=alloc make
+  bench-latency`): one level of two trades and one filled id, 2.00 allocs/op
+  (704 B) with reserve-and-copy against 0 with `try_absorb`; three such
+  levels, 3.00 allocs/op (1,856 B) for both.
 
 ### Fixed
 

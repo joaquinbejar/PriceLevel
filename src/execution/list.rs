@@ -112,6 +112,16 @@ impl TradeList {
         self.trades.push(trade);
     }
 
+    /// Moves every trade of `other` to the end of this list, leaving `other`
+    /// empty (its capacity is kept). The caller must already have reserved
+    /// room for `other.len()` more trades (via [`Self::try_reserve`]): with
+    /// that spare capacity `Vec::append` never reallocates, so this cannot
+    /// fail or panic (issue #219).
+    #[inline]
+    pub(crate) fn append_reserved(&mut self, other: &mut TradeList) {
+        self.trades.append(&mut other.trades);
+    }
+
     /// Clones the list without an infallible allocation.
     ///
     /// `Clone` is still derived (it aborts / panics like any `Vec` clone on

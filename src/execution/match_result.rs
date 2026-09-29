@@ -361,6 +361,168 @@ impl MatchResult {
             })
     }
 
+    /// Folds a later price level's result for the same taker into this
+    /// aggregate (issue #219), moving the level's buffers instead of copying
+    /// them when that is lossless.
+    ///
+    /// A caller that sweeps several levels matches each one with this
+    /// aggregate's current [`Self::remaining_quantity`] and absorbs the
+    /// level's result before moving on. The merge is:
+    ///
+    /// - **Trades and filled ids** are appended in order, after this
+    ///   aggregate's own. Filled ids are assumed unique across levels (an
+    ///   order rests at one price) and are not re-checked.
+    /// - **Remaining quantity** becomes the level's remaining quantity, so
+    ///   the aggregate's executed quantity is the sum of both.
+    /// - **Outcome and completion** are recomputed from the combined fields:
+    ///   `Filled` when nothing remains, `NotFilled` without trades, otherwise
+    ///   `PartiallyFilled`. When the combined result has no trades and the
+    ///   level was killed or rejected, that outcome is adopted.
+    /// - **Error:** the level's error, if any, becomes the aggregate's. The
+    ///   aggregate can hold no error of its own here (see below), so the
+    ///   first failure always wins.
+    ///
+    /// # Allocation
+    ///
+    /// Per vector: when this aggregate's vector is empty and too small for
+    /// the level's contents, the two vectors are swapped, so the aggregate
+    /// takes the level's buffer and the level gets the aggregate's (empty)
+    /// reservation back; nothing is allocated or copied. Otherwise the
+    /// entries are appended into this aggregate's buffer, which allocates
+    /// only if its spare capacity is too small (amortized growth). Existing
+    /// entries and a sufficient reservation are always kept. Absorbing the
+    /// first level into a fresh [`Self::new`] aggregate therefore never
+    /// allocates.
+    ///
+    /// # Failure ownership
+    ///
+    /// Every check and reservation happens before anything moves. On `Err`
+    /// no observable field of `self` has changed (only a vector's spare
+    /// capacity may have grown) and `level` is untouched, so the committed
+    /// trades it records are still in the caller's hands. On `Ok` `level` is
+    /// left as an empty result for its remaining quantity: no trades, no
+    /// filled ids, no error, outcome `Filled` or `NotFilled`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::InvalidOperation`] if `level` belongs to a
+    /// different taker order id; if this aggregate is already terminal (it
+    /// carries an error, or it was killed or rejected), since no later level
+    /// may be matched after either; if the level's executed quantity overflows
+    /// `u64`; or if the level's executed plus remaining quantity differs from
+    /// this aggregate's remaining quantity (the level was not matched with
+    /// what the aggregate had left). Returns
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::Trades`] or [`CapacityResource::FilledOrderIds`]) if
+    /// a vector cannot grow.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use pricelevel::{MatchResult, PriceLevelError, Quantity};
+    /// # use pricelevel::{Id, PriceLevel, TakerKind, TimeInForce, TimestampMs, UuidGenerator};
+    ///
+    /// fn sweep(
+    ///     levels: &[PriceLevel],
+    ///     taker: Id,
+    ///     quantity: u64,
+    ///     ids: &UuidGenerator,
+    /// ) -> Result<MatchResult, PriceLevelError> {
+    ///     let mut aggregate = MatchResult::new(taker, Quantity::new(quantity));
+    ///     for level in levels {
+    ///         let remaining = aggregate.remaining_quantity().as_u64();
+    ///         if remaining == 0 {
+    ///             break;
+    ///         }
+    ///         let mut result = level.match_order(
+    ///             remaining,
+    ///             taker,
+    ///             TimeInForce::Ioc,
+    ///             TakerKind::Standard,
+    ///             TimestampMs::new(1_700_000_000_000),
+    ///             ids,
+    ///         );
+    ///         // On `Err`, `result` still holds the level's committed trades.
+    ///         aggregate.try_absorb(&mut result)?;
+    ///         if aggregate.is_failed() {
+    ///             break;
+    ///         }
+    ///     }
+    ///     Ok(aggregate)
+    /// }
+    /// # let ids = UuidGenerator::new(uuid::Uuid::nil());
+    /// # let aggregate = sweep(&[PriceLevel::new(100)], Id::from_u64(1), 5, &ids).unwrap();
+    /// # assert_eq!(aggregate.remaining_quantity().as_u64(), 5);
+    /// ```
+    pub fn try_absorb(&mut self, level: &mut MatchResult) -> Result<(), PriceLevelError> {
+        // 1. Validate: nothing changes on a refusal.
+        if level.order_id != self.order_id {
+            return Err(absorb_refused(format!(
+                "absorbed result's taker order id {} does not match the aggregate's {}",
+                level.order_id, self.order_id
+            )));
+        }
+        if self.error.is_some() || self.outcome.was_killed() || self.outcome.was_rejected() {
+            return Err(absorb_refused(format!(
+                "the aggregate is terminal ({:?}, error recorded: {}); no later level may be absorbed",
+                self.outcome,
+                self.error.is_some()
+            )));
+        }
+        let level_executed = level.executed_quantity()?.as_u64();
+        if level_executed.checked_add(level.remaining_quantity) != Some(self.remaining_quantity) {
+            return Err(absorb_refused(format!(
+                "absorbed result executed {level_executed} with {} remaining, but the aggregate has {} remaining",
+                level.remaining_quantity, self.remaining_quantity
+            )));
+        }
+
+        // 2. Plan and reserve: still nothing observable changes.
+        let swap_trades = self.trades.is_empty() && self.trades.capacity() < level.trades.len();
+        let swap_filled = self.filled_order_ids.is_empty()
+            && self.filled_order_ids.capacity() < level.filled_order_ids.len();
+        if !swap_trades {
+            self.trades.try_reserve(level.trades.len())?;
+        }
+        if !swap_filled {
+            self.try_reserve_filled_order_ids(level.filled_order_ids.len())?;
+        }
+
+        // 3. Commit: nothing below can fail.
+        if swap_trades {
+            std::mem::swap(&mut self.trades, &mut level.trades);
+        } else {
+            self.trades.append_reserved(&mut level.trades);
+        }
+        if swap_filled {
+            std::mem::swap(&mut self.filled_order_ids, &mut level.filled_order_ids);
+        } else {
+            // Reserved above: `append` cannot reallocate.
+            self.filled_order_ids.append(&mut level.filled_order_ids);
+        }
+        self.remaining_quantity = level.remaining_quantity;
+        self.is_complete = self.remaining_quantity == 0;
+        self.outcome = if self.is_complete {
+            MatchOutcome::Filled
+        } else if self.trades.is_empty() {
+            // Nothing traded anywhere: a level's kill / rejection is the
+            // whole story (remaining > 0, no trades, no filled ids).
+            if level.outcome.was_killed() || level.outcome.was_rejected() {
+                level.outcome
+            } else {
+                MatchOutcome::NotFilled
+            }
+        } else {
+            MatchOutcome::PartiallyFilled
+        };
+        if let Some(error) = level.error.take() {
+            self.set_error(error);
+        }
+        // The level is drained: leave it as a consistent empty result.
+        level.finalize(Quantity::new(level.remaining_quantity));
+        Ok(())
+    }
+
     /// Capacity of the filled-id vector (issue #219 test seam).
     #[cfg(test)]
     #[must_use]
@@ -929,6 +1091,12 @@ fn executed_quantity_overflow() -> PriceLevelError {
     PriceLevelError::InvalidOperation {
         message: "executed quantity overflow".to_string(),
     }
+}
+
+/// The typed refusal of [`MatchResult::try_absorb`] (issue #219).
+#[cold]
+fn absorb_refused(message: String) -> PriceLevelError {
+    PriceLevelError::InvalidOperation { message }
 }
 
 impl fmt::Display for MatchResult {
