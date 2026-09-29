@@ -54,12 +54,22 @@ mod tests {
         result
     }
 
-    /// As [`level`], with the trade buffer sized exactly for its fills (no
-    /// spare capacity).
-    fn exact_level(incoming: u64, fills: &[(u64, u64, bool)]) -> MatchResult {
+    /// A level result whose trade AND filled-id buffers are genuinely full
+    /// (length equal to the observed capacity), so absorbing into or from it
+    /// can neither append into spare room nor adopt it.
+    ///
+    /// `try_with_capacity` only guarantees *at least* the requested
+    /// capacity, so after the `fills` the buffers are padded with filler
+    /// trades of quantity 1 (makers `filler_base`, `filler_base + 1`, ...):
+    /// consumed while the id buffer has room, unconsumed after. A filler
+    /// that meets a full trade buffer grows it; the id buffer never grows,
+    /// so the padding terminates with both full. The result is finalized
+    /// with `remaining` left, so its incoming quantity is its executed
+    /// quantity plus `remaining`.
+    fn full_level(remaining: u64, fills: &[(u64, u64, bool)], filler_base: u64) -> MatchResult {
         let mut result = MatchResult::try_with_capacity(
             Id::from_u64(TAKER),
-            Quantity::new(incoming),
+            Quantity::new(u64::MAX),
             fills.len(),
         )
         .expect("capacity");
@@ -73,10 +83,31 @@ mod tests {
                     .expect("filled id");
             }
         }
-        assert_eq!(result.trades().capacity(), fills.len());
-        let remaining = result.remaining_quantity();
-        result.finalize(remaining);
+        let mut maker = filler_base;
+        loop {
+            let ids_room =
+                result.filled_order_ids().len() < result.test_filled_order_ids_capacity();
+            if !ids_room && result.trades().len() == result.trades().capacity() {
+                break;
+            }
+            result
+                .add_trade(trade(TAKER, maker, 1))
+                .expect("filler trade");
+            if ids_room {
+                result
+                    .add_filled_order_id(Id::from_u64(maker))
+                    .expect("filler id");
+            }
+            maker += 1;
+        }
+        result.finalize(Quantity::new(remaining));
         result
+    }
+
+    /// What `level` needs from the aggregate: its executed plus remaining
+    /// quantity.
+    fn incoming(level: &MatchResult) -> u64 {
+        level.executed_quantity().expect("sum").as_u64() + level.remaining_quantity().as_u64()
     }
 
     fn json(result: &MatchResult) -> String {
@@ -239,14 +270,21 @@ mod tests {
 
     #[test]
     fn test_try_absorb_growth_refusal_unchanged_then_appends_in_order() {
-        // Both buffers are exactly full, so neither the append nor the adopt
-        // plan fits and the aggregate must grow.
-        let mut aggregate = exact_level(20, &[(1, 5, true)]);
-        let mut source = exact_level(15, &[(2, 3, true), (3, 2, false)]);
+        // Every buffer is full, so neither the append nor the adopt plan
+        // fits and the aggregate must grow.
+        let mut source = full_level(10, &[(2, 3, true), (3, 2, false)], 200);
+        let mut aggregate = full_level(incoming(&source), &[(1, 5, true)], 100);
+        let total = incoming(&aggregate);
+        let trades_capacity = aggregate.trades().capacity();
+        let filled_capacity = aggregate.test_filled_order_ids_capacity();
+        let mut expected_makers = maker_ids(&aggregate);
+        expected_makers.extend(maker_ids(&source));
+        let mut expected_filled = aggregate.filled_order_ids().to_vec();
+        expected_filled.extend_from_slice(source.filled_order_ids());
 
         // A capped trade list refuses the growth: nothing changes.
         {
-            let _limit = trade_list_seam::limit_trades(2);
+            let _limit = trade_list_seam::limit_trades(aggregate.trades().len());
             let err = assert_refused_unchanged(&mut aggregate, &mut source);
             assert!(matches!(
                 err,
@@ -258,16 +296,16 @@ mod tests {
         }
 
         aggregate.try_absorb(&mut source).expect("absorb");
-        assert_eq!(
-            maker_ids(&aggregate),
-            vec![Id::from_u64(1), Id::from_u64(2), Id::from_u64(3)]
-        );
-        assert_eq!(
-            aggregate.filled_order_ids(),
-            &[Id::from_u64(1), Id::from_u64(2)]
-        );
+        // Both vectors grew: the growth path, not append or adopt, ran.
+        assert!(aggregate.trades().capacity() > trades_capacity);
+        assert!(aggregate.test_filled_order_ids_capacity() > filled_capacity);
+        assert_eq!(maker_ids(&aggregate), expected_makers);
+        assert_eq!(aggregate.filled_order_ids(), expected_filled.as_slice());
         assert_eq!(aggregate.remaining_quantity().as_u64(), 10);
-        assert_eq!(aggregate.executed_quantity().expect("sum").as_u64(), 10);
+        assert_eq!(
+            aggregate.executed_quantity().expect("sum").as_u64(),
+            total - 10
+        );
         assert_eq!(aggregate.outcome(), MatchOutcome::PartiallyFilled);
         assert!(!aggregate.is_complete());
         assert_round_trips(&aggregate);
@@ -348,32 +386,30 @@ mod tests {
         // The aggregate's buffers are full; the level's have room for both
         // sets of entries, so the aggregate's entries move to the front of
         // the level's buffers and nothing is allocated.
-        let mut aggregate =
-            MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(20), 1).expect("cap");
-        aggregate.add_trade(trade(TAKER, 1, 5)).expect("t1");
-        aggregate.add_filled_order_id(Id::from_u64(1)).expect("f1");
+        let mut aggregate = full_level(15, &[(1, 5, true)], 100);
+        let room = aggregate.trades().len() + 8;
         let mut source =
-            MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(15), 8).expect("cap");
+            MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(15), room)
+                .expect("cap");
         source.add_trade(trade(TAKER, 2, 3)).expect("t2");
         source.add_filled_order_id(Id::from_u64(2)).expect("f2");
         source.add_trade(trade(TAKER, 3, 2)).expect("t3");
         let trades_ptr = source.trades().as_vec().as_ptr();
+        let trades_capacity = source.trades().capacity();
         let filled_ptr = source.filled_order_ids().as_ptr();
         let aggregate_trades_ptr = aggregate.trades().as_vec().as_ptr();
+        let mut expected_makers = maker_ids(&aggregate);
+        expected_makers.extend([Id::from_u64(2), Id::from_u64(3)]);
+        let mut expected_filled = aggregate.filled_order_ids().to_vec();
+        expected_filled.push(Id::from_u64(2));
 
         aggregate.try_absorb(&mut source).expect("absorb");
 
         assert_eq!(aggregate.trades().as_vec().as_ptr(), trades_ptr);
         assert_eq!(aggregate.filled_order_ids().as_ptr(), filled_ptr);
-        assert_eq!(aggregate.trades().capacity(), 8);
-        assert_eq!(
-            maker_ids(&aggregate),
-            vec![Id::from_u64(1), Id::from_u64(2), Id::from_u64(3)]
-        );
-        assert_eq!(
-            aggregate.filled_order_ids(),
-            &[Id::from_u64(1), Id::from_u64(2)]
-        );
+        assert_eq!(aggregate.trades().capacity(), trades_capacity);
+        assert_eq!(maker_ids(&aggregate), expected_makers);
+        assert_eq!(aggregate.filled_order_ids(), expected_filled.as_slice());
         assert_eq!(aggregate.remaining_quantity().as_u64(), 10);
         // The level got the aggregate's emptied buffer back.
         assert_eq!(source.trades().as_vec().as_ptr(), aggregate_trades_ptr);

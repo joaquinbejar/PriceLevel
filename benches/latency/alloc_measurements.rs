@@ -105,7 +105,10 @@ enum Aggregation {
     AbsorbReserved,
 }
 
-/// Level result buffers sized exactly for their entries.
+/// Level result buffers requested for exactly their two trades. The
+/// allocator may hand back more, so [`measure_aggregate`] then fills the
+/// trade buffer to its observed capacity: it is always genuinely full and
+/// absorbing it deterministically takes the growth path.
 const EXACT: usize = 2;
 /// Level result buffers with spare capacity, as `match_order` sizes its own
 /// result (`min(incoming quantity, resting order count)`, here a level of
@@ -115,7 +118,9 @@ const SPARE: usize = 10;
 /// Measures folding `levels` per-level results (two trades and one filled id
 /// each, sized like `match_order` sizes its own result) into a fresh
 /// aggregate (issue #219), each level result created with
-/// `level_capacity`. The level results are built before counting
+/// `level_capacity`. An [`EXACT`] level has as many trades as its trade
+/// buffer's observed capacity (two unless the allocator over-provides),
+/// splitting the level's quantity between them. The level results are built before counting
 /// starts; the aggregates are kept and dropped after it stops, so only the
 /// folding itself is counted. `reps` is the number of aggregations. The
 /// `Copy` pattern reserves exactly each level's entry counts, the cheapest
@@ -128,38 +133,59 @@ fn measure_aggregate(
     level_capacity: usize,
 ) -> AllocReport {
     const TRADES_PER_LEVEL: u64 = 2;
-    const FILL: u64 = 5;
+    /// Quantity each level executes, split across its trades.
+    const LEVEL_QTY: u64 = 1_000;
     let reps = config.alloc_reps;
     let taker = Id::from_u64(TAKER_ID_BASE);
-    let total = levels as u64 * TRADES_PER_LEVEL * FILL;
+    let total = levels as u64 * LEVEL_QTY;
     let mut inputs: Vec<Vec<MatchResult>> = (0..reps)
         .map(|_| {
             (0..levels as u64)
                 .map(|level| {
-                    let incoming = total - level * TRADES_PER_LEVEL * FILL;
+                    let incoming = total - level * LEVEL_QTY;
                     let mut result = MatchResult::try_with_capacity(
                         taker,
                         Quantity::new(incoming),
                         level_capacity,
                     )
                     .expect("alloc measurement: level result capacity");
-                    for step in 0..TRADES_PER_LEVEL {
-                        let maker = level * TRADES_PER_LEVEL + step + 1;
+                    let trades = if level_capacity == EXACT {
+                        result.trades().capacity() as u64
+                    } else {
+                        TRADES_PER_LEVEL
+                    };
+                    assert!(
+                        (1..=LEVEL_QTY).contains(&trades),
+                        "alloc measurement: level trade count"
+                    );
+                    let fill = LEVEL_QTY / trades;
+                    for step in 0..trades {
+                        let maker = level * LEVEL_QTY + step + 1;
+                        let quantity = if step + 1 == trades {
+                            LEVEL_QTY - fill * (trades - 1)
+                        } else {
+                            fill
+                        };
                         result
                             .add_trade(Trade::with_timestamp(
                                 Id::from_u64(TAKER_ID_BASE + 1_000 + maker),
                                 taker,
                                 Id::from_u64(maker),
                                 Price::new(LEVEL_PRICE),
-                                Quantity::new(FILL),
+                                Quantity::new(quantity),
                                 Side::Buy,
                                 TimestampMs::new(EXECUTION_TIMESTAMP_MS),
                             ))
                             .expect("alloc measurement: level trade");
                     }
                     result
-                        .add_filled_order_id(Id::from_u64(level * TRADES_PER_LEVEL + 1))
+                        .add_filled_order_id(Id::from_u64(level * LEVEL_QTY + 1))
                         .expect("alloc measurement: level filled id");
+                    assert!(
+                        level_capacity != EXACT
+                            || result.trades().len() == result.trades().capacity(),
+                        "alloc measurement: an EXACT level's trade buffer must be full"
+                    );
                     result
                 })
                 .collect()
