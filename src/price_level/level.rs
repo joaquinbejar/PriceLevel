@@ -2626,12 +2626,13 @@ impl PriceLevel {
     /// 1. Query level `i` with the quantity it will actually receive: the
     ///    remainder after the fills of levels `1..i`.
     /// 2. Every level must pass [`MatchRequirements::check`] against its own
-    ///    [`Self::counter_headroom`]. Every level before the last must fill
-    ///    its whole contribution: not a self-match rejection, no
-    ///    [`MatchRequirements::stop_error`], and
-    ///    [`MatchRequirements::fillable`] equal to the quantity it received.
-    ///    Only the last level must cover the remainder, which
-    ///    [`MatchRequirements::fills_completely`] checks.
+    ///    [`Self::counter_headroom`]. A level before the last normally fills
+    ///    only part of what it received: it must not be a self-match
+    ///    rejection and must have no [`MatchRequirements::stop_error`], and
+    ///    its [`MatchRequirements::fillable`] is its contribution (the next
+    ///    level receives the rest). Only the last level must cover the
+    ///    remainder in full, which [`MatchRequirements::fills_completely`]
+    ///    checks; do not require `fills_completely` of an earlier level.
     /// 3. Execute each level with [`TimeInForce::Ioc`], not
     ///    [`TimeInForce::Fok`]: a per-level fill-or-kill would kill every
     ///    intermediate level that only covers part of the taker.
