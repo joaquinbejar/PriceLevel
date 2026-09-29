@@ -1,4 +1,5 @@
 // benches/price_level/mod.rs
+pub mod absorb;
 pub mod add_orders;
 pub mod checked_arithmetic;
 pub mod fok_depth;
@@ -36,4 +37,5 @@ pub fn register_benchmarks(c: &mut criterion::Criterion) {
     result_capacity::register_benchmarks(c);
     residual_reuse::register_benchmarks(c);
     isolated_ops::register_benchmarks(c);
+    absorb::register_benchmarks(c);
 }
