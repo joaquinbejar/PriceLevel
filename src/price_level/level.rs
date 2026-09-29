@@ -7,6 +7,7 @@ use crate::orders::{Id, OrderType, OrderUpdate, Side, TimeInForce};
 use crate::price_level::order_queue::{
     FrontAction, FrontOutcome, OrderQueue, ParkedSeqs, RemoveOutcome, UpdateDecision,
 };
+use crate::price_level::requirements::{CounterHeadroom, MatchRequirements};
 use crate::price_level::snapshot::{BorrowedOrders, SnapshotAggregates, deserialize_plain_orders};
 use crate::price_level::statistics::OrderEventDrop;
 use crate::price_level::{PriceLevelSnapshot, PriceLevelSnapshotPackage, PriceLevelStatistics};
@@ -2541,6 +2542,144 @@ impl PriceLevel {
         Ok(self
             .dry_run(incoming_quantity, taker_id, DryRunIsolation::Unguarded)?
             .filled)
+    }
+
+    /// Headroom of the per-level counters that can refuse a match (issue
+    /// #218): the FIFO sequences left for replenishments and whether both
+    /// epochs are below their limit. Two `Relaxed` loads; the level is only
+    /// read. Compare it with [`Self::match_requirements`] through
+    /// [`MatchRequirements::check`]; the contract under which the answer is
+    /// valid is documented there.
+    #[must_use]
+    pub fn counter_headroom(&self) -> CounterHeadroom {
+        // The same two tests, in the same order, as `check_epoch_headroom`.
+        let closed_epoch = if self.topology_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
+            Some(ExhaustedCounter::TopologyEpoch)
+        } else if self.mutation_epoch.load(Ordering::Relaxed) >= EPOCH_MUTATION_LIMIT {
+            Some(ExhaustedCounter::MutationEpoch)
+        } else {
+            None
+        };
+        CounterHeadroom::new(self.orders.seq_headroom(), closed_epoch)
+    }
+
+    /// What a [`Self::match_order`] call with `incoming_quantity` for
+    /// `taker_id` would consume at this level (issue #218): the fillable
+    /// quantity, the trades, the replenishments (FIFO sequences), the parked
+    /// makers and the step error the sweep would stop at. It runs the same
+    /// deterministic dry run as [`Self::matchable_quantity`], with the same
+    /// cost and the same staleness caveat when mutators run concurrently;
+    /// the level is only read.
+    ///
+    /// # Contract
+    ///
+    /// The answer is valid only while nothing else changes the involved levels.
+    /// The caller must exclude **every** mutator of those levels (admissions,
+    /// cancels, updates, other matches) for the **whole interval** from the first
+    /// query through the last [`PriceLevel::match_order`] call. A shared submit
+    /// gate that still lets other submits or cancels run concurrently is not
+    /// enough.
+    ///
+    /// Under that exclusion, [`MatchRequirements::check`] returning `Ok` for a
+    /// level means a [`PriceLevel::match_order`] call on that level, with the same
+    /// incoming quantity and taker id, does not fail with
+    /// [`PriceLevelError::CounterExhausted`]. The counters covered are the ones a
+    /// match can be refused on:
+    ///
+    /// - [`ExhaustedCounter::TopologyEpoch`] and
+    ///   [`ExhaustedCounter::MutationEpoch`]: a match with a positive quantity is
+    ///   refused before the sweep once either epoch reached its limit. A match
+    ///   bumps the topology epoch at most once (when it drains the level) and the
+    ///   mutation epoch never, and the limit already keeps headroom for that
+    ///   bump, so "open before the match" is the whole requirement.
+    /// - [`ExhaustedCounter::QueueSequence`]: every iceberg / reserve
+    ///   replenishment re-sequences its maker at the tail and takes one fresh
+    ///   FIFO sequence. The requirement is the exact replenishment count of the
+    ///   sweep (from the same dry run the fill-or-kill preflight uses), which is
+    ///   not bounded by the trade count: a zero-visible reserve maker replenishes
+    ///   before it trades.
+    ///
+    /// The statistics counters ([`ExhaustedCounter::OrdersAdded`],
+    /// [`ExhaustedCounter::OrdersRemoved`],
+    /// [`ExhaustedCounter::StatisticsSequence`]) never refuse a match (a dropped
+    /// contribution only marks the statistics degraded), so they are not part of
+    /// either query.
+    ///
+    /// # Not covered
+    ///
+    /// Counters are not the only way a later level can refuse. The caller needs
+    /// its own guarantee, under the same exclusion, for each of these:
+    ///
+    /// - **Poisoning:** check [`PriceLevel::is_poisoned`]; a poisoned level
+    ///   refuses with the error in [`MatchResult::error`](crate::MatchResult::error)
+    ///   (issue #217).
+    /// - **Allocation:** reserve the result storage before the first mutation
+    ///   ([`MatchResult::try_reserve_trades`](crate::MatchResult::try_reserve_trades),
+    ///   [`MatchResult::try_reserve_filled_order_ids`](crate::MatchResult::try_reserve_filled_order_ids);
+    ///   [`MatchRequirements::trades`] is the exact trade count). The level's own
+    ///   dry run and result buffers can still refuse with
+    ///   [`PriceLevelError::CapacityExceeded`].
+    /// - **Shared trade ids:** the [`UuidGenerator`] is
+    ///   shared across levels, so compare
+    ///   [`UuidGenerator::remaining`](crate::UuidGenerator::remaining) with the
+    ///   sum of [`MatchRequirements::trades`] over the whole sweep.
+    /// - **Step errors:** a maker step the sweep would stop at (matching
+    ///   arithmetic, resting-order count) is reported by
+    ///   [`MatchRequirements::stop_error`], not by [`MatchRequirements::check`].
+    ///
+    /// These are `u64` counters: exhaustion needs on the order of `10^19`
+    /// operations on one level, so this is a formal-completeness tool rather than
+    /// a common failure path.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::CapacityExceeded`] (resource
+    /// [`CapacityResource::OrderSnapshot`]) if the dry run's order collection
+    /// cannot grow, exactly as for [`Self::matchable_quantity`]. A step the
+    /// sweep would stop at is not an error here: it is reported by
+    /// [`MatchRequirements::stop_error`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use pricelevel::{
+    ///     Hash32, Id, OrderType, Price, PriceLevel, PriceLevelError, Quantity, Side, TimeInForce,
+    ///     TimestampMs,
+    /// };
+    ///
+    /// let level = PriceLevel::new(100);
+    /// level.add_order(OrderType::IcebergOrder {
+    ///     id: Id::from_u64(1),
+    ///     price: Price::new(100),
+    ///     visible_quantity: Quantity::new(5),
+    ///     hidden_quantity: Quantity::new(10),
+    ///     side: Side::Sell,
+    ///     user_id: Hash32::zero(),
+    ///     timestamp: TimestampMs::new(1_700_000_000_000),
+    ///     time_in_force: TimeInForce::Gtc,
+    ///     extra_fields: (),
+    /// })?;
+    /// // Under exclusive coordination of every mutator of this level:
+    /// let requirements = level.match_requirements(8, Id::from_u64(99))?;
+    /// assert_eq!(requirements.fillable(), 8);
+    /// assert_eq!(requirements.replenishes(), 1);
+    /// requirements.check(&level.counter_headroom())?;
+    /// # Ok::<(), PriceLevelError>(())
+    /// ```
+    pub fn match_requirements(
+        &self,
+        incoming_quantity: u64,
+        taker_id: Id,
+    ) -> Result<MatchRequirements, PriceLevelError> {
+        let dry = self.dry_run(incoming_quantity, taker_id, DryRunIsolation::Unguarded)?;
+        Ok(MatchRequirements::new(
+            incoming_quantity,
+            dry.filled,
+            dry.trades,
+            dry.replenishes,
+            dry.parks,
+            dry.error,
+        ))
     }
 
     /// The deterministic dry run behind [`Self::matchable_quantity`]: returns

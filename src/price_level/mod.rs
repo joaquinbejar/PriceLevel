@@ -75,10 +75,13 @@ mod fok_sync {
 
 mod order_queue;
 
+mod requirements;
+
 mod statistics;
 mod tests;
 
 pub use level::{PriceLevel, PriceLevelData};
 pub use order_queue::OrderQueue;
+pub use requirements::{CounterHeadroom, MatchRequirements};
 pub use snapshot::{PriceLevelSnapshot, PriceLevelSnapshotPackage};
 pub use statistics::PriceLevelStatistics;

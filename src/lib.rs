@@ -1364,6 +1364,23 @@
 //! ));
 //! ```
 //!
+//! ## Counter headroom for a multi-level fill-or-kill pre-flight (v0.10.1)
+//!
+//! Additive (issue #218). [`PriceLevel::counter_headroom`] reports the FIFO
+//! sequences left for replenishments and whether both epochs are below
+//! their limit; [`PriceLevel::match_requirements`] runs the same read-only
+//! dry run as [`PriceLevel::matchable_quantity`] and reports what one
+//! [`PriceLevel::match_order`] call would consume (fillable quantity,
+//! trades, replenishments, parks, and the step error it would stop at).
+//! [`MatchRequirements::check`] against [`CounterHeadroom`] tells an order
+//! book, before the first level mutates, that no per-level counter will
+//! refuse the match. It is valid only while the caller excludes every
+//! mutator of the involved levels for the whole interval from the query
+//! through the last match; poisoning, allocation and the shared trade-id
+//! generator need their own checks ([`PriceLevel::is_poisoned`],
+//! [`MatchResult::try_reserve_trades`], [`UuidGenerator::remaining`]). No
+//! existing behaviour changes and `match_order` / `add_order` do no new work.
+//!
 //! ## Migration Guide (poisoned level reported by `match_order`, v0.10.1)
 //!
 //! [`PriceLevel::match_order`] on a poisoned level (a panicked fill-or-kill
@@ -1402,8 +1419,8 @@ pub use orders::DEFAULT_RESERVE_REPLENISH_AMOUNT;
 pub use orders::PegReferenceType;
 pub use orders::{Hash32, Id, OrderType, OrderUpdate, Side, TimeInForce};
 pub use price_level::{
-    OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot, PriceLevelSnapshotPackage,
-    PriceLevelStatistics,
+    CounterHeadroom, MatchRequirements, OrderQueue, PriceLevel, PriceLevelData, PriceLevelSnapshot,
+    PriceLevelSnapshotPackage, PriceLevelStatistics,
 };
 pub use utils::{
     EntropySource, Price, Quantity, TimestampMs, UnixClock, UuidGenerator, setup_logger,

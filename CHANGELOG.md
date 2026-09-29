@@ -43,6 +43,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buffers have the spare capacity `match_order` gives them (ten resting
   orders).
 
+- **Counter headroom and match requirements (#218).**
+  `PriceLevel::counter_headroom() -> CounterHeadroom` (FIFO sequences left,
+  whether both epochs are open) and
+  `PriceLevel::match_requirements(incoming_quantity, taker_id) ->
+  Result<MatchRequirements, _>` (fillable quantity, trades, replenishments,
+  parks and the step error the sweep would stop at, from the same dry run as
+  `matchable_quantity`). `MatchRequirements::check(&CounterHeadroom)`
+  returns `CounterExhausted` (`QueueSequence`, `TopologyEpoch` or
+  `MutationEpoch`) when the match would be refused. The replenishment count
+  comes from the dry run, so zero-visible reserve makers that take a
+  sequence before any trade are counted. Valid only while the caller
+  excludes every mutator of the involved levels for the whole interval
+  through the last match; statistics counters never refuse a match and are
+  not reported; poisoning, allocation and shared trade ids are not covered.
+  Read-only: no new work in `match_order` or `add_order`.
+
 ### Fixed
 
 - **A poisoned level reports its refusal through `MatchResult::error` (#217).**
