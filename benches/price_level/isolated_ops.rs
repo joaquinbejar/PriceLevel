@@ -83,7 +83,7 @@ const CHUNK: usize = 64;
 /// are built before, and inputs and outputs dropped after, the timed region
 /// of each chunk; only the calls (and moving each output into a pre-sized
 /// buffer) are timed.
-fn time_chunked<I, O>(
+pub(super) fn time_chunked<I, O>(
     iters: u64,
     mut setup: impl FnMut() -> I,
     mut op: impl FnMut(&mut I) -> O,

@@ -16,6 +16,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (recovering the guard does not clear the lock's poison). The answer can
   become `true` concurrently, so the result of the operation itself stays the
   authoritative report.
+- **Split `MatchResult` reservations (#219).**
+  `MatchResult::try_reserve_trades(n)` and
+  `MatchResult::try_reserve_filled_order_ids(n)` size one vector each, so a
+  caller that expects trades without fully consumed makers does not also
+  allocate a filled-id buffer. `try_reserve(n)` and `try_with_capacity` keep
+  sizing both vectors from one count.
+- **`MatchResult::try_absorb` (#219).** Folds one price level's result into
+  a multi-level aggregate for the same taker. Trades and filled ids are
+  appended in order; remaining quantity, completion and outcome are
+  recomputed (a level's `Killed` / `Rejected` is adopted only when the
+  aggregate then holds no trades and no filled ids); the level's error
+  becomes the aggregate's. The level must have been matched with the
+  aggregate's remaining quantity, and a failed, killed or rejected aggregate
+  refuses further levels (a killed level after earlier trades leaves the
+  aggregate `PartiallyFilled`; stopping the sweep is the caller's decision).
+  Per vector, the entries go into the aggregate's spare capacity, else into
+  the level's buffer when it has room for both (adopted without
+  allocating), else the aggregate grows. On any refusal (`InvalidOperation`,
+  `CapacityExceeded`) the aggregate is unchanged and the level result still
+  holds its committed trades. Allocation pass (`PL_LATENCY_ONLY=alloc make
+  bench-latency`, two trades and one filled id per level): one level, 2.00
+  allocs/op (704 B) with reserve-and-copy against 0 with `try_absorb`;
+  three levels, 3.00 allocs/op (1,856 B) for reserve-and-copy and for
+  `try_absorb` over exactly sized level buffers, and 0 when the level
+  buffers have the spare capacity `match_order` gives them (ten resting
+  orders).
 
 ### Fixed
 

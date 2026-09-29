@@ -1,3 +1,4 @@
+mod absorb;
 mod analytics;
 mod capacity;
 mod filled_ids;

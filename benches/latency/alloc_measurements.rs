@@ -78,7 +78,189 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
         measure_snapshot_capture(config),
         measure_checksum_validate(config),
         measure_restore(config),
+        // Issue #219: folding per-level results into a multi-level aggregate.
+        measure_aggregate(config, 1, Aggregation::Copy, EXACT),
+        measure_aggregate(config, 1, Aggregation::Absorb, EXACT),
+        measure_aggregate(config, 1, Aggregation::Absorb, SPARE),
+        measure_aggregate(config, 3, Aggregation::Copy, EXACT),
+        measure_aggregate(config, 3, Aggregation::Absorb, EXACT),
+        measure_aggregate(config, 3, Aggregation::Absorb, SPARE),
+        measure_aggregate(config, 3, Aggregation::AbsorbReserved, EXACT),
     ]
+}
+
+/// How [`measure_aggregate`] folds each level's result into the aggregate.
+#[derive(Debug, Clone, Copy)]
+enum Aggregation {
+    /// The pre-#219 pattern: reserve the aggregate for the level's entries,
+    /// then copy them in with `add_trade` / `add_filled_order_id`.
+    Copy,
+    /// `MatchResult::try_absorb` alone: append into spare capacity, adopt a
+    /// roomy level buffer, or grow.
+    Absorb,
+    /// The documented caller pattern: absorb the first level with no
+    /// reservation, and reserve each later level's entry counts with
+    /// `try_reserve_trades` / `try_reserve_filled_order_ids` before
+    /// absorbing it.
+    AbsorbReserved,
+}
+
+/// Level result buffers requested for exactly their two trades. The
+/// allocator may hand back more, so [`measure_aggregate`] then fills the
+/// trade buffer to its observed capacity: it is always genuinely full and
+/// absorbing it deterministically takes the growth path.
+const EXACT: usize = 2;
+/// Level result buffers with spare capacity, as `match_order` sizes its own
+/// result (`min(incoming quantity, resting order count)`, here a level of
+/// ten resting orders).
+const SPARE: usize = 10;
+
+/// Measures folding `levels` per-level results (two trades and one filled id
+/// each, sized like `match_order` sizes its own result) into a fresh
+/// aggregate (issue #219), each level result created with
+/// `level_capacity`. An [`EXACT`] level has as many trades as its trade
+/// buffer's observed capacity (two unless the allocator over-provides),
+/// splitting the level's quantity between them. The level results are built before counting
+/// starts; the aggregates are kept and dropped after it stops, so only the
+/// folding itself is counted. `reps` is the number of aggregations. The
+/// `Copy` pattern reserves exactly each level's entry counts, the cheapest
+/// form of that pattern (a caller reserving each level's worst case before
+/// matching allocates at least as often).
+fn measure_aggregate(
+    config: &Config,
+    levels: usize,
+    aggregation: Aggregation,
+    level_capacity: usize,
+) -> AllocReport {
+    const TRADES_PER_LEVEL: u64 = 2;
+    /// Quantity each level executes, split across its trades.
+    const LEVEL_QTY: u64 = 1_000;
+    let reps = config.alloc_reps;
+    let taker = Id::from_u64(TAKER_ID_BASE);
+    let total = levels as u64 * LEVEL_QTY;
+    let mut inputs: Vec<Vec<MatchResult>> = (0..reps)
+        .map(|_| {
+            (0..levels as u64)
+                .map(|level| {
+                    let incoming = total - level * LEVEL_QTY;
+                    let mut result = MatchResult::try_with_capacity(
+                        taker,
+                        Quantity::new(incoming),
+                        level_capacity,
+                    )
+                    .expect("alloc measurement: level result capacity");
+                    let trades = if level_capacity == EXACT {
+                        result.trades().capacity() as u64
+                    } else {
+                        TRADES_PER_LEVEL
+                    };
+                    assert!(
+                        (1..=LEVEL_QTY).contains(&trades),
+                        "alloc measurement: level trade count"
+                    );
+                    let fill = LEVEL_QTY / trades;
+                    for step in 0..trades {
+                        let maker = level * LEVEL_QTY + step + 1;
+                        let quantity = if step + 1 == trades {
+                            LEVEL_QTY - fill * (trades - 1)
+                        } else {
+                            fill
+                        };
+                        result
+                            .add_trade(Trade::with_timestamp(
+                                Id::from_u64(TAKER_ID_BASE + 1_000 + maker),
+                                taker,
+                                Id::from_u64(maker),
+                                Price::new(LEVEL_PRICE),
+                                Quantity::new(quantity),
+                                Side::Buy,
+                                TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+                            ))
+                            .expect("alloc measurement: level trade");
+                    }
+                    result
+                        .add_filled_order_id(Id::from_u64(level * LEVEL_QTY + 1))
+                        .expect("alloc measurement: level filled id");
+                    assert!(
+                        level_capacity != EXACT
+                            || result.trades().len() == result.trades().capacity(),
+                        "alloc measurement: an EXACT level's trade buffer must be full"
+                    );
+                    result
+                })
+                .collect()
+        })
+        .collect();
+    let mut outputs: Vec<MatchResult> = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for level_results in &mut inputs {
+        let mut aggregate = MatchResult::new(taker, Quantity::new(total));
+        for (index, result) in level_results.iter_mut().enumerate() {
+            match aggregation {
+                Aggregation::Copy => {
+                    aggregate
+                        .try_reserve_trades(result.trades().len())
+                        .expect("alloc measurement: reserve trades");
+                    aggregate
+                        .try_reserve_filled_order_ids(result.filled_order_ids().len())
+                        .expect("alloc measurement: reserve filled ids");
+                    for &trade in result.trades().as_vec() {
+                        aggregate
+                            .add_trade(trade)
+                            .expect("alloc measurement: add_trade");
+                    }
+                    for &id in result.filled_order_ids() {
+                        aggregate
+                            .add_filled_order_id(id)
+                            .expect("alloc measurement: add_filled_order_id");
+                    }
+                }
+                Aggregation::Absorb => aggregate
+                    .try_absorb(result)
+                    .expect("alloc measurement: try_absorb"),
+                Aggregation::AbsorbReserved => {
+                    if index > 0 {
+                        aggregate
+                            .try_reserve_trades(result.trades().len())
+                            .expect("alloc measurement: reserve trades");
+                        aggregate
+                            .try_reserve_filled_order_ids(result.filled_order_ids().len())
+                            .expect("alloc measurement: reserve filled ids");
+                    }
+                    aggregate
+                        .try_absorb(result)
+                        .expect("alloc measurement: try_absorb");
+                }
+            }
+        }
+        outputs.push(aggregate);
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+
+    assert!(
+        outputs.iter().all(MatchResult::is_complete),
+        "alloc measurement (aggregate): every aggregate must fill the taker"
+    );
+    drop(outputs);
+    drop(inputs);
+
+    AllocReport {
+        name: match (levels, aggregation, level_capacity) {
+            (1, Aggregation::Copy, _) => "aggregate_1_copy",
+            (1, Aggregation::Absorb, EXACT) => "aggregate_1_absorb",
+            (1, _, _) => "aggregate_1_absorb_spare",
+            (_, Aggregation::Copy, _) => "aggregate_3_copy",
+            (_, Aggregation::Absorb, EXACT) => "aggregate_3_absorb",
+            (_, Aggregation::Absorb, _) => "aggregate_3_absorb_spare",
+            (_, Aggregation::AbsorbReserved, _) => "aggregate_3_absorb_rsv",
+        },
+        reps,
+        totals: after.since(before),
+    }
 }
 
 /// Measures `add_order` of a fresh order into a level with fixed resting
