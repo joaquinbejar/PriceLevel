@@ -122,7 +122,7 @@ fn fixture(case: &str) -> (MatchResult, MatchResult) {
             level(2 * LEVEL_QTY, 0, per_level, true),
             next(per_level, true),
         ),
-        _ => unreachable!("unknown absorb case {case}"),
+        _ => panic!("unknown absorb case {case}"),
     }
 }
 
