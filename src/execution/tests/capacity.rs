@@ -106,7 +106,7 @@ mod tests {
 
     /// Issue #219: each split reservation sizes only its own vector.
     #[test]
-    fn split_reservations_size_one_vector_each() {
+    fn test_match_result_split_reservations_size_one_vector_each() {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
         result.try_reserve_trades(4).expect("reserve trades");
         assert!(result.trades().capacity() >= 4);
@@ -136,7 +136,7 @@ mod tests {
     /// Issue #219: a refused split reservation reports its own resource and
     /// changes no observable field; spare capacity makes it allocation-free.
     #[test]
-    fn split_reservation_failures_change_nothing() {
+    fn test_match_result_split_reservation_failure_changes_nothing() {
         let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
         result.add_trade(trade(1, 5)).expect("add_trade");
         result

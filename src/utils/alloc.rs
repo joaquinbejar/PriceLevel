@@ -167,6 +167,68 @@ pub(crate) fn try_copy_str(
     Ok(out)
 }
 
+/// How [`merge_planned`] moves a source vector's elements behind a
+/// destination's without allocating (issue #219).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MergePlan {
+    /// Append into the destination's spare capacity; the destination's
+    /// buffer is kept.
+    Append,
+    /// Adopt the source's buffer: its spare capacity holds the destination's
+    /// elements, which are moved to its front. The source gets the
+    /// destination's emptied buffer.
+    Adopt,
+}
+
+/// The allocation-free way to put `src_len` elements behind a destination
+/// of `dest_len` elements, if there is one: [`MergePlan::Append`] when the
+/// destination's spare capacity fits them (a caller's reservation is used
+/// first), else [`MergePlan::Adopt`] when the source's capacity fits both.
+/// `None` means the destination must grow first.
+#[inline]
+#[must_use]
+pub(crate) fn plan_merge(
+    dest_len: usize,
+    dest_capacity: usize,
+    src_len: usize,
+    src_capacity: usize,
+) -> Option<MergePlan> {
+    if dest_capacity
+        .checked_sub(dest_len)
+        .is_some_and(|spare| spare >= src_len)
+    {
+        Some(MergePlan::Append)
+    } else if dest_len
+        .checked_add(src_len)
+        .is_some_and(|total| total <= src_capacity)
+    {
+        Some(MergePlan::Adopt)
+    } else {
+        None
+    }
+}
+
+/// Moves every element of `src` behind those of `dest`, per a `plan` that
+/// [`plan_merge`] returned for these two vectors (or [`MergePlan::Append`]
+/// after reserving `src.len()` on `dest`). Never allocates: `Append` fits
+/// the destination's spare capacity, and `Adopt` swaps the buffers, appends
+/// the destination's elements into the source buffer's spare capacity and
+/// rotates them to the front in place. `src` is left empty.
+#[inline]
+pub(crate) fn merge_planned<T>(dest: &mut Vec<T>, src: &mut Vec<T>, plan: MergePlan) {
+    match plan {
+        MergePlan::Append => dest.append(src),
+        MergePlan::Adopt => {
+            let moved = dest.len();
+            std::mem::swap(dest, src);
+            dest.append(src);
+            // `moved <= dest.len()`: the appended elements are exactly the
+            // `moved` former destination elements.
+            dest.rotate_right(moved);
+        }
+    }
+}
+
 /// An [`std::io::Write`] sink over a `Vec<u8>` whose every growth goes
 /// through [`try_reserve_vec`] (resource
 /// [`CapacityResource::SerializationBuffer`]).

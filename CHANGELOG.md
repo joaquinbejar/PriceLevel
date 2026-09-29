@@ -25,18 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MatchResult::try_absorb` (#219).** Folds one price level's result into
   a multi-level aggregate for the same taker. Trades and filled ids are
   appended in order; remaining quantity, completion and outcome are
-  recomputed (a level's `Killed` / `Rejected` is adopted only when nothing
-  traded); the level's error becomes the aggregate's. The level must have
-  been matched with the aggregate's remaining quantity, and a terminal
-  aggregate (error, killed, rejected) refuses further levels. An empty,
-  too-small aggregate vector takes the level's buffer by swap, so absorbing
-  the first level allocates nothing; otherwise the entries are appended into
-  the existing reservation. On any refusal (`InvalidOperation`,
+  recomputed (a level's `Killed` / `Rejected` is adopted only when the
+  aggregate then holds no trades and no filled ids); the level's error
+  becomes the aggregate's. The level must have been matched with the
+  aggregate's remaining quantity, and a failed, killed or rejected aggregate
+  refuses further levels (a killed level after earlier trades leaves the
+  aggregate `PartiallyFilled`; stopping the sweep is the caller's decision).
+  Per vector, the entries go into the aggregate's spare capacity, else into
+  the level's buffer when it has room for both (adopted without
+  allocating), else the aggregate grows. On any refusal (`InvalidOperation`,
   `CapacityExceeded`) the aggregate is unchanged and the level result still
   holds its committed trades. Allocation pass (`PL_LATENCY_ONLY=alloc make
-  bench-latency`): one level of two trades and one filled id, 2.00 allocs/op
-  (704 B) with reserve-and-copy against 0 with `try_absorb`; three such
-  levels, 3.00 allocs/op (1,856 B) for both.
+  bench-latency`, two trades and one filled id per level): one level, 2.00
+  allocs/op (704 B) with reserve-and-copy against 0 with `try_absorb`;
+  three levels, 3.00 allocs/op (1,856 B) for reserve-and-copy and for
+  `try_absorb` over exactly sized level buffers, and 0 when the level
+  buffers have the spare capacity `match_order` gives them (ten resting
+  orders).
 
 ### Fixed
 

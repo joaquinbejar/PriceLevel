@@ -1,5 +1,6 @@
 use crate::errors::{CapacityResource, PriceLevelError};
 use crate::execution::trade::Trade;
+use crate::utils::alloc::{MergePlan, merge_planned, plan_merge};
 use crate::utils::text::{
     MAX_TEXT_NESTING_DEPTH, MAX_TEXT_NESTING_DEPTH_INSIDE_LIST, NestingError, TopLevelSplit,
     try_push,
@@ -112,14 +113,26 @@ impl TradeList {
         self.trades.push(trade);
     }
 
-    /// Moves every trade of `other` to the end of this list, leaving `other`
-    /// empty (its capacity is kept). The caller must already have reserved
-    /// room for `other.len()` more trades (via [`Self::try_reserve`]): with
-    /// that spare capacity `Vec::append` never reallocates, so this cannot
-    /// fail or panic (issue #219).
+    /// The allocation-free way to put `other`'s trades behind this list's,
+    /// if any (issue #219; see [`plan_merge`]).
     #[inline]
-    pub(crate) fn append_reserved(&mut self, other: &mut TradeList) {
-        self.trades.append(&mut other.trades);
+    #[must_use]
+    pub(crate) fn plan_merge(&self, other: &TradeList) -> Option<MergePlan> {
+        plan_merge(
+            self.trades.len(),
+            self.trades.capacity(),
+            other.trades.len(),
+            other.trades.capacity(),
+        )
+    }
+
+    /// Moves every trade of `other` behind this list's, leaving `other`
+    /// empty, per a `plan` from [`Self::plan_merge`] (or
+    /// [`MergePlan::Append`] after [`Self::try_reserve`] of `other.len()`).
+    /// Never allocates, so it cannot fail or panic (issue #219).
+    #[inline]
+    pub(crate) fn merge_planned(&mut self, other: &mut TradeList, plan: MergePlan) {
+        merge_planned(&mut self.trades, &mut other.trades, plan);
     }
 
     /// Clones the list without an infallible allocation.

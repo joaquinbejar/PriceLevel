@@ -54,6 +54,31 @@ mod tests {
         result
     }
 
+    /// As [`level`], with the trade buffer sized exactly for its fills (no
+    /// spare capacity).
+    fn exact_level(incoming: u64, fills: &[(u64, u64, bool)]) -> MatchResult {
+        let mut result = MatchResult::try_with_capacity(
+            Id::from_u64(TAKER),
+            Quantity::new(incoming),
+            fills.len(),
+        )
+        .expect("capacity");
+        for &(maker, quantity, consumed) in fills {
+            result
+                .add_trade(trade(TAKER, maker, quantity))
+                .expect("add_trade");
+            if consumed {
+                result
+                    .add_filled_order_id(Id::from_u64(maker))
+                    .expect("filled id");
+            }
+        }
+        assert_eq!(result.trades().capacity(), fills.len());
+        let remaining = result.remaining_quantity();
+        result.finalize(remaining);
+        result
+    }
+
     fn json(result: &MatchResult) -> String {
         serde_json::to_string(result).expect("serialize")
     }
@@ -87,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn taker_mismatch_is_refused() {
+    fn test_try_absorb_taker_mismatch_refused_unchanged() {
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(10));
         let mut other = MatchResult::new(Id::from_u64(TAKER + 1), Quantity::new(10));
         other.add_trade(trade(TAKER + 1, 1, 4)).expect("add_trade");
@@ -96,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_mismatch_is_refused() {
+    fn test_try_absorb_quantity_mismatch_refused_unchanged() {
         // The level was matched with more, and with less, than the aggregate
         // has left.
         for incoming in [9, 11] {
@@ -108,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_aggregate_is_refused() {
+    fn test_try_absorb_terminal_aggregate_refused_unchanged() {
         let mut failed = level(20, &[(1, 5, true)]);
         failed.set_error(PriceLevelError::counter_exhausted(
             ExhaustedCounter::QueueSequence,
@@ -127,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_aggregate_takes_the_level_buffers_by_move() {
+    fn test_try_absorb_empty_aggregate_adopts_level_buffers() {
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
         let mut source =
             MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(20), 4).expect("cap");
@@ -168,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn sufficient_reservation_is_kept_and_appended_into() {
+    fn test_try_absorb_sufficient_reservation_appended_into() {
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
         aggregate.try_reserve(8).expect("reserve");
         let trades_ptr = aggregate.trades().as_vec().as_ptr();
@@ -193,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_filled_ids_are_not_lost() {
+    fn test_try_absorb_existing_filled_ids_kept() {
         // The aggregate holds a filled id but no trades: its trade vector is
         // moved in, its id vector is appended to.
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
@@ -213,11 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn append_path_keeps_order_and_refuses_growth_atomically() {
-        let mut aggregate = level(20, &[(1, 5, true)]);
-        let mut source = level(15, &[(2, 3, true), (3, 2, false)]);
+    fn test_try_absorb_growth_refusal_unchanged_then_appends_in_order() {
+        // Both buffers are exactly full, so neither the append nor the adopt
+        // plan fits and the aggregate must grow.
+        let mut aggregate = exact_level(20, &[(1, 5, true)]);
+        let mut source = exact_level(15, &[(2, 3, true), (3, 2, false)]);
 
-        // A capped trade list refuses the append: nothing changes.
+        // A capped trade list refuses the growth: nothing changes.
         {
             let _limit = trade_list_seam::limit_trades(2);
             let err = assert_refused_unchanged(&mut aggregate, &mut source);
@@ -247,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn filling_level_completes_the_aggregate() {
+    fn test_try_absorb_filling_level_completes_aggregate() {
         let mut aggregate = level(10, &[(1, 4, true)]);
         let mut source = level(6, &[(2, 6, true)]);
         aggregate.try_absorb(&mut source).expect("absorb");
@@ -259,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn first_error_wins() {
+    fn test_try_absorb_level_error_first_error_wins() {
         let first = PriceLevelError::counter_exhausted(ExhaustedCounter::QueueSequence);
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
         let mut source = level(20, &[(1, 5, true)]);
@@ -281,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn kill_and_reject_adopted_only_without_trades() {
+    fn test_try_absorb_kill_or_reject_adopted_only_without_trades() {
         for reject in [false, true] {
             let mark = |result: &mut MatchResult, quantity: u64| {
                 if reject {
@@ -317,7 +344,96 @@ mod tests {
     }
 
     #[test]
-    fn zero_quantity_aggregate_absorbs_a_vacuous_level() {
+    fn test_try_absorb_nonempty_aggregate_adopts_roomy_level_buffers() {
+        // The aggregate's buffers are full; the level's have room for both
+        // sets of entries, so the aggregate's entries move to the front of
+        // the level's buffers and nothing is allocated.
+        let mut aggregate =
+            MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(20), 1).expect("cap");
+        aggregate.add_trade(trade(TAKER, 1, 5)).expect("t1");
+        aggregate.add_filled_order_id(Id::from_u64(1)).expect("f1");
+        let mut source =
+            MatchResult::try_with_capacity(Id::from_u64(TAKER), Quantity::new(15), 8).expect("cap");
+        source.add_trade(trade(TAKER, 2, 3)).expect("t2");
+        source.add_filled_order_id(Id::from_u64(2)).expect("f2");
+        source.add_trade(trade(TAKER, 3, 2)).expect("t3");
+        let trades_ptr = source.trades().as_vec().as_ptr();
+        let filled_ptr = source.filled_order_ids().as_ptr();
+        let aggregate_trades_ptr = aggregate.trades().as_vec().as_ptr();
+
+        aggregate.try_absorb(&mut source).expect("absorb");
+
+        assert_eq!(aggregate.trades().as_vec().as_ptr(), trades_ptr);
+        assert_eq!(aggregate.filled_order_ids().as_ptr(), filled_ptr);
+        assert_eq!(aggregate.trades().capacity(), 8);
+        assert_eq!(
+            maker_ids(&aggregate),
+            vec![Id::from_u64(1), Id::from_u64(2), Id::from_u64(3)]
+        );
+        assert_eq!(
+            aggregate.filled_order_ids(),
+            &[Id::from_u64(1), Id::from_u64(2)]
+        );
+        assert_eq!(aggregate.remaining_quantity().as_u64(), 10);
+        // The level got the aggregate's emptied buffer back.
+        assert_eq!(source.trades().as_vec().as_ptr(), aggregate_trades_ptr);
+        assert!(source.trades().is_empty());
+        assert_round_trips(&aggregate);
+        assert_round_trips(&source);
+    }
+
+    #[test]
+    fn test_try_absorb_killed_level_into_ids_without_trades_not_filled() {
+        // `add_filled_order_id` can leave ids without trades; a kill must
+        // not be adopted then (Killed carries no filled ids).
+        let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
+        aggregate
+            .add_filled_order_id(Id::from_u64(7))
+            .expect("filled id");
+        let mut source = MatchResult::new(Id::from_u64(TAKER), Quantity::new(20));
+        source.mark_killed(20);
+
+        aggregate.try_absorb(&mut source).expect("absorb");
+
+        assert_eq!(aggregate.outcome(), MatchOutcome::NotFilled);
+        assert!(!aggregate.was_killed());
+        assert_eq!(aggregate.filled_order_ids(), &[Id::from_u64(7)]);
+        // The outcome agrees with the fields; the decoder still rejects the
+        // payload, but only because the caller-added id is backed by no
+        // trade (the same rejection the aggregate drew before absorbing).
+        let err = serde_json::from_str::<MatchResult>(&json(&aggregate))
+            .expect_err("an id without a trade is not a decodable result");
+        let message = err.to_string();
+        assert!(message.contains("not an in-order maker"), "{message}");
+        assert!(!message.contains("outcome contradicts"), "{message}");
+    }
+
+    #[test]
+    fn test_try_absorb_killed_level_after_trades_partially_filled_and_open() {
+        // A kill after earlier trades does not make the aggregate terminal:
+        // it stays PartiallyFilled and accepts a further level. Stopping the
+        // sweep is the caller's decision.
+        let mut aggregate = level(20, &[(1, 5, true)]);
+        let mut killed = MatchResult::new(Id::from_u64(TAKER), Quantity::new(15));
+        killed.mark_killed(15);
+
+        aggregate
+            .try_absorb(&mut killed)
+            .expect("absorb killed level");
+        assert_eq!(aggregate.outcome(), MatchOutcome::PartiallyFilled);
+        assert!(!aggregate.was_killed());
+
+        let mut next = level(15, &[(2, 15, true)]);
+        aggregate
+            .try_absorb(&mut next)
+            .expect("a later level is accepted");
+        assert!(aggregate.is_complete());
+        assert_eq!(aggregate.outcome(), MatchOutcome::Filled);
+        assert_round_trips(&aggregate);
+    }
+
+    #[test]
+    fn test_try_absorb_zero_quantity_vacuously_filled() {
         let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(0));
         let mut source = MatchResult::new(Id::from_u64(TAKER), Quantity::new(0));
         aggregate.try_absorb(&mut source).expect("absorb");
@@ -333,6 +449,9 @@ mod tests {
         fills: Vec<(u64, bool)>,
         killed: bool,
         error: bool,
+        /// Capacity the level result is created with (exercises the append,
+        /// adopt and grow plans).
+        capacity: usize,
     }
 
     fn level_spec() -> impl Strategy<Value = LevelSpec> {
@@ -340,11 +459,13 @@ mod tests {
             prop::collection::vec((1u64..=8, any::<bool>()), 0..4),
             any::<bool>(),
             prop::bool::weighted(0.15),
+            0usize..10,
         )
-            .prop_map(|(fills, killed, error)| LevelSpec {
+            .prop_map(|(fills, killed, error, capacity)| LevelSpec {
                 fills,
                 killed,
                 error,
+                capacity,
             })
     }
 
@@ -352,20 +473,33 @@ mod tests {
         #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
 
         #[test]
-        fn absorb_keeps_the_aggregate_invariants(
+        fn test_try_absorb_level_sequences_keep_invariants(
             initial in 0u64..=40,
             specs in prop::collection::vec(level_spec(), 0..6),
+            // Filled ids the caller added to the destination without trades.
+            prefix_ids in 0u64..3,
+            reservation in 0usize..6,
         ) {
             let mut aggregate = MatchResult::new(Id::from_u64(TAKER), Quantity::new(initial));
+            aggregate.try_reserve_trades(reservation).expect("reserve");
+            let mut expected_filled: Vec<Id> = Vec::new();
+            for id in 0..prefix_ids {
+                let id = Id::from_u64(900 + id);
+                aggregate.add_filled_order_id(id).expect("prefix id");
+                expected_filled.push(id);
+            }
             let mut next_maker = 1u64;
             let mut expected_makers: Vec<Id> = Vec::new();
-            let mut expected_filled: Vec<Id> = Vec::new();
             let mut first_error: Option<PriceLevelError> = None;
 
             for spec in specs {
                 let remaining = aggregate.remaining_quantity().as_u64();
-                let mut source =
-                    MatchResult::new(Id::from_u64(TAKER), Quantity::new(remaining));
+                let mut source = MatchResult::try_with_capacity(
+                    Id::from_u64(TAKER),
+                    Quantity::new(remaining),
+                    spec.capacity,
+                )
+                .expect("level capacity");
                 let mut level_makers = Vec::new();
                 let mut level_filled = Vec::new();
                 let mut left = remaining;
@@ -427,14 +561,21 @@ mod tests {
                     MatchOutcome::PartiallyFilled => {
                         remaining > 0 && !aggregate.trades().is_empty()
                     }
-                    MatchOutcome::NotFilled | MatchOutcome::Killed | MatchOutcome::Rejected => {
-                        remaining > 0 && aggregate.trades().is_empty()
+                    MatchOutcome::NotFilled => remaining > 0 && aggregate.trades().is_empty(),
+                    MatchOutcome::Killed | MatchOutcome::Rejected => {
+                        remaining > 0
+                            && aggregate.trades().is_empty()
+                            && aggregate.filled_order_ids().is_empty()
                     }
                 };
                 prop_assert!(consistent, "{:?}", aggregate.outcome());
-                let decoded: MatchResult =
-                    serde_json::from_str(&json(&aggregate)).expect("validated decode");
-                prop_assert_eq!(json(&decoded), json(&aggregate));
+                // Caller-added ids without trades are outside the decodable
+                // domain from the start; otherwise the aggregate round-trips.
+                if prefix_ids == 0 {
+                    let decoded: MatchResult =
+                        serde_json::from_str(&json(&aggregate)).expect("validated decode");
+                    prop_assert_eq!(json(&decoded), json(&aggregate));
+                }
                 // The drained source is a consistent empty result too.
                 prop_assert!(source.trades().is_empty());
                 prop_assert!(source.filled_order_ids().is_empty());
