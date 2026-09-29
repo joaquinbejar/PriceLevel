@@ -1802,10 +1802,11 @@ impl PriceLevel {
         })
     }
 
-    /// Trip the sticky poison flag when a [`Self::fok_guard`] poison is recovered
-    /// (issue #130) or found by the `match_order` fast path (issue #217). Logs `ERROR` exactly once — on the `false -> true`
-    /// transition decided by the `compare_exchange` — so a poisoned level is
-    /// reported but not flooded.
+    /// Trip the sticky poison flag when a [`Self::fok_guard`] poison is
+    /// recovered (issue #130) or found by the `match_order` fast path (issue
+    /// #217). Logs `ERROR` exactly once, on the `false -> true` transition
+    /// decided by the `compare_exchange`, so a poisoned level is reported but
+    /// not flooded.
     #[cold]
     fn mark_poisoned(&self) {
         if self.trip_poison() {
@@ -3091,6 +3092,14 @@ impl PriceLevel {
         // guard acquisition tripped the flag. `mark_poisoned` trips the flag
         // and logs `ERROR` only on that transition, so a poison already
         // recovered elsewhere is not logged again.
+        //
+        // Residual window: a non-fill-or-kill match that passes this check
+        // just before a concurrent fill-or-kill sweep unwinds (or that reads
+        // the lock's relaxed poison flag before the panic's store is visible)
+        // still sweeps a possibly half-mutated level. Closing it would need a
+        // guard on the non-fill-or-kill path, which is deliberately not taken
+        // (concurrent matchers on one level are unsupported anyway; see
+        // `# Concurrency`).
         if self.is_poisoned() {
             self.mark_poisoned();
             return Self::poisoned_match_result(
