@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PriceLevel::is_poisoned` is public (#217).** A read-only, `#[must_use]`
+  check of the level's sticky poison flag, for callers that want to check
+  before matching. The flag can become `true` concurrently, so the result of
+  the operation itself stays the authoritative report.
+
 ### Fixed
 
 - **A poisoned level reports its refusal through `MatchResult::error` (#217).**
@@ -20,8 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other positive-quantity taker is `NotFilled`, and a zero-quantity taker
   keeps its vacuously complete `Filled` result; in every case there are no
   trades, the full quantity remains and the level is untouched.
-  `PriceLevel::is_poisoned` is now public (read-only, sticky, can become
-  `true` concurrently).
 
 ## [0.10.0] - 2026-09-28
 

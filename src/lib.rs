@@ -1364,15 +1364,15 @@
 //! ));
 //! ```
 //!
-//! ## Migration Guide (poisoned level reported by `match_order` — v0.10.1)
+//! ## Migration Guide (poisoned level reported by `match_order`, v0.10.1)
 //!
 //! [`PriceLevel::match_order`] on a poisoned level (a panicked fill-or-kill
 //! guard holder, issue #130, or a broken internal invariant, issue #163)
 //! used to return an empty result with no error, indistinguishable from a
 //! level with nothing matchable. It now carries the same
 //! [`PriceLevelError::InvalidOperation`] that [`PriceLevel::add_order`] and
-//! [`PriceLevel::update_order`] return (issue #217). Trades, remaining quantity and the level are unchanged by
-//! the refusal, as before.
+//! [`PriceLevel::update_order`] return (issue #217). Trades, remaining
+//! quantity and the level are unchanged by the refusal, as before.
 //!
 //! | Taker | Before | Now |
 //! |-------|--------|-----|

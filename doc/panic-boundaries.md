@@ -183,13 +183,17 @@ the check cannot be misled into a spurious count error.
 Consequence of a subscriber panic inside a sweep: the queue and counters
 remain mutually consistent at step granularity, but the unwinding
 `match_order` loses the `MatchResult` for trades it already committed. For a
-`Fok` taker the unwind also poisons `fok_guard`, so the level fails fast
-(issue #130), which is the right outcome for a fill-or-kill that is no longer
-all-or-nothing. From then on mutators return `InvalidOperation` and every
+`Fok` taker the unwind also poisons `fok_guard`'s lock, so the level fails
+fast (issue #130), which is the right outcome for a fill-or-kill that is no
+longer all-or-nothing. The panic itself does not set the level's sticky
+poison flag: the next acquisition of the guard (`add_order`, `update_order`,
+`snapshot` or a fill-or-kill `match_order`) recovers the lock poison and
+trips it. From then on mutators return `InvalidOperation` and every
 `match_order` refuses before touching a maker, carrying that same error in
-`MatchResult::error` (issue #217) so a caller sweeping several levels stops
-there instead of treating the level as empty. Removing the loss entirely would require deferring every sweep
-event until after `match_order` returns. That is a proposed follow-up, not a
+`MatchResult::error` (issue #217), so a caller sweeping several levels stops
+there instead of treating the level as empty. Removing the loss entirely
+would require deferring every sweep event until after `match_order` returns.
+That is a proposed follow-up, not a
 current guarantee.
 
 ## Allocation limits (issue #164)

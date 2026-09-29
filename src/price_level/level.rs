@@ -1829,9 +1829,14 @@ impl PriceLevel {
             .is_ok()
     }
 
-    /// Returns `true` once the level is poisoned: a fill-or-kill guard holder
-    /// panicked mid-operation (issue #130) or a broken internal invariant was
-    /// detected after a committed mutation (issue #163).
+    /// Returns `true` once the level's sticky poison flag is set. The flag is
+    /// tripped in two ways: when a guard acquisition (`add_order`,
+    /// `update_order`, `snapshot` or a fill-or-kill `match_order`) recovers
+    /// the fill-or-kill guard's lock poison left by an earlier holder that
+    /// panicked mid-operation (issue #130), or when a broken internal
+    /// invariant is detected after a committed mutation (issue #163). A panic
+    /// does not set the flag by itself: until a later acquisition recovers
+    /// the lock poison, this returns `false`.
     ///
     /// The flag is sticky: once `true` it never returns to `false`, and the
     /// only way back is to reconstruct the level from a snapshot. It can
@@ -1868,6 +1873,15 @@ impl PriceLevel {
         } else {
             Ok(())
         }
+    }
+
+    /// Whether a taker takes the fill-or-kill path: a positive-quantity `Fok`
+    /// taker. Shared by `match_order`'s poisoned fast path and its `is_fok`
+    /// so the two cannot drift (issue #217).
+    #[inline]
+    #[must_use]
+    fn is_fok_taker(taker_tif: TimeInForce, incoming_quantity: u64) -> bool {
+        matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0
     }
 
     /// The result `match_order` returns when it refuses a poisoned level
@@ -3064,14 +3078,15 @@ impl PriceLevel {
         // `update_order` return carried in the result's error
         // slot, so a caller sweeping several levels can tell "poisoned,
         // refused" apart from "nothing matchable here" and stop instead of
-        // trading at a worse price. The FOK condition is computed as `is_fok`
-        // below, so both poisoned exits report the same outcome. The one-time
+        // trading at a worse price. The FOK condition is the same
+        // `is_fok_taker` as `is_fok` below, so both poisoned exits report the
+        // same outcome. The one-time
         // `ERROR` log was already emitted when the poison was first recovered.
         if self.is_poisoned() {
             return Self::poisoned_match_result(
                 taker_order_id,
                 incoming_quantity,
-                matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0,
+                Self::is_fok_taker(taker_tif, incoming_quantity),
             );
         }
 
@@ -3169,7 +3184,7 @@ impl PriceLevel {
         // queue and counters untouched — never a partial fill. `_fok_guard` is
         // `Some` only for a positive FOK taker; it drops at the end of the
         // method (after the sweep). The non-FOK paths take no fill-or-kill guard.
-        let is_fok = matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0;
+        let is_fok = Self::is_fok_taker(taker_tif, incoming_quantity);
 
         // Epoch headroom (issue #165): a sweep bumps the topology epoch when it
         // drains the level, so it is refused BEFORE any maker is touched once
@@ -3207,9 +3222,12 @@ impl PriceLevel {
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
             // to match a half-mutated level rather than sweep it (issue #130),
-            // reported exactly like the fast path above (issue #217). No event
-            // is emitted here, so returning with the guard still held is fine.
+            // reported exactly like the fast path above (issue #217). The
+            // guard is released first, as for the sibling kills (issue #172),
+            // so the refusal (including its error message allocation) runs
+            // with no mutator excluded.
             if self.is_poisoned() {
+                drop(guard);
                 return Self::poisoned_match_result(taker_order_id, incoming_quantity, is_fok);
             }
             #[cfg(test)]
