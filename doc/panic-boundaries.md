@@ -185,7 +185,10 @@ remain mutually consistent at step granularity, but the unwinding
 `match_order` loses the `MatchResult` for trades it already committed. For a
 `Fok` taker the unwind also poisons `fok_guard`, so the level fails fast
 (issue #130), which is the right outcome for a fill-or-kill that is no longer
-all-or-nothing. Removing the loss entirely would require deferring every sweep
+all-or-nothing. From then on mutators return `InvalidOperation` and every
+`match_order` refuses before touching a maker, carrying that same error in
+`MatchResult::error` (issue #217) so a caller sweeping several levels stops
+there instead of treating the level as empty. Removing the loss entirely would require deferring every sweep
 event until after `match_order` returns. That is a proposed follow-up, not a
 current guarantee.
 

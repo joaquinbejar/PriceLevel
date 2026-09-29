@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A poisoned level reports its refusal through `MatchResult::error` (#217).**
+  `PriceLevel::match_order` on a poisoned level returned an empty result with
+  no error, so a caller sweeping several levels could not tell "poisoned,
+  refused" apart from "nothing matchable here" and moved on to a worse price.
+  Both poisoned exits (the fast path and the fill-or-kill check after
+  acquiring the exclusive guard) now set the error to the same
+  `PriceLevelError::InvalidOperation` that `add_order` / `update_order`
+  return. A positive-quantity fill-or-kill taker is `Killed`, any
+  other positive-quantity taker is `NotFilled`, and a zero-quantity taker
+  keeps its vacuously complete `Filled` result; in every case there are no
+  trades, the full quantity remains and the level is untouched.
+  `PriceLevel::is_poisoned` is now public (read-only, sticky, can become
+  `true` concurrently).
+
 ## [0.10.0] - 2026-09-28
 
 ### Changed (breaking)

@@ -1829,12 +1829,34 @@ impl PriceLevel {
             .is_ok()
     }
 
-    /// Returns `true` if the level has been poisoned by a panicked guard holder
-    /// (issue #130).
+    /// Returns `true` once the level is poisoned: a fill-or-kill guard holder
+    /// panicked mid-operation (issue #130) or a broken internal invariant was
+    /// detected after a committed mutation (issue #163).
+    ///
+    /// The flag is sticky: once `true` it never returns to `false`, and the
+    /// only way back is to reconstruct the level from a snapshot. It can
+    /// become `true` concurrently (another thread's operation may trip it
+    /// right after this read), so a `false` answer is advisory, not a
+    /// guarantee for the next call. The authoritative report comes from the
+    /// operation itself: on a poisoned level [`Self::add_order`] and
+    /// [`Self::update_order`] return [`PriceLevelError::InvalidOperation`],
+    /// and [`Self::match_order`] refuses to match and carries that same error
+    /// in [`MatchResult::error`] (issue #217). [`Self::snapshot`] stays
+    /// available, so the level can be reconstructed from it.
     #[inline]
     #[must_use]
-    fn is_poisoned(&self) -> bool {
+    pub fn is_poisoned(&self) -> bool {
         self.level_poisoned.load(Ordering::Relaxed)
+    }
+
+    /// The error every entry point reports on a poisoned level (issues #130,
+    /// #217), built in one place so `add_order` / `update_order` and
+    /// `match_order` agree on it.
+    #[cold]
+    fn poisoned_error() -> PriceLevelError {
+        PriceLevelError::InvalidOperation {
+            message: "price level poisoned by a panicked operation or a broken internal invariant; reconstruct it from a snapshot".to_string(),
+        }
     }
 
     /// Fail-fast guard for the mutating public methods: `Err` once the level is
@@ -1842,12 +1864,33 @@ impl PriceLevel {
     #[inline]
     fn poison_check(&self) -> Result<(), PriceLevelError> {
         if self.is_poisoned() {
-            Err(PriceLevelError::InvalidOperation {
-                message: "price level poisoned by a panicked operation or a broken internal invariant; reconstruct it from a snapshot".to_string(),
-            })
+            Err(Self::poisoned_error())
         } else {
             Ok(())
         }
+    }
+
+    /// The result `match_order` returns when it refuses a poisoned level
+    /// (issue #217), shared by both poisoned exits (the fast path and the
+    /// fill-or-kill check right after acquiring the exclusive guard) so the
+    /// outcome does not depend on where the poison was detected. No trades,
+    /// the full remaining quantity, the level untouched, and the
+    /// [`Self::poisoned_error`] set. A positive-quantity fill-or-kill taker is
+    /// killed; every other positive-quantity taker is not filled; a
+    /// zero-quantity taker keeps its vacuously complete (`Filled`) result,
+    /// because a kill would force `is_complete = false` with nothing remaining.
+    #[cold]
+    fn poisoned_match_result(
+        taker_order_id: Id,
+        incoming_quantity: u64,
+        is_fok: bool,
+    ) -> MatchResult {
+        let mut result = MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+        if is_fok {
+            result.mark_killed(incoming_quantity);
+        }
+        result.set_error(Self::poisoned_error());
+        result
     }
 
     /// Genuinely poison the fill-or-kill guard by panicking while holding its
@@ -2848,6 +2891,19 @@ impl PriceLevel {
     /// counter also stops the sweep, with the maker untouched, but sets no
     /// error: that liquidity is simply unreachable until headroom frees up.
     ///
+    /// **Poisoned level (issues #130, #217).** A level that is already
+    /// poisoned (see [`Self::is_poisoned`]), or whose poison is recovered when
+    /// a fill-or-kill taker acquires the exclusive guard, refuses to match
+    /// before any maker is touched: no trades, the full remaining quantity,
+    /// the level unchanged, and [`MatchResult::error`] set to the same
+    /// [`PriceLevelError::InvalidOperation`] that [`Self::add_order`] /
+    /// [`Self::update_order`] return. A positive-quantity
+    /// fill-or-kill taker is killed ([`MatchResult::was_killed`]); every other
+    /// positive-quantity taker is `NotFilled`; a zero-quantity taker keeps its
+    /// vacuously complete `Filled` result with the error set. The refusal is
+    /// not logged again (the poison was logged at `ERROR` once, when it was
+    /// first detected).
+    ///
     /// Callers **must** check `result.error()` before resting a taker's
     /// remainder: a stopped sweep's remainder is not "no more liquidity", and
     /// resting it after a self-trade race can duplicate an id at this level.
@@ -2999,17 +3055,24 @@ impl PriceLevel {
         timestamp: TimestampMs,
         trade_id_generator: &UuidGenerator,
     ) -> MatchResult {
-        // -------- Fail-fast on a poisoned level (issue #130) --------
+        // -------- Fail-fast on a poisoned level (issues #130, #217) --------
         //
-        // If a guard holder panicked mid-operation the level may be half-mutated
-        // and cannot be trusted to match. `match_order` returns [`MatchResult`],
-        // not `Result`, so it cannot surface `InvalidOperation` the way
-        // `add_order` / `update_order` do; instead it REFUSES to match — an empty
-        // result (no trades, full remaining) — which is the safe outcome (the
-        // taker takes no liquidity from a corrupt level). The one-time `ERROR`
-        // log was already emitted when the poison was first recovered.
+        // If a guard holder panicked mid-operation (or a broken invariant was
+        // detected) the level may be half-mutated and cannot be trusted to
+        // match. It REFUSES to match: no trades, full remaining, the level
+        // untouched, and the same `InvalidOperation` that `add_order` /
+        // `update_order` return carried in the result's error
+        // slot, so a caller sweeping several levels can tell "poisoned,
+        // refused" apart from "nothing matchable here" and stop instead of
+        // trading at a worse price. The FOK condition is computed as `is_fok`
+        // below, so both poisoned exits report the same outcome. The one-time
+        // `ERROR` log was already emitted when the poison was first recovered.
         if self.is_poisoned() {
-            return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+            return Self::poisoned_match_result(
+                taker_order_id,
+                incoming_quantity,
+                matches!(taker_tif, TimeInForce::Fok) && incoming_quantity > 0,
+            );
         }
 
         // -------- Self-match is terminal (issue #126, tightening #120) --------
@@ -3143,9 +3206,11 @@ impl PriceLevel {
             fire_pre_fok_lock_hook();
             let guard = self.fok_write();
             // Acquiring the write guard may have just recovered a poison; refuse
-            // to match a half-mutated level rather than sweep it (issue #130).
+            // to match a half-mutated level rather than sweep it (issue #130),
+            // reported exactly like the fast path above (issue #217). No event
+            // is emitted here, so returning with the guard still held is fine.
             if self.is_poisoned() {
-                return MatchResult::new(taker_order_id, Quantity::new(incoming_quantity));
+                return Self::poisoned_match_result(taker_order_id, incoming_quantity, is_fok);
             }
             #[cfg(test)]
             fire_fok_locked_hook();
