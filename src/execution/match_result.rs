@@ -293,7 +293,10 @@ impl MatchResult {
     /// Never allocates when the spare capacity already suffices. The matching
     /// engine calls this before committing each maker step, so the step's
     /// [`Self::add_trade`] / [`Self::add_filled_order_id`] cannot then fail on
-    /// growth.
+    /// growth. A caller that knows the two counts separately (for example a
+    /// taker that only partially fills its makers produces trades but no
+    /// filled ids) can size each vector on its own with
+    /// [`Self::try_reserve_trades`] and [`Self::try_reserve_filled_order_ids`].
     ///
     /// # Errors
     ///
@@ -304,7 +307,47 @@ impl MatchResult {
     #[inline]
     pub fn try_reserve(&mut self, additional: usize) -> Result<(), PriceLevelError> {
         self.trades.try_reserve(additional)?;
-        self.try_reserve_filled(additional)
+        self.try_reserve_filled_order_ids(additional)
+    }
+
+    /// Reserves room for at least `additional` more trades (amortized
+    /// growth), leaving the filled-id vector alone (issue #219).
+    ///
+    /// Never allocates when the spare capacity already suffices; after `Ok`,
+    /// `additional` further [`Self::add_trade`] calls cannot fail on growth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] with resource
+    /// [`CapacityResource::Trades`] if the trade vector cannot grow (an
+    /// unrepresentable size or an allocator refusal). Every observable field
+    /// is left unchanged.
+    #[inline]
+    pub fn try_reserve_trades(&mut self, additional: usize) -> Result<(), PriceLevelError> {
+        self.trades.try_reserve(additional)
+    }
+
+    /// Reserves room for at least `additional` more filled order ids
+    /// (amortized growth), leaving the trade vector alone (issue #219).
+    ///
+    /// Never allocates when the spare capacity already suffices; after `Ok`,
+    /// `additional` further [`Self::add_filled_order_id`] calls cannot fail on
+    /// growth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PriceLevelError::CapacityExceeded`] with resource
+    /// [`CapacityResource::FilledOrderIds`] if the id vector cannot grow (an
+    /// unrepresentable size or an allocator refusal). Every observable field
+    /// is left unchanged.
+    #[inline]
+    pub fn try_reserve_filled_order_ids(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), PriceLevelError> {
+        self.filled_order_ids.try_reserve(additional).map_err(|_| {
+            PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, additional)
+        })
     }
 
     /// Exact-growth variant of [`Self::try_reserve`], used by the fill-or-kill
@@ -316,6 +359,13 @@ impl MatchResult {
             .map_err(|_| {
                 PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, additional)
             })
+    }
+
+    /// Capacity of the filled-id vector (issue #219 test seam).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_filled_order_ids_capacity(&self) -> usize {
+        self.filled_order_ids.capacity()
     }
 
     /// `true` when one more trade AND one more filled id fit without growing.
@@ -331,14 +381,6 @@ impl MatchResult {
         }
         self.trades.len() < self.trades.capacity()
             && self.filled_order_ids.len() < self.filled_order_ids.capacity()
-    }
-
-    /// Reserves `additional` filled-order-id slots (amortized growth).
-    #[inline]
-    fn try_reserve_filled(&mut self, additional: usize) -> Result<(), PriceLevelError> {
-        self.filled_order_ids.try_reserve(additional).map_err(|_| {
-            PriceLevelError::capacity_exceeded(CapacityResource::FilledOrderIds, additional)
-        })
     }
 
     /// Add a trade to this match result.
@@ -406,7 +448,7 @@ impl MatchResult {
     /// [`CapacityResource::FilledOrderIds`] if the id vector cannot grow; the
     /// result is left unchanged.
     pub fn add_filled_order_id(&mut self, order_id: Id) -> Result<(), PriceLevelError> {
-        self.try_reserve_filled(1)?;
+        self.try_reserve_filled_order_ids(1)?;
         // Capacity reserved: this push cannot reallocate.
         self.filled_order_ids.push(order_id);
         Ok(())

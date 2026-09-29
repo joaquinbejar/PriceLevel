@@ -104,6 +104,77 @@ mod tests {
         assert!(result.error().is_none());
     }
 
+    /// Issue #219: each split reservation sizes only its own vector.
+    #[test]
+    fn split_reservations_size_one_vector_each() {
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result.try_reserve_trades(4).expect("reserve trades");
+        assert!(result.trades().capacity() >= 4);
+        assert_eq!(result.test_filled_order_ids_capacity(), 0);
+
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result
+            .try_reserve_filled_order_ids(3)
+            .expect("reserve filled ids");
+        assert!(result.test_filled_order_ids_capacity() >= 3);
+        assert_eq!(result.trades().capacity(), 0);
+
+        // Zero never allocates.
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result.try_reserve_trades(0).expect("zero trades");
+        result.try_reserve_filled_order_ids(0).expect("zero ids");
+        assert_eq!(result.trades().capacity(), 0);
+        assert_eq!(result.test_filled_order_ids_capacity(), 0);
+
+        // The combined convenience still sizes both from one count.
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result.try_reserve(2).expect("reserve both");
+        assert!(result.trades().capacity() >= 2);
+        assert!(result.test_filled_order_ids_capacity() >= 2);
+    }
+
+    /// Issue #219: a refused split reservation reports its own resource and
+    /// changes no observable field; spare capacity makes it allocation-free.
+    #[test]
+    fn split_reservation_failures_change_nothing() {
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result.add_trade(trade(1, 5)).expect("add_trade");
+        result
+            .add_filled_order_id(Id::from_u64(1))
+            .expect("filled id");
+
+        let err = result
+            .try_reserve_trades(usize::MAX)
+            .expect_err("must overflow");
+        assert_capacity_error(&err, CapacityResource::Trades, usize::MAX);
+        let err = result
+            .try_reserve_filled_order_ids(usize::MAX)
+            .expect_err("must overflow");
+        assert_capacity_error(&err, CapacityResource::FilledOrderIds, usize::MAX);
+        let n = byte_overflow_len::<Id>();
+        let err = result
+            .try_reserve_filled_order_ids(n)
+            .expect_err("byte size overflows");
+        assert_capacity_error(&err, CapacityResource::FilledOrderIds, n);
+
+        let _limit = trade_list_seam::limit_trades(1);
+        let err = result.try_reserve_trades(1).expect_err("limited");
+        assert_capacity_error(&err, CapacityResource::Trades, 1);
+
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.filled_order_ids(), &[Id::from_u64(1)]);
+        assert_eq!(result.remaining_quantity().as_u64(), 15);
+        assert_eq!(result.outcome(), MatchOutcome::PartiallyFilled);
+        assert!(result.error().is_none());
+
+        // Spare capacity: the reservation reuses the buffer.
+        let mut result = MatchResult::new(Id::from_u64(10), Quantity::new(20));
+        result.try_reserve_filled_order_ids(4).expect("reserve");
+        let before = result.filled_order_ids().as_ptr();
+        result.try_reserve_filled_order_ids(4).expect("fits");
+        assert_eq!(result.filled_order_ids().as_ptr(), before);
+    }
+
     /// A failed growth in `add_trade` must leave every observable field as it
     /// was: the reservation happens before remaining / completion / outcome
     /// are committed.

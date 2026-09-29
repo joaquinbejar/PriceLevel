@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (recovering the guard does not clear the lock's poison). The answer can
   become `true` concurrently, so the result of the operation itself stays the
   authoritative report.
+- **Split `MatchResult` reservations (#219).**
+  `MatchResult::try_reserve_trades(n)` and
+  `MatchResult::try_reserve_filled_order_ids(n)` size one vector each, so a
+  caller that expects trades without fully consumed makers does not also
+  allocate a filled-id buffer. `try_reserve(n)` and `try_with_capacity` keep
+  sizing both vectors from one count.
 
 ### Fixed
 
