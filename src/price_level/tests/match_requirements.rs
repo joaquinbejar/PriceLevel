@@ -124,17 +124,29 @@ mod tests {
         level
     }
 
-    fn take(level: &PriceLevel, quantity: u64, tif: TimeInForce) -> MatchResult {
-        let generator = UuidGenerator::new(
+    fn generator() -> UuidGenerator {
+        UuidGenerator::new(
             Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").expect("namespace"),
-        );
+        )
+    }
+
+    fn take(level: &PriceLevel, quantity: u64, tif: TimeInForce) -> MatchResult {
+        take_with(level, quantity, tif, &generator())
+    }
+
+    fn take_with(
+        level: &PriceLevel,
+        quantity: u64,
+        tif: TimeInForce,
+        generator: &UuidGenerator,
+    ) -> MatchResult {
         level.match_order(
             quantity,
             Id::from_u64(TAKER),
             tif,
             TakerKind::Standard,
             TimestampMs::new(1_700_000_000_000),
-            &generator,
+            generator,
         )
     }
 
@@ -155,6 +167,9 @@ mod tests {
                 let headroom = level.counter_headroom();
                 assert!(headroom.epochs_open());
                 requirements.check(&headroom).expect("fits");
+                assert!(requirements.fills_completely(&headroom).expect("fits"));
+                assert!(!requirements.self_match_rejected());
+                assert!(!requirements.stops_at_replenish_overflow());
                 assert!(requirements.stop_error().is_none());
                 assert_eq!(requirements.incoming_quantity(), scenario.quantity);
                 let seq_before = level.test_queue().test_next_seq();
@@ -311,6 +326,132 @@ mod tests {
             assert!(result.is_complete(), "{tif:?}");
             assert_eq!(level.test_epochs(), (EPOCH_LIMIT, EPOCH_LIMIT - 1));
         }
+    }
+
+    #[test]
+    fn test_match_requirements_resting_taker_id_self_match_rejected_like_match() {
+        for tif in TIFS {
+            // The taker's id rests behind depth the dry run alone would
+            // count: `match_order` rejects the whole taker instead.
+            let level = level_with(vec![standard(1, 10), standard(TAKER, 5), standard(3, 10)]);
+            let requirements = level
+                .match_requirements(15, Id::from_u64(TAKER))
+                .expect("requirements");
+            assert!(requirements.self_match_rejected());
+            assert_eq!(requirements.fillable(), 0);
+            assert_eq!(requirements.trades(), 0);
+            assert_eq!(requirements.replenishes(), 0);
+            let headroom = level.counter_headroom();
+            requirements.check(&headroom).expect("nothing consumed");
+            assert!(!requirements.fills_completely(&headroom).expect("check"));
+
+            let result = take(&level, 15, tif);
+
+            assert!(result.was_rejected(), "{tif:?}");
+            assert!(result.trades().is_empty(), "{tif:?}");
+            assert!(result.error().is_none(), "{tif:?}");
+        }
+    }
+
+    #[test]
+    fn test_match_requirements_partial_level_does_not_fill_completely() {
+        let level = level_with(vec![standard(1, 10)]);
+        let requirements = level
+            .match_requirements(15, Id::from_u64(TAKER))
+            .expect("requirements");
+        let headroom = level.counter_headroom();
+        requirements.check(&headroom).expect("counters fit");
+        assert!(!requirements.fills_completely(&headroom).expect("check"));
+        assert_eq!(requirements.fillable(), 10);
+    }
+
+    /// Maker 1 trades one unit; the zero-visible iceberg behind it then draws
+    /// a tranche that overflows the level's visible counter, so the sweep
+    /// stops there after reserving the iceberg's FIFO sequence.
+    fn replenish_overflow_level() -> PriceLevel {
+        level_with(vec![
+            standard(1, 1),
+            iceberg(2, 0, u64::MAX / 2),
+            standard(3, u64::MAX / 2 + 10),
+        ])
+    }
+
+    #[test]
+    fn test_match_requirements_replenish_overflow_needs_one_more_sequence() {
+        // Zero headroom: `check` refuses, and a real non-fill-or-kill sweep
+        // stops with `QueueSequence` at the aborting step.
+        let level = replenish_overflow_level();
+        let requirements = level
+            .match_requirements(3, Id::from_u64(TAKER))
+            .expect("requirements");
+        assert!(requirements.stops_at_replenish_overflow());
+        assert_eq!(requirements.replenishes(), 0);
+        assert_eq!((requirements.fillable(), requirements.trades()), (1, 1));
+        level.test_queue().test_seed_next_seq(u64::MAX);
+        let err = requirements
+            .check(&level.counter_headroom())
+            .expect_err("the aborting step needs a sequence");
+        assert_eq!(err, exhausted(ExhaustedCounter::QueueSequence));
+        let result = take(&level, 3, TimeInForce::Gtc);
+        assert_eq!(result.error(), Some(&err));
+        assert_eq!(result.trades().len(), 1);
+
+        // Exactly one sequence: `check` passes and the sweep stops at the
+        // abort without an error, having used that sequence.
+        let level = replenish_overflow_level();
+        level.test_queue().test_seed_next_seq(u64::MAX - 1);
+        requirements
+            .check(&level.counter_headroom())
+            .expect("one sequence suffices");
+        let result = take(&level, 3, TimeInForce::Gtc);
+        assert!(result.error().is_none(), "{:?}", result.error());
+        assert_eq!(result.trades().len(), 1);
+        assert_eq!(result.remaining_quantity().as_u64(), 2);
+        assert_eq!(level.test_queue().test_next_seq(), u64::MAX);
+    }
+
+    #[test]
+    fn test_match_requirements_replenish_overflow_fok_killed_for_depth() {
+        // Fill-or-kill is unchanged: the dry run's short fill kills it for
+        // depth before any sequence check, with or without headroom.
+        for next_seq in [u64::MAX, u64::MAX - 1] {
+            let level = replenish_overflow_level();
+            level.test_queue().test_seed_next_seq(next_seq);
+            let requirements = level
+                .match_requirements(3, Id::from_u64(TAKER))
+                .expect("requirements");
+            let fills = requirements.fills_completely(&level.counter_headroom());
+            assert!(!matches!(fills, Ok(true)));
+            let result = take(&level, 3, TimeInForce::Fok);
+            assert!(result.was_killed());
+            assert!(result.error().is_none(), "{:?}", result.error());
+            assert_eq!(level.test_queue().test_next_seq(), next_seq);
+        }
+    }
+
+    #[test]
+    fn test_match_requirements_replenish_overflow_trading_step_takes_one_more_id() {
+        // The aborting reserve step would trade five units, so it reserves
+        // (and skips) a trade id as well as its sequence.
+        let level = level_with(vec![
+            standard(1, 1),
+            reserve(2, 5, u64::MAX / 2, u64::MAX / 2),
+            standard(3, u64::MAX / 2 + 10),
+        ]);
+        let requirements = level
+            .match_requirements(10, Id::from_u64(TAKER))
+            .expect("requirements");
+        assert!(requirements.stops_at_replenish_overflow());
+        assert_eq!(requirements.trades(), 1);
+        requirements
+            .check(&level.counter_headroom())
+            .expect("sequences available");
+        let ids = generator();
+        let before = ids.remaining();
+        let result = take_with(&level, 10, TimeInForce::Ioc, &ids);
+        assert!(result.error().is_none(), "{:?}", result.error());
+        assert_eq!(result.trades().len(), requirements.trades());
+        assert_eq!(before - ids.remaining(), requirements.trades() as u64 + 1);
     }
 
     #[test]

@@ -56,6 +56,8 @@ mod tests {
             replenishes: 0,
             parks: 0,
             error: None,
+            abort_reserves_sequence: false,
+            abort_reserves_trade_id: false,
         };
         if incoming_quantity == 0 {
             return Ok(dry);
@@ -123,7 +125,11 @@ mod tests {
                     .and_then(|v| v.checked_add(hidden_reduced))
                 {
                     Some(next) => projected_visible = next,
-                    None => break,
+                    None => {
+                        dry.abort_reserves_trade_id = consumed > 0;
+                        dry.abort_reserves_sequence = updated_order.is_some();
+                        break;
+                    }
                 }
             } else {
                 let Some(next) = projected_visible.checked_sub(consumed) else {

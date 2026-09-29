@@ -42,22 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `try_absorb` over exactly sized level buffers, and 0 when the level
   buffers have the spare capacity `match_order` gives them (ten resting
   orders).
-
-- **Counter headroom and match requirements (#218).**
+- **Counter headroom and match requirements (#218).** Valid only while the
+  caller excludes every mutator of every involved level for the whole
+  interval from the query through the last match (the level cannot hold its
+  guard across calls; a shared submit gate is not enough).
   `PriceLevel::counter_headroom() -> CounterHeadroom` (FIFO sequences left,
   whether both epochs are open) and
   `PriceLevel::match_requirements(incoming_quantity, taker_id) ->
   Result<MatchRequirements, _>` (fillable quantity, trades, replenishments,
-  parks and the step error the sweep would stop at, from the same dry run as
-  `matchable_quantity`). `MatchRequirements::check(&CounterHeadroom)`
-  returns `CounterExhausted` (`QueueSequence`, `TopologyEpoch` or
-  `MutationEpoch`) when the match would be refused. The replenishment count
-  comes from the dry run, so zero-visible reserve makers that take a
-  sequence before any trade are counted. Valid only while the caller
-  excludes every mutator of the involved levels for the whole interval
-  through the last match; statistics counters never refuse a match and are
-  not reported; poisoning, allocation and shared trade ids are not covered.
-  Read-only: no new work in `match_order` or `add_order`.
+  parks, self-match rejection, replenish-overflow stop and the step error the
+  sweep would stop at, from the same dry run as `matchable_quantity`).
+  `MatchRequirements::check(&CounterHeadroom)` returns `CounterExhausted`
+  (`QueueSequence`, `TopologyEpoch` or `MutationEpoch`) when the match would
+  be refused; `Ok` only rules out that error.
+  `MatchRequirements::fills_completely` also requires a full fill. The
+  sequence requirement is the dry run's replenishment count (zero-visible
+  reserve makers that take a sequence before any trade are counted) plus one
+  when the sweep stops at a replenish overflow. For a multi-level
+  fill-or-kill, query each level with the remainder it will receive and
+  execute each level with `Ioc`. Statistics counters never refuse a match
+  and are not reported. Not covered: poisoning, allocation, shared trade
+  ids, `stop_error`, self-match (reported, `check` passes), zero quantity
+  (`check` passes with an epoch closed), and `PostOnly` takers (not
+  meaningful; `MarketToLimit` matches like a standard taker). Read-only: no
+  new work in `match_order` or `add_order`.
 
 ### Fixed
 
