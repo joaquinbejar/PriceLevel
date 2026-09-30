@@ -59,6 +59,8 @@ impl std::fmt::Display for AllocReport {
 #[must_use]
 pub fn run_all(config: &Config) -> Vec<AllocReport> {
     vec![
+        // Issue #224: the fixed cost of creating an empty level.
+        measure_level_create(config),
         measure_add_order(config),
         measure_match_full(config),
         measure_uuid_try_next(config),
@@ -87,6 +89,31 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
         measure_aggregate(config, 3, Aggregation::Absorb, SPARE),
         measure_aggregate(config, 3, Aggregation::AbsorbReserved, EXACT),
     ]
+}
+
+/// Measures `PriceLevel::new` alone (issue #224): the fixed allocation cost
+/// of an empty level, dominated by the order queue's `DashMap` shard array.
+/// The levels are kept and dropped after counting stops, so only creation is
+/// counted.
+fn measure_level_create(config: &Config) -> AllocReport {
+    let reps = config.alloc_reps;
+    let mut levels = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for _ in 0..reps {
+        levels.push(PriceLevel::new(LEVEL_PRICE));
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+    drop(levels);
+
+    AllocReport {
+        name: "level_create",
+        reps,
+        totals: after.since(before),
+    }
 }
 
 /// How [`measure_aggregate`] folds each level's result into the aggregate.
