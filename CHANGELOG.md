@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `concurrent_add_standard_orders/16` against the host-sized map. Callers
   with many concurrent writers on one level can raise the count with
   `PriceLevel::with_order_shards` (up to 1024).
+- **Bounded up-front trade reservation in `match_order` (#225).** A non
+  fill-or-kill sweep pre-sizes its result for at most 16 trades and filled
+  ids; a deeper sweep grows once, to the remaining bound, before touching the
+  next maker, so the committed-prefix / `CapacityExceeded` contract holds. A
+  500-unit taker filled by the 1,000-unit front maker of a 1,000-maker level
+  now allocates 3.1 KB per call instead of 88.3 KB. Deeper sweeps pay one
+  regrowth: 100 makers 8.2 to 10.2 allocations (22.7 to 25.5 KB), 500 of
+  1,000 makers 33.5 to 35.5 (123.1 to 126.0 KB).
 
 ## [0.10.1] - 2026-09-29
 

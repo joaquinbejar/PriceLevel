@@ -251,9 +251,11 @@ impl MatchResult {
     /// A single match sweep at one price level produces at most one trade and
     /// at most one filled order id per maker step, so a good `capacity` is the
     /// tighter of the taker's incoming quantity and the level's resting order
-    /// count (see `PriceLevel::match_order`). Pre-sizing both vectors removes
-    /// the per-fill reallocations on the match hot path without over-reserving
-    /// for a small taker against a deep level.
+    /// count (see `PriceLevel::match_order`), which the engine further caps at
+    /// a small constant (issue #225) so a large taker against large makers
+    /// does not reserve for trades that never happen. Pre-sizing both vectors
+    /// removes the per-fill reallocations on the common short sweep; a longer
+    /// sweep grows through [`Self::try_reserve`] before its next step.
     ///
     /// The shared capacity is intentional (issue #148): independent
     /// trade / filled-id estimates were measured and rejected, because the
