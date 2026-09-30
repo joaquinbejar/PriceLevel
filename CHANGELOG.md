@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`PriceLevel::with_order_shards(price, shards)` (#224).** Creates an
+  empty level whose order storage has `shards` `DashMap` shards. The count
+  must be a power of two in `2..=1024`; anything else is
+  `PriceLevelError::InvalidFieldValue` (field `order_shards`). Fewer shards
+  cost less memory per level; more shards reduce shard-lock contention for
+  concurrent add / update / cancel on the same level. The count is runtime
+  tuning and is not snapshotted: a restored level uses the default.
+
+### Changed
+
+- **Host-independent default shard count per level (#224).** `OrderQueue`
+  used `DashMap::new()`, whose shard count is four times the available
+  parallelism rounded up to a power of two (128 shards on an 18-core host),
+  so every `PriceLevel::new` allocated a 16 KiB shard array that grew with
+  the machine. The default is now a fixed 32 shards on every host. Level
+  creation (`PL_LATENCY_ONLY=alloc make bench-latency`, new `level_create`
+  case, 2 allocations per level either way) allocates 4,211 bytes, down from
+  16,499 on main on an 18-core M5 Max; 8 shards measured 1,139, 16 measured
+  2,163 and 64 measured 8,307. 32 is the conservative default: contention
+  timings were taken on a heavily loaded host (load average 10 to 22) and
+  are indicative only, but 16 and 8 shards showed about +23% and +44% on
+  `concurrent_add_standard_orders/16` against the host-sized map. Callers
+  with many concurrent writers on one level can raise the count with
+  `PriceLevel::with_order_shards` (up to 1024).
+
 ## [0.10.1] - 2026-09-29
 
 ### Added

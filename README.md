@@ -1421,6 +1421,26 @@ Callers that sweep several levels should stop on
 first; the flag is sticky but can become `true` concurrently, so the
 result's error slot remains the authoritative report.
 
+### Per-level order shards (v0.10.2)
+
+Issue #224. A level's order storage used `DashMap::new()`, whose shard
+count follows the host (four times the available parallelism, rounded up
+to a power of two), so [`PriceLevel::new`] allocated a 16 KiB shard array
+on an 18-core machine and more on bigger ones. It now uses a fixed 32
+shards on every host: level creation allocates 4,211 bytes (was 16,499 on
+that 18-core host; 8 shards would be 1,139, 16 would be 2,163, 64 would
+be 8,307). 32 is a conservative default: contention timings, taken on a
+heavily loaded host and indicative only, showed 16 and 8 shards about 23%
+and 44% slower than the host-sized map for 16 threads adding to one
+level.
+
+[`PriceLevel::with_order_shards`] chooses another power of two in
+`2..=1024` (anything else is [`PriceLevelError::InvalidFieldValue`]).
+Fewer shards cost less memory per level; more shards reduce shard-lock
+contention between threads that add, update or cancel on the same level.
+The count is runtime tuning, not level state: snapshots do not carry it
+and a restored level uses the default. No other behaviour changes.
+
 
  ## Setup Instructions
 
