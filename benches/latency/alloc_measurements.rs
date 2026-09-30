@@ -72,6 +72,11 @@ pub fn run_all(config: &Config) -> Vec<AllocReport> {
         measure_match_iceberg_replenish(config),
         measure_match_iceberg_multi(config),
         measure_match_reserve_replenish(config),
+        // Issue #225: a large taker filled by the large front maker of a
+        // 1,000-maker level, and the same taker sweeping 500 of a 1,000
+        // unit-maker level.
+        measure_match_taker(config, "match_500_big_front", 1_000, 1_000, 500, 1),
+        measure_match_taker(config, "match_500_vs_1k_mkrs", 1_000, 1, 500, 500),
         // Issue #147: repeated small fills of one large standard maker, with
         // and without an externally retained `Arc` of that maker.
         measure_single_maker_partial(config, Retention::None),
@@ -428,6 +433,72 @@ fn measure_match_sweep_100(config: &Config) -> AllocReport {
 
     AllocReport {
         name: "match_sweep_100",
+        reps,
+        totals: after.since(before),
+    }
+}
+
+/// Measures one `taker_qty` taker per repetition against a fresh level of
+/// `makers` standard makers of `maker_qty` each (issue #225), asserting it
+/// fills with exactly `trades` trades.
+fn measure_match_taker(
+    config: &Config,
+    name: &'static str,
+    makers: u64,
+    maker_qty: u64,
+    taker_qty: u64,
+    trades: usize,
+) -> AllocReport {
+    let reps = config.alloc_reps;
+    let levels: Vec<PriceLevel> = (0..reps)
+        .map(|_| {
+            let level = PriceLevel::new(LEVEL_PRICE);
+            for i in 0..makers {
+                level
+                    .add_order(fixtures::standard_order(
+                        i,
+                        Side::Sell,
+                        maker_qty,
+                        TimeInForce::Gtc,
+                    ))
+                    .expect("alloc measurement: seeding a fresh maker id must succeed");
+            }
+            level
+        })
+        .collect();
+    let generator = fixtures::trade_id_generator();
+    let mut results = Vec::with_capacity(reps);
+
+    alloc::reset();
+    alloc::enable();
+    let before = AllocStats::read();
+    for (i, level) in levels.iter().enumerate() {
+        results.push(level.match_order(
+            taker_qty,
+            Id::from_u64(TAKER_ID_BASE + i as u64),
+            TimeInForce::Gtc,
+            TakerKind::Standard,
+            TimestampMs::new(EXECUTION_TIMESTAMP_MS),
+            &generator,
+        ));
+    }
+    let after = AllocStats::read();
+    alloc::disable();
+
+    let filled = results
+        .iter()
+        .filter(|r| r.outcome() == MatchOutcome::Filled && r.trades().len() == trades)
+        .count();
+    assert_eq!(
+        filled, reps,
+        "alloc measurement ({name}): every taker must fill with {trades} trades"
+    );
+
+    drop(results);
+    drop(levels);
+
+    AllocReport {
+        name,
         reps,
         totals: after.since(before),
     }

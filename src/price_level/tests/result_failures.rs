@@ -16,7 +16,7 @@ mod tests {
     use crate::execution::{MatchOutcome, MatchResult, TakerKind};
     use crate::execution::{match_result_seam, trade_list_seam};
     use crate::orders::{Hash32, Id, OrderType, Side, TimeInForce};
-    use crate::price_level::level::PriceLevel;
+    use crate::price_level::level::{PriceLevel, SWEEP_INITIAL_CAPACITY};
     use crate::utils::{Price, Quantity, TimestampMs};
     use uuid::Uuid;
 
@@ -420,5 +420,60 @@ mod tests {
                 .expect("bincode decode");
         assert_eq!(decoded.error(), result.error());
         assert_eq!(decoded.remaining_quantity(), result.remaining_quantity());
+    }
+
+    /// Issue #225: a large taker against one large maker reserves O(trades
+    /// produced), not O(taker quantity).
+    #[test]
+    fn test_match_order_large_taker_single_maker_reserves_bounded_capacity() {
+        let level = level_with(vec![standard(1, 1_000, Side::Sell)]);
+        let result = take(&level, 500, TimeInForce::Gtc);
+        assert!(result.error().is_none());
+        assert!(result.is_complete());
+        assert_eq!(result.trades().len(), 1);
+        assert!(result.trades().capacity() <= SWEEP_INITIAL_CAPACITY);
+        assert!(result.test_filled_order_ids_capacity() <= SWEEP_INITIAL_CAPACITY);
+        assert_eq!(level.visible_quantity(), 500);
+        assert_counters_match_queue(&level);
+    }
+
+    /// Issue #225: a sweep past the capped pre-size grows per step and still
+    /// records every trade and filled id in FIFO order.
+    #[test]
+    fn test_match_order_sweep_beyond_initial_capacity_records_all_in_fifo_order() {
+        let makers = (SWEEP_INITIAL_CAPACITY as u64) * 2 + 8;
+        let level = level_with((1..=makers).map(|id| standard(id, 1, Side::Sell)).collect());
+        let result = take(&level, makers, TimeInForce::Gtc);
+        assert!(result.error().is_none());
+        assert!(result.is_complete());
+        let want: Vec<Id> = (1..=makers).map(Id::from_u64).collect();
+        let traded: Vec<Id> = result
+            .trades()
+            .as_vec()
+            .iter()
+            .map(|t| t.maker_order_id())
+            .collect();
+        assert_eq!(traded, want);
+        assert_eq!(result.filled_order_ids(), want.as_slice());
+        assert_eq!(executed(&result), makers);
+        assert_eq!(level.order_count(), 0);
+        assert_counters_match_queue(&level);
+    }
+
+    /// Issue #225: growth failing right at the capped pre-size boundary stops
+    /// before the next maker with the committed prefix and a typed error.
+    #[test]
+    fn test_match_order_growth_failure_at_initial_capacity_reports_prefix() {
+        let makers = || {
+            (1..=(SWEEP_INITIAL_CAPACITY as u64) * 2)
+                .map(|id| standard(id, 1, Side::Sell))
+                .collect()
+        };
+        let quantity = (SWEEP_INITIAL_CAPACITY as u64) * 2;
+        let (capped, _, _) = capped_vs_control(makers, quantity, SWEEP_INITIAL_CAPACITY);
+        let want: Vec<Id> = (1..=SWEEP_INITIAL_CAPACITY as u64)
+            .map(Id::from_u64)
+            .collect();
+        assert_eq!(capped.filled_order_ids(), want.as_slice());
     }
 }

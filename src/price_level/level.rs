@@ -70,9 +70,22 @@ fn snapshot_attempts_exhausted(price: u128, last: Option<PriceLevelError>) -> Pr
     }
 }
 
+/// Upper bound on a non-fill-or-kill sweep's up-front result reservation
+/// (issue #225), in trades and filled ids.
+///
+/// [`sweep_capacity_hint`] bounds the trades a sweep can produce, but the
+/// bound is loose when makers are large: a 500-unit taker filled by one
+/// 1,000-unit maker would reserve 500 slots for a single trade. Capping the
+/// pre-size keeps a sweep's up-front allocation O(1); a sweep that needs more
+/// grows once, to the remaining [`sweep_capacity_hint`], through the per-step
+/// fallible reservation, which runs before the next maker is touched (the
+/// #164 / #170 contract).
+pub(crate) const SWEEP_INITIAL_CAPACITY: usize = 16;
+
 /// Pre-size hint for a non-fill-or-kill sweep's result vectors (issues #106,
 /// #163): the tighter of the taker quantity (each trade consumes at least one
 /// unit) and the resting-order count (each trade consumes one maker step).
+/// `match_order` further caps it at [`SWEEP_INITIAL_CAPACITY`] (issue #225).
 ///
 /// Width policy: `incoming_quantity` is converted with a checked
 /// `usize::try_from`, never a truncating cast. A quantity that does not fit
@@ -3749,7 +3762,11 @@ impl PriceLevel {
             }
             result
         } else {
-            let capacity = sweep_capacity_hint(incoming_quantity, self.order_count());
+            // Capped (issue #225): the hint is exact only for unit makers, so
+            // a large taker against large makers would over-reserve. Deeper
+            // sweeps grow through the per-step reservation below.
+            let capacity = sweep_capacity_hint(incoming_quantity, self.order_count())
+                .min(SWEEP_INITIAL_CAPACITY);
             MatchResult::try_with_capacity(
                 taker_order_id,
                 Quantity::new(incoming_quantity),
@@ -3916,11 +3933,18 @@ impl PriceLevel {
             // happened yet, so stopping here leaves queue, counters and result
             // in agreement: the result reports exactly the fills committed so
             // far and the true remainder.
+            //
+            // Growth past the capped pre-size (issue #225) reserves the
+            // remaining sweep bound in one step, so a deep sweep pays one
+            // regrowth instead of a doubling chain; the bound never exceeds
+            // the uncapped pre-size. A refused bulk reservation falls back to
+            // the single slot this step needs.
             if !result.has_step_capacity() {
                 if self.orders.is_empty() {
                     break;
                 }
-                if let Err(err) = result.try_reserve(1) {
+                let bulk = sweep_capacity_hint(remaining, self.order_count()).max(1);
+                if let Err(err) = result.try_reserve(bulk).or_else(|_| result.try_reserve(1)) {
                     sweep_error = Some((err, None));
                     break;
                 }
