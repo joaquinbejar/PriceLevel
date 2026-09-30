@@ -12,6 +12,7 @@ mod level;
 mod match_requirements;
 mod order_math_failures;
 mod order_queue;
+mod order_shards;
 mod parked_prefix;
 mod poisoned_match;
 mod residual_reuse;

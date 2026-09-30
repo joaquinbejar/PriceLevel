@@ -1299,6 +1299,25 @@ impl PriceLevel {
     }
 }
 
+/// Smallest shard count [`PriceLevel::with_order_shards`] accepts (issue
+/// #224); `DashMap` requires more than one shard.
+const MIN_ORDER_SHARDS: usize = 2;
+/// Largest shard count [`PriceLevel::with_order_shards`] accepts (issue
+/// #224): 1024 shards is already a 128 KiB shard array per level.
+const MAX_ORDER_SHARDS: usize = 1024;
+
+/// Error for a shard count [`PriceLevel::with_order_shards`] rejects.
+#[cold]
+#[inline(never)]
+fn invalid_order_shards(shards: usize) -> PriceLevelError {
+    PriceLevelError::InvalidFieldValue {
+        field: "order_shards".to_string(),
+        value: format!(
+            "{shards} (expected a power of two in {MIN_ORDER_SHARDS}..={MAX_ORDER_SHARDS})"
+        ),
+    }
+}
+
 impl PriceLevel {
     /// Create a new, empty price level.
     ///
@@ -1309,8 +1328,44 @@ impl PriceLevel {
     /// [`PriceLevelStatistics::reset_at`] or
     /// [`PriceLevelStatistics::reset`] on `stats()` while the level is still
     /// quiescent.
+    ///
+    /// The order storage uses the default shard count (32); see
+    /// [`PriceLevel::with_order_shards`] to choose another.
     #[must_use]
     pub fn new(price: u128) -> Self {
+        Self::with_queue(price, OrderQueue::new())
+    }
+
+    /// Create a new, empty price level whose order storage has `shards`
+    /// `DashMap` shards (issue #224).
+    ///
+    /// Each shard is a reader-writer lock over part of the level's order map.
+    /// Fewer shards cost less memory per level (the shard array is allocated
+    /// when the level is created); more shards reduce shard-lock contention
+    /// between threads that concurrently add, update or cancel orders on the
+    /// same level. [`PriceLevel::new`] uses 32 shards on every host, a
+    /// conservative compromise between memory per level and same-level write
+    /// contention; raise it for a level with many concurrent writers.
+    ///
+    /// The shard count is runtime tuning, not level state: it is not part of
+    /// a snapshot, and a level restored through
+    /// [`PriceLevel::from_snapshot`] (or the package / JSON variants) uses
+    /// the default. Otherwise the level behaves exactly like one from
+    /// [`PriceLevel::new`].
+    ///
+    /// # Errors
+    ///
+    /// [`PriceLevelError::InvalidFieldValue`] (field `order_shards`) if
+    /// `shards` is not a power of two in `2 ..= 1024`.
+    pub fn with_order_shards(price: u128, shards: usize) -> Result<Self, PriceLevelError> {
+        if !(MIN_ORDER_SHARDS..=MAX_ORDER_SHARDS).contains(&shards) || !shards.is_power_of_two() {
+            return Err(invalid_order_shards(shards));
+        }
+        Ok(Self::with_queue(price, OrderQueue::with_shards(shards)))
+    }
+
+    /// Builds an empty level around an empty `orders` queue.
+    fn with_queue(price: u128, orders: OrderQueue) -> Self {
         Self {
             price,
             visible_quantity: AtomicU64::new(0),
@@ -1318,7 +1373,7 @@ impl PriceLevel {
             // Unpinned side, zero resting orders.
             topology: AtomicU64::new(topology::pack(topology::TAG_UNPINNED, 0)),
             topology_epoch: AtomicU64::new(0),
-            orders: OrderQueue::new(),
+            orders,
             stats: Arc::new(PriceLevelStatistics::new()),
             fok_guard: FokGuard::new(),
             level_poisoned: AtomicBool::new(false),

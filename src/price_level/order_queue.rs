@@ -80,6 +80,28 @@ fn fire_remove_gap_hook(order_id: Id) {
     }
 }
 
+/// Default number of `DashMap` shards in a queue's order storage (issue
+/// #224).
+///
+/// `DashMap::new` sizes its shard array from the host (four times the
+/// available parallelism, rounded up to a power of two: 128 shards and a
+/// 16 KiB shard array on an 18-core machine), so every new level paid a
+/// host-dependent allocation. A fixed count keeps level creation small and
+/// identical on every host (a 4 KiB shard array). The trade-off: fewer
+/// shards cost less memory per level but make concurrent add / cancel on the
+/// same level more likely to contend for one shard lock. 32 is a
+/// conservative compromise: on a loaded 18-core host, 16 and 8 shards showed
+/// clearly slower 16-thread same-level adds than the host-sized map. Callers that want a different balance use
+/// [`PriceLevel::with_order_shards`](crate::PriceLevel::with_order_shards).
+pub(crate) const DEFAULT_ORDER_SHARDS: usize = 32;
+
+// `DashMap::with_shard_amount` asserts a shard count greater than 1 and a
+// power of two; pin both at compile time so `OrderQueue::new` can never reach
+// that assertion. A false condition makes the array lengths differ and fails
+// the build (a panic-free spelling of a const assertion).
+const _: [(); 1] =
+    [(); (DEFAULT_ORDER_SHARDS > 1 && DEFAULT_ORDER_SHARDS.is_power_of_two()) as usize];
+
 /// Error for an update decision whose order does not carry the id it is stored
 /// under (issue #163). Returned before any reservation or commit.
 #[cold]
@@ -496,11 +518,25 @@ pub(crate) enum FrontOutcome<R> {
 }
 
 impl OrderQueue {
-    /// Create a new empty order queue
+    /// Create a new empty order queue with the default number of storage
+    /// shards (32 on every host, issue #224).
     #[must_use]
     pub fn new() -> Self {
+        Self::with_shards(DEFAULT_ORDER_SHARDS)
+    }
+
+    /// Create a new empty order queue whose `DashMap` order storage has
+    /// `shards` shards (issue #224).
+    ///
+    /// `shards` must already be validated: greater than 1 and a power of two
+    /// (`DashMap::with_shard_amount` asserts both).
+    /// [`PriceLevel::with_order_shards`](crate::PriceLevel::with_order_shards)
+    /// is the public, validating entry point; [`OrderQueue::new`] passes the
+    /// compile-time checked [`DEFAULT_ORDER_SHARDS`].
+    #[must_use]
+    pub(crate) fn with_shards(shards: usize) -> Self {
         Self {
-            orders: DashMap::new(),
+            orders: DashMap::with_shard_amount(shards),
             index: SkipMap::new(),
             next_seq: AtomicU64::new(0),
         }
