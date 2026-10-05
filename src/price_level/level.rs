@@ -242,7 +242,7 @@ pub(crate) fn checked_counter_sub(counter: &AtomicU64, delta: u64) -> bool {
         return true;
     }
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
             c.checked_sub(delta)
         })
         .is_ok()
@@ -797,7 +797,7 @@ impl CounterDelta {
             Self::Decrease(d) => c.checked_sub(d),
         };
         counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .is_ok()
     }
 }
@@ -1750,7 +1750,7 @@ impl PriceLevel {
     fn bump_epoch(epoch: &AtomicU64) {
         // `Release` on success, as before; `Relaxed` on the refused path,
         // which publishes nothing (the value stays at the sentinel).
-        let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+        let _ = epoch.try_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
     }
 
     /// Refuse an operation, before it changes anything, when either epoch has
@@ -2331,7 +2331,7 @@ impl PriceLevel {
         self.orders.try_push_with(order_arc.clone(), || {
             if self
                 .visible_quantity
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                     c.checked_add(visible_qty)
                 })
                 .is_err()
@@ -2359,7 +2359,7 @@ impl PriceLevel {
             if hidden_qty != 0
                 && self
                     .hidden_quantity
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                         c.checked_add(hidden_qty)
                     })
                     .is_err()
@@ -4159,7 +4159,7 @@ impl PriceLevel {
                             // / downsize frees headroom.
                             let net_ok = self
                                 .visible_quantity
-                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+                                .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                                     c.checked_sub(consumed)
                                         .and_then(|v| v.checked_add(hidden_reduced))
                                 })
@@ -4496,14 +4496,14 @@ impl PriceLevel {
                         // entry lock was released by `match_front`).
                         let hidden_moved = self
                             .hidden_quantity
-                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+                            .try_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
                                 h.checked_sub(data.hidden_reduced)
                             })
                             .is_ok();
                         let visible_moved = hidden_moved
                             && self
                                 .visible_quantity
-                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                                .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                                     v.checked_add(data.hidden_reduced)
                                 })
                                 .is_ok();
@@ -4511,7 +4511,7 @@ impl PriceLevel {
                             // Undo the hidden half. It re-adds units this step
                             // just took, but it is checked too: a refusal only
                             // deepens the disagreement the poison reports.
-                            let _restored = self.hidden_quantity.fetch_update(
+                            let _restored = self.hidden_quantity.try_update(
                                 Ordering::Relaxed,
                                 Ordering::Relaxed,
                                 |h| h.checked_add(data.hidden_reduced),

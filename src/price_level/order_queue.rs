@@ -558,7 +558,7 @@ impl OrderQueue {
     #[inline]
     pub(crate) fn try_reserve_seq(&self) -> Result<ReservedSeq, PriceLevelError> {
         self.next_seq
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
             .map(ReservedSeq)

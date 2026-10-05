@@ -178,7 +178,7 @@ impl UuidGenerator {
         // is a single `checked_add`: allocation-free and panic-free. It fails
         // exactly when the counter is already at the `u64::MAX` sentinel.
         self.counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| PriceLevelError::capacity_exceeded(CapacityResource::IdSequence, 1))
@@ -204,7 +204,7 @@ impl UuidGenerator {
         // Same ordering argument as `try_reserve_one`.
         let start = self
             .counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(n)
             })
             .map_err(|_| exhausted())?;

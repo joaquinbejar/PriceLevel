@@ -248,7 +248,7 @@ impl<'a> WriteSeqGuard<'a> {
         // marker a reader watches for. Same ordering as the previous
         // `fetch_add(1, Relaxed)`; only the range check is new.
         if seq
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
                 if s <= STATS_SEQ_ENTRY_LIMIT {
                     seq_step(s)
                 } else {
@@ -279,7 +279,7 @@ impl Drop for WriteSeqGuard<'_> {
         // even ceiling, where the sequence then stays.
         let _ = self
             .seq
-            .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
+            .try_update(Ordering::Release, Ordering::Relaxed, seq_step);
     }
 }
 
@@ -401,7 +401,7 @@ impl PriceLevelStatistics {
     #[inline]
     fn rollback_usize(target: &AtomicUsize, value: usize) -> bool {
         target
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                 c.checked_sub(value)
             })
             .is_ok()
@@ -411,7 +411,7 @@ impl PriceLevelStatistics {
     #[inline]
     fn rollback_u64(target: &AtomicU64, value: u64) -> bool {
         target
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                 c.checked_sub(value)
             })
             .is_ok()
@@ -640,7 +640,7 @@ impl PriceLevelStatistics {
         kind: ExhaustedCounter,
     ) -> Result<(), OrderEventDrop> {
         if counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
             .is_ok()
         {
             return Ok(());

@@ -324,7 +324,7 @@ impl<'a> Announcement<'a> {
         // degrades to no announcement instead. The CAS loop runs only on the
         // contended path.
         let announced = counter
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
             .is_ok();
         #[cfg(test)]
         if announced {
@@ -345,7 +345,7 @@ impl Drop for Announcement<'_> {
     fn drop(&mut self) {
         if let Some(counter) = self.counter {
             // Cannot fail: this announcement's own increment is still counted.
-            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+            let _ = counter.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
         }
     }
 }
