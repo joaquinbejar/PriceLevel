@@ -111,14 +111,14 @@ publish: readme
 .PHONY: coverage
 coverage:
 	export LOGLEVEL=WARN
-	cargo install cargo-tarpaulin
+	cargo install cargo-tarpaulin --locked --version '>=0.37.5'
 	mkdir -p coverage
 	cargo tarpaulin --exclude-files 'benches/**' --all-features --workspace --timeout 120 --out Xml
 
 .PHONY: coverage-html
 coverage-html:
 	export LOGLEVEL=WARN
-	cargo install cargo-tarpaulin
+	cargo install cargo-tarpaulin --locked --version '>=0.37.5'
 	mkdir -p coverage
 	cargo tarpaulin --exclude-files 'benches/**' --verbose --all-features --workspace --timeout 120 --out Html
 
