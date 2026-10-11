@@ -1,0 +1,536 @@
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/level.rs:232:10
+    |
+232 |         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |          ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+232 -         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+232 +         .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/level.rs:787:14
+    |
+787 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+787 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+787 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, step)
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:1685:23
+     |
+1685 |         let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+     |                       ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+1685 -         let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+1685 +         let _ = epoch.try_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:2266:18
+     |
+2266 |                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                  ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+2266 -                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+2266 +                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:2294:22
+     |
+2294 |                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                      ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+2294 -                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+2294 +                     .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4083:34
+     |
+4083 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4083 -                                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+4083 +                                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4420:30
+     |
+4420 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4420 -                             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+4420 +                             .try_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4427:34
+     |
+4427 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4427 -                                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+4427 +                                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4435:66
+     |
+4435 | ...                   let _restored = self.hidden_quantity.fetch_update(
+     |                                                            ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4435 -                             let _restored = self.hidden_quantity.fetch_update(
+4435 +                             let _restored = self.hidden_quantity.try_update(
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/fok_guard.rs:327:14
+    |
+327 |             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+327 -             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+327 +             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/fok_guard.rs:348:29
+    |
+348 |             let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+    |                             ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+348 -             let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+348 +             let _ = counter.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/order_queue.rs:525:14
+    |
+525 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+525 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+525 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:251:14
+    |
+251 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+251 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+251 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:282:14
+    |
+282 |             .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+282 -             .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
+282 +             .try_update(Ordering::Release, Ordering::Relaxed, seq_step);
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:404:14
+    |
+404 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+404 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+404 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:414:14
+    |
+414 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+414 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+414 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:643:14
+    |
+643 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+643 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+643 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/utils/uuid.rs:181:14
+    |
+181 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+181 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+181 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/utils/uuid.rs:207:14
+    |
+207 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+207 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+207 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |
+
+warning: `pricelevel` (lib) generated 19 warnings (run `cargo fix --lib -p pricelevel` to apply 19 suggestions)
+    Finished `bench` profile [optimized] target(s) in 0.03s
+     Running benches/mod.rs (/home/joaquin/pl229/target-base/release/deps/benches-d1188cab4bb408e9)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2: Collecting 100 samples in estimated 5.0042 s (5.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/2
+                        time:   [644.35 ns 653.05 ns 661.90 ns]
+                        thrpt:  [3.0216 Melem/s 3.0626 Melem/s 3.1039 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2: Collecting 100 samples in estimated 5.0016 s (5.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/2
+                        time:   [642.59 ns 649.51 ns 656.85 ns]
+                        thrpt:  [3.0448 Melem/s 3.0793 Melem/s 3.1124 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2: Collecting 100 samples in estimated 5.0028 s (4.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/2
+                        time:   [508.63 ns 515.98 ns 524.66 ns]
+                        thrpt:  [3.8120 Melem/s 3.8761 Melem/s 3.9321 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/2: Collecting 100 samples in estimated 5.0020 s (9.6M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/2
+                        time:   [436.24 ns 439.34 ns 442.73 ns]
+                        thrpt:  [4.5174 Melem/s 4.5523 Melem/s 4.5847 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  7 (7.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Collecting 100 samples in estimated 5.0031 s (4.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/2: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/2
+                        time:   [590.80 ns 596.71 ns 603.10 ns]
+                        thrpt:  [3.3162 Melem/s 3.3517 Melem/s 3.3852 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4: Collecting 100 samples in estimated 5.0072 s (2.8M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/4
+                        time:   [1.2572 µs 1.3169 µs 1.3965 µs]
+                        thrpt:  [2.8643 Melem/s 3.0375 Melem/s 3.1817 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4: Collecting 100 samples in estimated 5.0035 s (2.8M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/4
+                        time:   [1.2374 µs 1.2449 µs 1.2532 µs]
+                        thrpt:  [3.1919 Melem/s 3.2130 Melem/s 3.2327 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4: Collecting 100 samples in estimated 5.0074 s (2.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/4
+                        time:   [671.06 ns 682.63 ns 694.92 ns]
+                        thrpt:  [5.7560 Melem/s 5.8597 Melem/s 5.9607 Melem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/4: Collecting 100 samples in estimated 5.0022 s (5.1M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/4
+                        time:   [764.86 ns 767.72 ns 770.49 ns]
+                        thrpt:  [5.1915 Melem/s 5.2102 Melem/s 5.2297 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Collecting 100 samples in estimated 5.0050 s (2.0M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/4: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/4
+                        time:   [1.1951 µs 1.2050 µs 1.2159 µs]
+                        thrpt:  [3.2897 Melem/s 3.3194 Melem/s 3.3471 Melem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8: Collecting 100 samples in estimated 5.0076 s (1.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/8
+                        time:   [2.5909 µs 2.6069 µs 2.6220 µs]
+                        thrpt:  [3.0511 Melem/s 3.0688 Melem/s 3.0877 Melem/s]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8: Collecting 100 samples in estimated 5.0113 s (1.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/8
+                        time:   [2.6103 µs 2.6259 µs 2.6406 µs]
+                        thrpt:  [3.0296 Melem/s 3.0466 Melem/s 3.0648 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8: Collecting 100 samples in estimated 5.0026 s (1.1M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/8
+                        time:   [1.3869 µs 1.4018 µs 1.4190 µs]
+                        thrpt:  [5.6378 Melem/s 5.7069 Melem/s 5.7685 Melem/s]
+Found 11 outliers among 100 measurements (11.00%)
+  6 (6.00%) high mild
+  5 (5.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/8: Collecting 100 samples in estimated 5.0071 s (2.7M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/8
+                        time:   [1.5180 µs 1.5264 µs 1.5343 µs]
+                        thrpt:  [5.2143 Melem/s 5.2412 Melem/s 5.2699 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Collecting 100 samples in estimated 5.0110 s (889k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/8: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/8
+                        time:   [2.8858 µs 2.9289 µs 2.9848 µs]
+                        thrpt:  [2.6802 Melem/s 2.7314 Melem/s 2.7722 Melem/s]
+Found 14 outliers among 100 measurements (14.00%)
+  1 (1.00%) low mild
+  11 (11.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16: Collecting 100 samples in estimated 5.0036 s (712k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_standard_orders/16
+                        time:   [4.7889 µs 4.8049 µs 4.8222 µs]
+                        thrpt:  [3.3180 Melem/s 3.3299 Melem/s 3.3411 Melem/s]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16: Collecting 100 samples in estimated 5.0105 s (702k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_add_mixed_orders/16
+                        time:   [4.9413 µs 4.9602 µs 4.9797 µs]
+                        thrpt:  [3.2131 Melem/s 3.2257 Melem/s 3.2380 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16: Collecting 100 samples in estimated 5.0410 s (545k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_match_standard_orders/16
+                        time:   [2.8200 µs 2.8282 µs 2.8382 µs]
+                        thrpt:  [5.6373 Melem/s 5.6573 Melem/s 5.6738 Melem/s]
+Found 12 outliers among 100 measurements (12.00%)
+  2 (2.00%) high mild
+  10 (10.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/16: Collecting 100 samples in estimated 5.0174 s (1.4M iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_mixed_operations/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_mixed_operations/16
+                        time:   [2.8754 µs 2.8830 µs 2.8908 µs]
+                        thrpt:  [5.5349 Melem/s 5.5497 Melem/s 5.5645 Melem/s]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Warming up for 3.0000 s
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Collecting 100 samples in estimated 5.0330 s (429k iterations)
+Benchmarking PriceLevel - Concurrent Operations/concurrent_cancel_orders/16: Analyzing
+PriceLevel - Concurrent Operations/concurrent_cancel_orders/16
+                        time:   [6.0217 µs 6.0815 µs 6.1457 µs]
+                        thrpt:  [2.6035 Melem/s 2.6309 Melem/s 2.6570 Melem/s]
+Found 16 outliers among 100 measurements (16.00%)
+  1 (1.00%) high mild
+  15 (15.00%) high severe
+
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/0
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/0: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/0: Collecting 100 samples in estimated 5.0032 s (4.5M iterations)
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/0: Analyzing
+PriceLevel - Contention Patterns/read_write_ratio/0
+                        time:   [1.1795 µs 1.1930 µs 1.2071 µs]
+                        thrpt:  [6.6274 Melem/s 6.7056 Melem/s 6.7826 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/25
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/25: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/25: Collecting 100 samples in estimated 5.0128 s (1.4M iterations)
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/25: Analyzing
+PriceLevel - Contention Patterns/read_write_ratio/25
+                        time:   [3.7213 µs 3.7453 µs 3.7719 µs]
+                        thrpt:  [2.1209 Melem/s 2.1360 Melem/s 2.1498 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) high mild
+  7 (7.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/50
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/50: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/50: Collecting 100 samples in estimated 5.0005 s (858k iterations)
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/50: Analyzing
+PriceLevel - Contention Patterns/read_write_ratio/50
+                        time:   [7.0994 µs 7.2089 µs 7.3458 µs]
+                        thrpt:  [1.0891 Melem/s 1.1097 Melem/s 1.1269 Melem/s]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/75
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/75: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/75: Collecting 100 samples in estimated 5.0205 s (601k iterations)
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/75: Analyzing
+PriceLevel - Contention Patterns/read_write_ratio/75
+                        time:   [15.485 µs 15.660 µs 15.867 µs]
+                        thrpt:  [504.21 Kelem/s 510.84 Kelem/s 516.64 Kelem/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/95
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/95: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/95: Collecting 100 samples in estimated 5.0067 s (283k iterations)
+Benchmarking PriceLevel - Contention Patterns/read_write_ratio/95: Analyzing
+PriceLevel - Contention Patterns/read_write_ratio/95
+                        time:   [24.228 µs 25.096 µs 26.210 µs]
+                        thrpt:  [305.23 Kelem/s 318.78 Kelem/s 330.19 Kelem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/0
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/0: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/0: Collecting 100 samples in estimated 5.0003 s (3.4M iterations)
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/0: Analyzing
+PriceLevel - Contention Patterns/hot_spot_contention/0
+                        time:   [1.4300 µs 1.4480 µs 1.4661 µs]
+                        thrpt:  [5.4568 Melem/s 5.5248 Melem/s 5.5945 Melem/s]
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/20
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/20: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/20: Collecting 100 samples in estimated 5.0001 s (3.5M iterations)
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/20: Analyzing
+PriceLevel - Contention Patterns/hot_spot_contention/20
+                        time:   [1.4228 µs 1.4371 µs 1.4518 µs]
+                        thrpt:  [5.5106 Melem/s 5.5666 Melem/s 5.6226 Melem/s]
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) low mild
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/50
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/50: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/50: Collecting 100 samples in estimated 5.0047 s (3.6M iterations)
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/50: Analyzing
+PriceLevel - Contention Patterns/hot_spot_contention/50
+                        time:   [1.4190 µs 1.4303 µs 1.4415 µs]
+                        thrpt:  [5.5499 Melem/s 5.5931 Melem/s 5.6377 Melem/s]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/80
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/80: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/80: Collecting 100 samples in estimated 5.0018 s (3.3M iterations)
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/80: Analyzing
+PriceLevel - Contention Patterns/hot_spot_contention/80
+                        time:   [1.4850 µs 1.4952 µs 1.5054 µs]
+                        thrpt:  [5.3141 Melem/s 5.3504 Melem/s 5.3873 Melem/s]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) low mild
+  7 (7.00%) high mild
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/100
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/100: Warming up for 3.0000 s
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/100: Collecting 100 samples in estimated 5.0030 s (3.2M iterations)
+Benchmarking PriceLevel - Contention Patterns/hot_spot_contention/100: Analyzing
+PriceLevel - Contention Patterns/hot_spot_contention/100
+                        time:   [1.5324 µs 1.5442 µs 1.5579 µs]
+                        thrpt:  [5.1351 Melem/s 5.1805 Melem/s 5.2205 Melem/s]
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+
