@@ -1,0 +1,13 @@
+case,side,metric,median_pct,spread_pp,per_round,base_vals
+contention_gtc_matcher_x32,s16,p50,1.8,8.8,10.1 1.8 1.3,907 928 913
+contention_gtc_matcher_x32,s32,p50,1.8,5.8,-1.8 4.0 1.8,907 928 913
+contention_gtc_matcher_x32,s64,p50,-0.8,10.1,3.1 -7.0 -0.8,907 928 913
+contention_gtc_matcher_x32,s16,p99,8.5,7.0,11.0 4.1 8.5,1133 1154 1147
+contention_gtc_matcher_x32,s32,p99,3.8,2.4,3.8 3.8 1.4,1133 1154 1147
+contention_gtc_matcher_x32,s64,p99,1.3,9.3,4.6 -4.7 1.3,1133 1154 1147
+contention_fok_matcher_x32,s16,p50,-3.9,12.8,-15.6 -2.8 -3.9,12135 12345 12060
+contention_fok_matcher_x32,s32,p50,-4.5,7.7,-9.6 -1.9 -4.5,12135 12345 12060
+contention_fok_matcher_x32,s64,p50,-12.7,18.1,-12.7 -17.3 0.8,12135 12345 12060
+contention_fok_matcher_x32,s16,p99,-3.4,7.8,-7.5 0.3 -3.4,13869 14432 14064
+contention_fok_matcher_x32,s32,p99,-1.0,89.0,86.6 -1.0 -2.4,13869 14432 14064
+contention_fok_matcher_x32,s64,p99,3.6,15.0,3.6 -9.3 5.8,13869 14432 14064

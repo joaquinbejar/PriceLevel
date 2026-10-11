@@ -1263,3 +1263,96 @@ over 32 calls, not single-call tails, and are not used for tail claims
 | `contention_gtc_matcher` p50 | +3.6% batched (E); +6.1% single-call, one tick | pass (batched) |
 | `contention_fok_matcher` p50 | +3.5% batched (E) | pass (batched) |
 | Contended p99 / p99.9 | see the tail table | within observed noise, no claim |
+
+## Issue #229: per-level shard default on a quiet host
+
+The 32-shard default from #224 was picked while the development host was
+heavily loaded (load average 10 to 22), so its contention numbers were
+indicative only. This section measures 16, 32 and 64 shards on an idle host.
+The earlier #224 numbers in `CHANGELOG.md` are kept as measured.
+
+### Host and sides
+
+- Host: Intel i7-12650H (16 threads), 31 GB, Ubuntu, CPU governor
+  `performance`, rustc / cargo 1.99.0. Load average at most 1.00 before
+  every run (checked before each run, recorded in `r*_*.meta`); the 1-minute
+  load climbs to about 7 during each run because the 16-thread benches load
+  the machine themselves.
+- `base`: `70c0155` (0.10.1, before #224), whose `DashMap::new()` gives
+  4 x 16 = 64 shards on this host. Its `benches/` were replaced with main's
+  (only `benches/latency/alloc_measurements.rs` differed: the
+  `level_create` case); `src/` is untouched.
+- `s16`, `s32`, `s64`: `ac1738e` (main after 0.10.2) with
+  `DEFAULT_ORDER_SHARDS` edited locally. `s64` is a control: it matches the
+  host-sized map and differs from `base` only by #225 and the constant.
+- Each side has its own worktree and target directory.
+
+### Protocol
+
+3 interleaved rounds in rotating order. Each run is
+`cargo bench --bench benches -- "Concurrent|Contention"` (Criterion
+defaults), then the latency harness with `PL_LATENCY_ONLY=contention` and
+`PL_LATENCY_CONTENTION_BATCH=32` (3 writer threads). Allocation counts come
+from `PL_LATENCY_ONLY=alloc`. The noise policy is the one above: a row is
+noisy when its rounds disagree in sign; the contended +5% limit needs a
+round spread under 5 pp. Raw outputs, per-round CSVs and run metadata are in
+`benches/compare/results/issue229/`.
+
+### Allocation per `level_create`
+
+| Side | Bytes per level |
+|---|---|
+| `base` (64 shards, host-sized) | 8,305.5 |
+| `s16` | 2,161.4 |
+| `s32` | 4,209.4 |
+| `s64` | 8,305.4 |
+
+The fixed counts give the same figure on every host. `s64` matches `base`
+exactly, as expected.
+
+### Criterion contended rows (median change vs `base`, round spread)
+
+| Row | `s16` | `s32` | `s64` |
+|---|---|---|---|
+| `concurrent_add_standard_orders/8` | +9.6% (9.8 pp) | +3.7% (1.9 pp) | -0.8% (noisy) |
+| `concurrent_add_standard_orders/16` | +11.5% (6.7 pp) | +5.5% (noisy) | +1.8% (noisy) |
+| `concurrent_add_mixed_orders/8` | +8.5% (1.4 pp) | +4.7% (0.5 pp) | +0.3% (noisy) |
+| `concurrent_add_mixed_orders/16` | +10.9% (7.7 pp) | +6.5% (5.9 pp) | +1.8% (noisy) |
+| `concurrent_mixed_operations/8` | +6.6% (7.0 pp) | +4.3% (3.7 pp) | +1.4% (noisy) |
+| `concurrent_mixed_operations/16` | +9.1% (3.0 pp) | +3.5% (1.7 pp) | +0.1% (noisy) |
+| `hot_spot_contention/80` | +7.1% (4.5 pp) | +2.0% (0.5 pp) | -0.2% (noisy) |
+| `hot_spot_contention/100` | +4.0% (2.3 pp) | +2.3% (1.8 pp) | -1.5% (noisy) |
+| `concurrent_cancel_orders/*` | -1.7% to +0.4% | -1.7% to +1.5% | -1.8% to +0.5% |
+| `concurrent_match_standard_orders/*` | -3.2% to +0.5% | -2.1% to -0.6% | -1.5% to -0.1% |
+| `read_write_ratio/25` to `/95` | -9.7% to -31.7% | -5.7% to -20.9% | -0.6% to +2.0% |
+
+Cancel and match rows are within observed noise for every side (most are
+noise-flagged). The `read_write_ratio` rows favour fewer shards; the likely
+reason, not verified, is level creation inside the timed loop. The full
+table, including the 2 and 4 thread rows, is `criterion_vs_base.csv`.
+
+### Latency harness (batched, `x32`, p50 change vs `base`)
+
+| Scenario | `base` p50 | `s16` | `s32` | `s64` |
+|---|---|---|---|---|
+| `contention_gtc_matcher_x32` | ~913 ns | +1.8% (8.8 pp) | +1.8% (5.8 pp) | -0.8% (10.1 pp) |
+| `contention_fok_matcher_x32` | ~12,150 ns | -3.9% (12.8 pp) | -4.5% (7.7 pp) | -12.7% (18.1 pp) |
+
+All within observed noise. Batched p99 values are means over 32 calls and
+are not used for tail claims; one `s32` FOK round read +86.6% at p99 while
+the other two read -1.0% and -2.4% (`latency_vs_base.csv`).
+
+### Verdict
+
+| Side | Memory per level vs `base` | Same-level adds, 8 to 16 threads | Verdict |
+|---|---|---|---|
+| `s16` | -74% | +6.6% to +11.5% | over the +5% limit; rejected |
+| `s32` | -49% | +3.5% to +6.5% | conclusive within +5% on 4 of 6 rows; the 16-thread add rows (+5.5%, +6.5%) are inconclusive |
+| `s64` | 0% | within observed noise | control; no memory saving |
+
+The default stays 32 shards: it halves the per-level allocation of the
+host-sized map on a 16-thread host (and saves more on larger hosts) for
+about 4% to 6% on heavily contended same-level adds, with cancel, match and
+the contended matcher latency within observed noise. Workloads with many
+concurrent writers on one level can raise the count with
+`PriceLevel::with_order_shards`.

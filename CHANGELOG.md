@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI and `make coverage*` now require cargo-tarpaulin >= 0.37.5, the first
   release that reads Rust 1.99 coverage data.
 
+### Documentation
+
+- **Per-level shard default measured on a quiet host (#229).** The 32-shard
+  default from #224 was chosen on a heavily loaded machine. Remeasured on an
+  idle 16-thread Linux host (3 interleaved rounds against 0.10.1, whose
+  host-sized map has 64 shards there): 32 shards allocate 4,209 bytes per
+  level against 8,305, cost about 4% to 6% on 8 to 16 thread same-level adds
+  (the two 16-thread add rows stay inconclusive under the noise policy), and
+  leave cancel, match and the contended latency p50 within observed noise.
+  16 shards cost 6% to 12% on the same adds. The default stays 32; the
+  rustdoc and `BENCHMARKS.md` now carry the measured trade-off.
+
 ## [0.10.2] - 2026-09-30
 
 ### Added

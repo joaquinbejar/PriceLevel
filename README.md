@@ -1432,7 +1432,10 @@ that 18-core host; 8 shards would be 1,139, 16 would be 2,163, 64 would
 be 8,307). 32 is a conservative default: contention timings, taken on a
 heavily loaded host and indicative only, showed 16 and 8 shards about 23%
 and 44% slower than the host-sized map for 16 threads adding to one
-level.
+level. Remeasured on a quiet 16-thread host (#229, `BENCHMARKS.md`): 32
+shards cost about 4% to 6% on 8 to 16 thread same-level adds against the
+host-sized 64-shard map, with cancel and match within noise; 16 shards
+cost 6% to 12%. The default stays 32.
 
 [`PriceLevel::with_order_shards`] chooses another power of two in
 `2..=1024` (anything else is [`PriceLevelError::InvalidFieldValue`]).

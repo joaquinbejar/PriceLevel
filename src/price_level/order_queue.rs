@@ -89,9 +89,12 @@ fn fire_remove_gap_hook(order_id: Id) {
 /// host-dependent allocation. A fixed count keeps level creation small and
 /// identical on every host (a 4 KiB shard array). The trade-off: fewer
 /// shards cost less memory per level but make concurrent add / cancel on the
-/// same level more likely to contend for one shard lock. 32 is a
-/// conservative compromise: on a loaded 18-core host, 16 and 8 shards showed
-/// clearly slower 16-thread same-level adds than the host-sized map. Callers that want a different balance use
+/// same level more likely to contend for one shard lock. 32 is the measured
+/// compromise (issue #229, a quiet 16-thread host, against the host-sized
+/// 64-shard map): half the memory per level, concurrent same-level adds about
+/// 4% to 6% slower at 8 to 16 threads, cancel and match unchanged within
+/// noise. 16 shards cost 6% to 12% on the same adds. Callers that want a
+/// different balance use
 /// [`PriceLevel::with_order_shards`](crate::PriceLevel::with_order_shards).
 pub(crate) const DEFAULT_ORDER_SHARDS: usize = 32;
 

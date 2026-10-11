@@ -1,0 +1,265 @@
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/level.rs:232:10
+    |
+232 |         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |          ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+232 -         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+232 +         .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/level.rs:787:14
+    |
+787 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+787 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+787 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, step)
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:1685:23
+     |
+1685 |         let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+     |                       ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+1685 -         let _ = epoch.fetch_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+1685 +         let _ = epoch.try_update(Ordering::Release, Ordering::Relaxed, |e| e.checked_add(1));
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:2266:18
+     |
+2266 |                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                  ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+2266 -                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+2266 +                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:2294:22
+     |
+2294 |                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                      ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+2294 -                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+2294 +                     .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4083:34
+     |
+4083 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4083 -                                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+4083 +                                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4420:30
+     |
+4420 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4420 -                             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+4420 +                             .try_update(Ordering::Relaxed, Ordering::Relaxed, |h| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4427:34
+     |
+4427 | ...                   .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+     |                        ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4427 -                                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+4427 +                                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+    --> src/price_level/level.rs:4435:66
+     |
+4435 | ...                   let _restored = self.hidden_quantity.fetch_update(
+     |                                                            ^^^^^^^^^^^^
+     |
+help: replace the use of the deprecated method
+     |
+4435 -                             let _restored = self.hidden_quantity.fetch_update(
+4435 +                             let _restored = self.hidden_quantity.try_update(
+     |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/fok_guard.rs:327:14
+    |
+327 |             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+327 -             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+327 +             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/fok_guard.rs:348:29
+    |
+348 |             let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+    |                             ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+348 -             let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+348 +             let _ = counter.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/order_queue.rs:525:14
+    |
+525 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+525 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+525 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:251:14
+    |
+251 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+251 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+251 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:282:14
+    |
+282 |             .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+282 -             .fetch_update(Ordering::Release, Ordering::Relaxed, seq_step);
+282 +             .try_update(Ordering::Release, Ordering::Relaxed, seq_step);
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:404:14
+    |
+404 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+404 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+404 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:414:14
+    |
+414 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+414 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+414 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/price_level/statistics.rs:643:14
+    |
+643 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+643 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+643 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |c| c.checked_add(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/utils/uuid.rs:181:14
+    |
+181 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+181 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+181 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/utils/uuid.rs:207:14
+    |
+207 |             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+207 -             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+207 +             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    |
+
+warning: `pricelevel` (lib) generated 19 warnings (run `cargo fix --lib -p pricelevel` to apply 19 suggestions)
+    Finished `bench` profile [optimized] target(s) in 0.06s
+     Running benches/latency/main.rs (/home/joaquin/pl229/target-base/release/deps/latency-bb91e12f56a7b9a5)
+== Run manifest ==
+commit             : 70c01556315387133d829e17a70be3bc55a169c8 (dirty)
+cpu                : 12th Gen Intel(R) Core(TM) i7-12650H
+logical cores      : 16
+os/arch            : linux/x86_64
+rustc              : rustc 1.99.0 (b940084d7 2026-09-28)
+profile            : release (cargo bench profile)
+allocator          : counting wrapper around std::alloc::System (benches/latency/alloc.rs; counting toggled off during latency runs)
+seed               : 0xA5A5A5A5A5A5A5A5
+samples/scenario   : 20000
+warmup/scenario    : 2000
+large depth sweeps : false
+strict FIFO        : false
+LOGLEVEL           : unset
+timer overhead     : 12 ns (mean of 10,000 back-to-back Instant::now() calls)
+loop model         : closed-loop / service-time only — see coordinated-omission disclosure below
+
+
+== Coordinated omission disclosure ==
+Every scenario in this harness is CLOSED-LOOP: the driver issues the next operation only after the previous one returns. Reported percentiles are therefore SERVICE TIME (the duration of one operation once it starts running), not OFFERED-LOAD latency. A closed-loop measurement systematically UNDER-reports tail latency under saturation, because it never captures the queueing delay a request would see waiting for a busy server (coordinated omission). These numbers are a regression signal and a service-time lower bound for the single-matcher-per-level contract documented in `src/lib.rs`'s Concurrency Model section — they are NOT a production SLO and NOT a measurement of latency under offered load. An open-loop (fixed arrival-rate) experiment would be required for that and is out of scope for this harness.
+
+== Latency scenarios ==
+[contention ] contention_gtc_matcher_x32   depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=928      p99=1154     p99.9=1298     p99.99=1444 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=1444     min=494 | outcomes: matcher: 160000/160000 Filled (437521 ops/s over 0.365696s); writers: 2709047 completed (1506223 successful, 600897 missing, 601927 rejected) across 3 threads = 7407911 ops/s (sum of each writer's own completed/elapsed)
+[contention ] contention_fok_matcher_x32   depth=1        PriceLevel::match_order — one matcher thread under N-1 concurrent admissions/cancels/reads | n=5000     p50=12345    p99=14432    p99.9=17299    p99.99=19918 (unvalidated exploratory estimate — not confirmed across repeated runs; see stats::P9999_CAVEAT and BENCH.md Methodology) max=19918    min=3317 | outcomes: matcher: 160000/160000 Filled (73539 ops/s over 2.175717s); writers: 11666718 completed (6482322 successful, 2591532 missing, 2592864 rejected) across 3 threads = 5362241 ops/s (sum of each writer's own completed/elapsed)
+
+== Markdown table (paste into BENCH.md) ==
+| Scenario | Category | Depth | Samples | p50 (ns) | p99 (ns) | p99.9 (ns) | p99.99 (ns, exploratory — see stats::P9999_CAVEAT) | max (ns) | Outcomes |
+|---|---|---|---|---|---|---|---|---|---|
+| contention_gtc_matcher_x32 | contention | 1 | 5000 | 928 | 1154 | 1298 | 1444 | 1444 | matcher: 160000/160000 Filled (437521 ops/s over 0.365696s); writers: 2709047 completed (1506223 successful, 600897 missing, 601927 rejected) across 3 threads = 7407911 ops/s (sum of each writer's own completed/elapsed) |
+| contention_fok_matcher_x32 | contention | 1 | 5000 | 12345 | 14432 | 17299 | 19918 | 19918 | matcher: 160000/160000 Filled (73539 ops/s over 2.175717s); writers: 11666718 completed (6482322 successful, 2591532 missing, 2592864 rejected) across 3 threads = 5362241 ops/s (sum of each writer's own completed/elapsed) |
+
+== Raw observations + manifest persisted to target/latency/1791649839936 ==
+
