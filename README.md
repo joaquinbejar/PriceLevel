@@ -1546,10 +1546,12 @@ and a restored level uses the default. No other behaviour changes.
 
  If you have any questions, issues, or would like to provide feedback, please feel free to contact the project maintainer:
 
- **Joaquín Béjar García**
- - Email: jb@taunais.com
- - **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
- - GitHub: [joaquinbejar](https://github.com/joaquinbejar)
+### **Contact Information**
+- **Author**: Joaquín Béjar García
+- **Email**: jb@taunais.com
+- **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
+- **Repository**: <https://github.com/joaquinbejar/PriceLevel>
+- **Documentation**: <https://docs.rs/pricelevel>
 
  We appreciate your interest and look forward to your contributions!
 
@@ -1566,8 +1568,8 @@ Repositories by the same author that this project depends on, and repositories t
 
 | Repository | Description |
 |------------|-------------|
-| [hft-clob-core](https://github.com/joaquinbejar/hft-clob-core) | Single-symbol CLOB matching engine with an integer-only hot path and deterministic replay. |
-| [Option-Chain-OrderBook](https://github.com/joaquinbejar/Option-Chain-OrderBook) · [crates.io](https://crates.io/crates/option-chain-orderbook) | Option chain order book system (underlying, expiration, strike) built on OrderBook-rs, PriceLevel and OptionStratLib. |
-| [OrderBook-rs](https://github.com/joaquinbejar/OrderBook-rs) · [crates.io](https://crates.io/crates/orderbook-rs) | High-performance, lock-free limit order book and matching engine. |
+| [Option-Chain-OrderBook](https://github.com/joaquinbejar/Option-Chain-OrderBook) | Option chain order book system; uses this crate's price level and order types for each contract's book. |
+| [OrderBook-rs](https://github.com/joaquinbejar/OrderBook-rs) | Limit order book and matching engine; uses this crate as the storage and matching unit for each price. |
+| [hft-clob-core](https://github.com/joaquinbejar/hft-clob-core) | Single-symbol CLOB matching engine; uses this crate's price level building blocks in its book. |
 
 <!-- related-projects:end -->
